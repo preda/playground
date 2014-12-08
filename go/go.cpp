@@ -49,17 +49,13 @@ public:
   unsigned group:6;
 } __attribute__((packed));
 
-template<typename T> class Region;
-
 class Board {
 public:
   Cell cells[BIG_N];
   
   Board();
 
-  int color(int p) { return cells[p].color; }
-  
-  template<typename T> Region<T> region(int start, T test);
+  int color(int p) const { return cells[p].color; }
   
   void move(int x, int y, Color color) { }
 };
@@ -67,33 +63,24 @@ public:
 template<typename T>
 class Region {
 private:
-  const T test;
-  Board *board;
-  const int start;
-
-  bool accept(int p) { return test(board, p); }
-  
   class Iterator {
   private:
-    Region *region;
+    const T accept;
     std::bitset<BIG_N> seen;
     byte open[N];
     int size;
   
     void add(int p) {
-      if (region->accept(p) && !seen[p]) {
+      if (accept(p) && !seen[p]) {
         seen[p] = true;
         open[size++] = p;
       }
     }
 
   public:
-    Iterator(Region *region, int start): region(region), size(0) {
-      add(start);
-    }
+    Iterator(T accept) : accept(accept), size(0) { }    
+    Iterator(int start, T accept): Iterator(accept) { add(start); }
 
-    Iterator(): region(0), size(0) {}
-    
     int operator*() {
       assert(size > 0);
       return open[size - 1];
@@ -108,16 +95,19 @@ private:
       add(p + DELTA_UP);
     }
 
-    bool operator!=(const Iterator &other) {
-      return size != other.size;
-    }
+    bool operator!=(const Iterator &other) { return size != other.size; }
   };
+
+  const T accept;
+  const int start;
       
 public:
-  Region(T test, Board *board, int start) : test(test), board(board), start(start) {}
-  Iterator begin() { return Iterator(this, start); }
-  Iterator end() { return Iterator(); }
+  Region(int start, T accept) : accept(accept), start(start) {}
+  Iterator begin() { return Iterator(start, accept); }
+  Iterator end() { return Iterator(accept); }
 };
+
+template<typename T> Region<T> makeRegion(int start, T test) { return Region<T>(start, test); }
 
 Board::Board() {
   for (int y = 0; y < SIZE_Y + 1; ++y) {
@@ -130,14 +120,9 @@ Board::Board() {
   }
 }
 
-template<typename T>
-Region<T> Board::region(int start, T test) { return Region<T>(test, this, start); }
-
 int main() {
   Board b;
-  printf("size %ld\n", sizeof(b));
-  auto region = b.region(pos(0, 0), [](Board *b, int p){ return b->color(p) == EMPTY; });
-  for (int p : region) {
-    printf("%d\n", p);
-  }
+  auto region = makeRegion(pos(0, 0), [&b](int p){ return b.color(p) == EMPTY; });
+  printf("size %ld %ld\n", sizeof(b), sizeof(region));
+  for (int p : region) { printf("%d\n", p); }
 }
