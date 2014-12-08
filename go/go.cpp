@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <bitset>
+#include <cassert>
 
 typedef unsigned char byte;
 using namespace std;
@@ -19,10 +20,10 @@ enum {
 };
 
 enum Color {
-  C_BLACK = 0,
-  C_WHITE = 1,
-  C_EMPTY = 2,
-  C_BROWN = 3
+  BLACK = 0,
+  WHITE = 1,
+  EMPTY = 2,
+  BROWN = 3
 };
 
 static int pos(int y, int x) { return (y + 1) * BIG_X + x + 1; }
@@ -39,7 +40,7 @@ struct Block {
 struct Cell {
 public:
   Cell():
-    color(C_EMPTY),
+    color(EMPTY),
     group(0)
   {
   }
@@ -48,7 +49,7 @@ public:
   unsigned group:6;
 } __attribute__((packed));
 
-template<typename T> class Walk;
+template<typename T> class Region;
 
 class Board {
 public:
@@ -56,75 +57,87 @@ public:
   
   Board();
 
-  template<typename T> Walk<T> *walk(int start);
+  int color(int p) { return cells[p].color; }
   
-  void move(int x, int y, Color color) {
-  }
+  template<typename T> Region<T> region(int start, T test);
+  
+  void move(int x, int y, Color color) { }
 };
 
 template<typename T>
-class Walk {
+class Region {
 private:
-  std::bitset<BIG_N> seen;
-  byte open[N];
-  int size;
-  Cell *cells;
+  const T test;
+  Board *board;
+  const int start;
+
+  bool accept(int p) { return test(board, p); }
   
-  void add(int p) {
-    if (T::accept(cells[p]) && !seen[p]) {
-      seen[p] = true;
-      open[size++] = p;
+  class Iterator {
+  private:
+    Region *region;
+    std::bitset<BIG_N> seen;
+    byte open[N];
+    int size;
+  
+    void add(int p) {
+      if (region->accept(p) && !seen[p]) {
+        seen[p] = true;
+        open[size++] = p;
+      }
     }
-  }
+
+  public:
+    Iterator(Region *region, int start): region(region), size(0) {
+      add(start);
+    }
+
+    Iterator(): region(0), size(0) {}
     
+    int operator*() {
+      assert(size > 0);
+      return open[size - 1];
+    }
+
+    void operator++() {
+      int p = operator*();
+      --size;
+      add(p + 1);
+      add(p - 1);
+      add(p + DELTA_DOWN);
+      add(p + DELTA_UP);
+    }
+
+    bool operator!=(const Iterator &other) {
+      return size != other.size;
+    }
+  };
+      
 public:
-  Walk(Board *b, int start) :
-    size(0),
-    cells(b->cells)
-  {
-    add(start);
-  }
-
-  int pop() {
-    if (size <= 0) { return -1; }
-    int p = open[--size];
-    add(p + 1);
-    add(p - 1);
-    add(p + DELTA_DOWN);
-    add(p + DELTA_UP);
-    return p;
-  }
+  Region(T test, Board *board, int start) : test(test), board(board), start(start) {}
+  Iterator begin() { return Iterator(this, start); }
+  Iterator end() { return Iterator(); }
 };
-
-template<typename T>
-Walk<T> *Board::walk(int start) {
-  return new Walk<T>(this, start);
-}
 
 Board::Board() {
   for (int y = 0; y < SIZE_Y + 1; ++y) {
-    cells[y * BIG_X].color = C_BROWN;
-    cells[y * BIG_X + SIZE_X + 1].color = C_BROWN;
+    cells[y * BIG_X].color = BROWN;
+    cells[y * BIG_X + SIZE_X + 1].color = BROWN;
   }
   for (int x = 0; x < BIG_X; ++x) {
-    cells[x].color = C_BROWN;
-    cells[(SIZE_Y + 1) * BIG_X + x].color = C_BROWN;
+    cells[x].color = BROWN;
+    cells[(SIZE_Y + 1) * BIG_X + x].color = BROWN;
   }
 }
 
-
-#define CONDITION(Name, expr) struct Name { static bool accept(Cell cell) { return expr; } }
-
-CONDITION(White, cell.color == C_WHITE);
-CONDITION(Black, cell.color == C_BLACK);
-CONDITION(Empty, cell.color == C_EMPTY);
+template<typename T>
+Region<T> Board::region(int start, T test) { return Region<T>(test, this, start); }
 
 int main() {
   Board b;
   printf("size %ld\n", sizeof(b));
-  auto w = b.walk<Empty>(pos(0, 0));
-  int p;
-  while ((p = w->pop()) >= 0) {
+  auto region = b.region(pos(0, 0), [](Board *b, int p){ return b->color(p) == EMPTY; });
+  for (int p : region) {
     printf("%d\n", p);
   }
 }
