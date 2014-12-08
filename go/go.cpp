@@ -34,6 +34,9 @@ static const int idx[N] = { REP(0), REP(1), REP(2), REP(3), REP(4), REP(5) };
 #undef REP
 #endif
 
+const auto Empty = [](Color color) { return color == EMPTY; };
+const auto Black = [](Color color) { return color == BLACK; };
+
 struct Cell {
 public:
   Cell(): color(EMPTY), group(0) { }
@@ -45,6 +48,16 @@ public:
 template<typename T> class Region;
 template<typename R, typename T> class Region2;
 
+template<typename R>
+void print(R r) {
+  for (int p : r) {
+    printf("%d ", p);
+  }
+  printf("\n");
+}
+
+template<typename R> bool isEmpty(R r) { return !(r.begin() != r.end()); }
+
 class Board {
 public:
   Cell cells[BIG_N];
@@ -55,6 +68,9 @@ public:
 
   template<typename T> Region<T> region(int start, T accept);
   template<typename R, typename T> Region2<R, T> border(R subreg, T accept);
+  template<typename R> bool isDead(R region) {
+    return isEmpty(border(region, Empty));
+  }
 };
 
 template<typename T, int openSize>
@@ -94,7 +110,6 @@ public:
   bool operator!=(const BaseIt &other) { return atEnd() != other.atEnd(); }
 };
 
-
 template<typename R, typename T>
 class Region2 {
 private:  
@@ -131,7 +146,6 @@ public:
   Region2(Board *b, R subreg, T accept) : board(b), subreg(subreg), accept(accept) { }
   Iterator begin() { return Iterator(board->cells, accept, subreg.begin(), subreg.end()); }
   Iterator end()   { return Iterator(board->cells, accept, subreg.end(), subreg.end()); }
-  void print() { for (int p : *this) { printf("%d ", p); } printf("\n"); }
 };
 
 
@@ -158,7 +172,6 @@ public:
   Region(Board *b, int start, T accept) : board(b), start(start), accept(accept) { }
   Iterator begin() { return Iterator(board->cells, accept, start); }
   Iterator end()   { return Iterator(accept); }
-  void print() { for (int p : *this) { printf("%d ", p); } printf("\n"); }
 };
 
 template<typename T> Region<T> Board::region(int start, T accept) {
@@ -184,14 +197,13 @@ void Board::move(int p, Color color) {
   cells[p].color = color;
 }
 
-const auto Empty = [](Color color) { return color == EMPTY; };
-const auto Black = [](Color color) { return color == BLACK; };
-
 int main() {
   Board b;
-  b.move(pos(2, 2), BLACK);
-  auto black = b.region(pos(2, 2), Black);
-  black.print();
+  b.move(pos(1, 1), BLACK);
+  b.move(pos(0, 1), BLACK);
+  auto black = b.region(pos(1, 1), Black);
+  print(black);
   auto libs = b.border(black, Empty);
-  libs.print();
+  print(libs);
+  printf("Dead %d\n", b.isDead(black));
 }
