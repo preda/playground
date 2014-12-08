@@ -193,8 +193,16 @@ Board::Board() {
   }
 }
 
-void Board::move(int p, Color color) {
+bool Board::move(int p, Color color) {
+  assert(cells[p].color == EMPTY);
   cells[p].color = color;
+  Color other = 1 - color;
+  
+  if (isDead(region(p, color))) {
+    cells[p].color = EMPTY;
+    return false;
+  }
+  
 }
 
 int main() {
