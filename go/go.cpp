@@ -34,80 +34,140 @@ static const int idx[N] = { REP(0), REP(1), REP(2), REP(3), REP(4), REP(5) };
 #undef REP
 #endif
 
-struct Block {  
-};
-
 struct Cell {
 public:
-  Cell():
-    color(EMPTY),
-    group(0)
-  {
-  }
-  
-  unsigned color:2;
+  Cell(): color(EMPTY), group(0) { }
+  Color color:2;
   unsigned group:6;
 } __attribute__((packed));
+
+
+template<typename T> class Region;
+template<typename R, typename T> class Region2;
 
 class Board {
 public:
   Cell cells[BIG_N];
-  
-  Board();
 
+  Board();
   int color(int p) const { return cells[p].color; }
-  
-  void move(int x, int y, Color color) { }
+  void move(int p, Color color);
+
+  template<typename T> Region<T> region(int start, T accept);
+  template<typename R, typename T> Region2<R, T> border(R subreg, T accept);
 };
+
+template<typename T, int openSize>
+class BaseIt {
+protected:
+  Cell * const cells;
+  const T accept;
+  int size;
+  bitset<BIG_N> seen;
+  byte open[openSize];
+
+  void add(int p) {
+    Color color = cells[p].color;
+    if (accept(color) && color != BROWN && !seen[p]) {
+      seen[p] = true;
+      open[size++] = p;
+    }
+  }
+
+  void addNeighbours(int p) {
+    add(p + 1);
+    add(p - 1);
+    add(p + DELTA_DOWN);
+    add(p + DELTA_UP);
+  }
+
+  bool atEnd() const { return size <= 0; }
+
+  BaseIt(Cell *cells, T accept) : cells(cells), accept(accept), size(0) { } 
+
+public:
+  int operator*() {
+    assert(!atEnd());
+    return open[size - 1];
+  }
+
+  bool operator!=(const BaseIt &other) { return atEnd() != other.atEnd(); }
+};
+
+
+template<typename R, typename T>
+class Region2 {
+private:  
+  class Iterator : public BaseIt<T, 4> {
+  private:
+    typedef typename R::Iterator SubIt;
+    SubIt it, itEnd;
+
+    void lookAhead() {
+      while (this->atEnd() && it != itEnd) {
+        this->addNeighbours(*it);
+        ++it;
+      }
+    }
+        
+  public:
+    Iterator(Cell *cells, T accept, SubIt it, SubIt itEnd) :
+      BaseIt<T, 4>(cells, accept), it(it), itEnd(itEnd) {
+      lookAhead();
+    }
+
+    void operator++() {
+      assert(!this->atEnd());
+      --this->size;
+      if (this->atEnd()) { lookAhead(); }
+    }
+  };
+
+  Board *board;
+  R subreg;
+  const T accept;
+      
+public:
+  Region2(Board *b, R subreg, T accept) : board(b), subreg(subreg), accept(accept) { }
+  Iterator begin() { return Iterator(board->cells, accept, subreg.begin(), subreg.end()); }
+  Iterator end()   { return Iterator(board->cells, accept, subreg.end(), subreg.end()); }
+  void print() { for (int p : *this) { printf("%d ", p); } printf("\n"); }
+};
+
 
 template<typename T>
 class Region {
 private:
-  class Iterator {
-  private:
-    const T accept;
-    std::bitset<BIG_N> seen;
-    byte open[N];
-    int size;
-  
-    void add(int p) {
-      if (accept(p) && !seen[p]) {
-        seen[p] = true;
-        open[size++] = p;
-      }
-    }
+  Board *board;
+  const int start;
+  const T accept;
 
+public:
+  class Iterator: public BaseIt<T, N> {
   public:
-    Iterator(T accept) : accept(accept), size(0) { }    
-    Iterator(int start, T accept): Iterator(accept) { add(start); }
-
-    int operator*() {
-      assert(size > 0);
-      return open[size - 1];
-    }
+    Iterator(Cell *cells, T accept, int start) : BaseIt<T, N>(cells, accept) { this->add(start); }
+    Iterator(T accept) : BaseIt<T, N>(0, accept) { }
 
     void operator++() {
-      int p = operator*();
-      --size;
-      add(p + 1);
-      add(p - 1);
-      add(p + DELTA_DOWN);
-      add(p + DELTA_UP);
+      int p = this->operator*();
+      --this->size;
+      this->addNeighbours(p);
     }
-
-    bool operator!=(const Iterator &other) { return size != other.size; }
   };
 
-  const T accept;
-  const int start;
-      
-public:
-  Region(int start, T accept) : accept(accept), start(start) {}
-  Iterator begin() { return Iterator(start, accept); }
-  Iterator end() { return Iterator(accept); }
+  Region(Board *b, int start, T accept) : board(b), start(start), accept(accept) { }
+  Iterator begin() { return Iterator(board->cells, accept, start); }
+  Iterator end()   { return Iterator(accept); }
+  void print() { for (int p : *this) { printf("%d ", p); } printf("\n"); }
 };
 
-template<typename T> Region<T> makeRegion(int start, T test) { return Region<T>(start, test); }
+template<typename T> Region<T> Board::region(int start, T accept) {
+  return Region<T>(this, start, accept);
+}
+
+template<typename R, typename T> Region2<R, T> Board::border(R subreg, T accept) {
+  return Region2<R, T>(this, subreg, accept);
+}
 
 Board::Board() {
   for (int y = 0; y < SIZE_Y + 1; ++y) {
@@ -120,9 +180,18 @@ Board::Board() {
   }
 }
 
+void Board::move(int p, Color color) {
+  cells[p].color = color;
+}
+
+const auto Empty = [](Color color) { return color == EMPTY; };
+const auto Black = [](Color color) { return color == BLACK; };
+
 int main() {
   Board b;
-  auto region = makeRegion(pos(0, 0), [&b](int p){ return b.color(p) == EMPTY; });
-  printf("size %ld %ld\n", sizeof(b), sizeof(region));
-  for (int p : region) { printf("%d\n", p); }
+  b.move(pos(2, 2), BLACK);
+  auto black = b.region(pos(2, 2), Black);
+  black.print();
+  auto libs = b.border(black, Empty);
+  libs.print();
 }
