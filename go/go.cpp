@@ -2,10 +2,21 @@
 #include <bitset>
 
 typedef unsigned char byte;
-
 using namespace std;
 
-#define DELTAS {DELTA_UP, DELTA_LEFT, DELTA_RIGHT, DELTA_DOWN}
+enum {
+  SIZE_Y = 6,
+  SIZE_X = 6,
+
+  BIG_X = SIZE_X + 2,
+  BIG_Y = SIZE_Y + 2,
+  
+  N = SIZE_X * SIZE_Y,
+  BIG_N = BIG_X * BIG_Y,
+
+  DELTA_UP = -BIG_X,
+  DELTA_DOWN = BIG_X
+};
 
 enum Color {
   C_BLACK = 0,
@@ -14,8 +25,15 @@ enum Color {
   C_BROWN = 3
 };
 
-struct Block {
-  
+static int pos(int y, int x) { return (y + 1) * BIG_X + x + 1; }
+
+#if SIZE_X == 6 and SIZE_Y == 6
+#define REP(a) pos(a, 0), pos(a, 1), pos(a, 2), pos(a, 3), pos(a, 4), pos(a, 5)
+static const int idx[N] = { REP(0), REP(1), REP(2), REP(3), REP(4), REP(5) };
+#undef REP
+#endif
+
+struct Block {  
 };
 
 struct Cell {
@@ -30,80 +48,70 @@ public:
   unsigned group:6;
 } __attribute__((packed));
 
-template<int X, int Y> 
+template<typename T> class Walk;
+
 class Board {
-private:  
-  enum { N = X * Y, BIGN = (X + 2) * (Y + 2) };
-  Cell cells[BIGN];
-
 public:
-  enum { UP = 0, LEFT = 1, RIGHT = 2, DOWN = 3};
-  enum {DELTA_UP = -(X + 2), DELTA_LEFT = -1, DELTA_RIGHT = 1, DELTA_DOWN = -DELTA_UP};
-  static const int idx[X * Y];
-
-  static int pos(int y, int x) { return X + 2 + y * (X + 2) + x + 1; }
-
-  template<typename T>
-  class Walk {
-  private:
-    std::bitset<BIGN> seen;
-    byte open[N];
-    int size;
-    Cell *cells;
-    
-    void add(int p) {
-      if (T::accept(cells[p]) && !seen[p]) {
-        seen[p] = true;
-        open[size++] = p;
-      }
-    }
-    
-  public:
-    Walk(Board *b, int start) :
-      size(0),
-      cells(b->cells)
-    {
-      add(start);
-    }
-
-    int pop() {
-      if (size <= 0) { return -1; }
-      int p = open[--size];
-      for (int delta : DELTAS) {
-        add(p + delta);
-      }
-      return p;
-    }
-  };
+  Cell cells[BIG_N];
   
-  Board() {
-    for (int y = 0; y < Y+1; ++y) {
-      cells[y * (X + 2)].color = C_BROWN;
-      cells[y * (X + 2) + X + 1].color = C_BROWN;
-    }
-    for (int x = 0; x < X + 2; ++x) {
-      cells[x].color = C_BROWN;
-      cells[(Y + 1) * (X + 2) + x].color = C_BROWN;
-    }
-  }
+  Board();
 
-  template<typename T>
-  Walk<T> *walk(int start) {
-    return new Walk<T>(this, start);
-  }
+  template<typename T> Walk<T> *walk(int start);
   
   void move(int x, int y, Color color) {
   }
 };
 
-template<> const int Board<6, 6>::idx[] = {
-  pos(0, 0), pos(0, 1), pos(0, 2), pos(0, 3), pos(0, 4), pos(0, 5),
-  pos(1, 0), pos(1, 1), pos(1, 2), pos(1, 3), pos(1, 4), pos(1, 5),
-  pos(2, 0), pos(2, 1), pos(2, 2), pos(2, 3), pos(2, 4), pos(2, 5),
-  pos(3, 0), pos(3, 1), pos(3, 2), pos(3, 3), pos(3, 4), pos(3, 5),
-  pos(4, 0), pos(4, 1), pos(4, 2), pos(4, 3), pos(4, 4), pos(4, 5),
-  pos(5, 0), pos(5, 1), pos(5, 2), pos(5, 3), pos(5, 4), pos(5, 5),
+template<typename T>
+class Walk {
+private:
+  std::bitset<BIG_N> seen;
+  byte open[N];
+  int size;
+  Cell *cells;
+  
+  void add(int p) {
+    if (T::accept(cells[p]) && !seen[p]) {
+      seen[p] = true;
+      open[size++] = p;
+    }
+  }
+    
+public:
+  Walk(Board *b, int start) :
+    size(0),
+    cells(b->cells)
+  {
+    add(start);
+  }
+
+  int pop() {
+    if (size <= 0) { return -1; }
+    int p = open[--size];
+    add(p + 1);
+    add(p - 1);
+    add(p + DELTA_DOWN);
+    add(p + DELTA_UP);
+    return p;
+  }
 };
+
+template<typename T>
+Walk<T> *Board::walk(int start) {
+  return new Walk<T>(this, start);
+}
+
+Board::Board() {
+  for (int y = 0; y < SIZE_Y + 1; ++y) {
+    cells[y * BIG_X].color = C_BROWN;
+    cells[y * BIG_X + SIZE_X + 1].color = C_BROWN;
+  }
+  for (int x = 0; x < BIG_X; ++x) {
+    cells[x].color = C_BROWN;
+    cells[(SIZE_Y + 1) * BIG_X + x].color = C_BROWN;
+  }
+}
+
 
 #define CONDITION(Name, expr) struct Name { static bool accept(Cell cell) { return expr; } }
 
@@ -112,35 +120,11 @@ CONDITION(Black, cell.color == C_BLACK);
 CONDITION(Empty, cell.color == C_EMPTY);
 
 int main() {
-  Board<6, 6> b;
-
+  Board b;
   printf("size %ld\n", sizeof(b));
-  int start = b.pos(0, 0);
-  auto w = b.walk<Empty>(b.pos(0, 0));
+  auto w = b.walk<Empty>(pos(0, 0));
   int p;
   while ((p = w->pop()) >= 0) {
     printf("%d\n", p);
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  
-  /*
-  int left(int cid) { return cid + DELTA[LEFT]; }
-  int right(int cid) { return cid + DELTA[RIGHT]; }
-  int up(int cid) { return cid + DELTA[UP]; }
-  int down(int cid) { return cid + DELTA[DOWN]; }
-  */
-// const int Board::DELTAS[] = {DELTA_UP, DELTA_LEFT, DELTA_RIGHT, DELTA_DOWN};
