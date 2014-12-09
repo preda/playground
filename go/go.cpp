@@ -16,15 +16,15 @@ enum {
   BIG_N = BIG_X * BIG_Y,
 
   DELTA_UP = -BIG_X,
-  DELTA_DOWN = BIG_X
-};
+  DELTA_DOWN = BIG_X,  
 
-enum Color {
   BLACK = 0,
   WHITE = 1,
   EMPTY = 2,
   BROWN = 3
 };
+
+const int DELTAS[] = {1, -1, DELTA_UP, DELTA_DOWN};
 
 static int pos(int y, int x) { return (y + 1) * BIG_X + x + 1; }
 
@@ -34,13 +34,17 @@ static const int idx[N] = { REP(0), REP(1), REP(2), REP(3), REP(4), REP(5) };
 #undef REP
 #endif
 
-const auto Empty = [](Color color) { return color == EMPTY; };
-const auto Black = [](Color color) { return color == BLACK; };
+const auto Black = [](int color) { return color == BLACK; };
+const auto Empty = [](int color) { return color == EMPTY; };
+
+
+// template<typename T>
+
 
 struct Cell {
 public:
   Cell(): color(EMPTY), group(0) { }
-  Color color:2;
+  unsigned color:2;
   unsigned group:6;
 } __attribute__((packed));
 
@@ -58,19 +62,32 @@ void print(R r) {
 
 template<typename R> bool isEmpty(R r) { return !(r.begin() != r.end()); }
 
+template<typename R, typename T> Region2<R, T> border(R reg, T accept) {
+  return Region2<R, T>(reg.board, reg, accept);
+}
+
+template<typename R> bool isDead(R region) {
+  return !isEmpty(region) && isEmpty(border(region, Empty));
+}
+
+template<typename T>
+void set(Region<T> r, int color) {
+  Cell *cells = r.board->cells;
+  for (int p : r) {
+    cells[p].color = color;
+  }
+}
+
 class Board {
 public:
   Cell cells[BIG_N];
 
   Board();
   int color(int p) const { return cells[p].color; }
-  void move(int p, Color color);
+  bool move(int p, int color);
 
-  template<typename T> Region<T> region(int start, T accept);
-  template<typename R, typename T> Region2<R, T> border(R subreg, T accept);
-  template<typename R> bool isDead(R region) {
-    return isEmpty(border(region, Empty));
-  }
+  template<typename T> auto region(int start, T accept);
+  auto regionOfColor(int start, int color);
 };
 
 template<typename T, int openSize>
@@ -83,7 +100,7 @@ protected:
   byte open[openSize];
 
   void add(int p) {
-    Color color = cells[p].color;
+    int color = cells[p].color;
     if (accept(color) && color != BROWN && !seen[p]) {
       seen[p] = true;
       open[size++] = p;
@@ -151,7 +168,7 @@ public:
 
 template<typename T>
 class Region {
-private:
+public:
   Board *board;
   const int start;
   const T accept;
@@ -174,12 +191,13 @@ public:
   Iterator end()   { return Iterator(accept); }
 };
 
-template<typename T> Region<T> Board::region(int start, T accept) {
+template<typename T>
+auto Board::region(int start, T accept) {
   return Region<T>(this, start, accept);
 }
 
-template<typename R, typename T> Region2<R, T> Board::border(R subreg, T accept) {
-  return Region2<R, T>(this, subreg, accept);
+auto Board::regionOfColor(int start, int color) {
+  return region(start, [color](int c) { return c == color; });
 }
 
 Board::Board() {
@@ -193,16 +211,22 @@ Board::Board() {
   }
 }
 
-bool Board::move(int p, Color color) {
+bool Board::move(int p, int color) {
   assert(cells[p].color == EMPTY);
+  assert(color == WHITE || color == BLACK);
   cells[p].color = color;
-  Color other = 1 - color;
-  
-  if (isDead(region(p, color))) {
+  int otherCol = 1 - color;
+  for (int delta : DELTAS) {
+    auto r = regionOfColor(p + delta, otherCol);
+    if (isDead(r)) {
+      set(r, EMPTY);
+    }
+  }
+  if (isDead(regionOfColor(p, color))) {
     cells[p].color = EMPTY;
     return false;
   }
-  
+  return true;  
 }
 
 int main() {
@@ -211,7 +235,7 @@ int main() {
   b.move(pos(0, 1), BLACK);
   auto black = b.region(pos(1, 1), Black);
   print(black);
-  auto libs = b.border(black, Empty);
+  auto libs = border(black, Empty);
   print(libs);
-  printf("Dead %d\n", b.isDead(black));
+  printf("Dead %d\n", isDead(black));
 }
