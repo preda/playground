@@ -1,32 +1,14 @@
+#include "go.h"
+
 #include <stdio.h>
 #include <bitset>
 #include <cassert>
 
-typedef unsigned char byte;
 using namespace std;
-
-enum {
-  SIZE_Y = 6,
-  SIZE_X = 6,
-
-  BIG_X = SIZE_X + 2,
-  BIG_Y = SIZE_Y + 2,
-  
-  N = SIZE_X * SIZE_Y,
-  BIG_N = BIG_X * BIG_Y,
-
-  DELTA_UP = -BIG_X,
-  DELTA_DOWN = BIG_X,  
-
-  BLACK = 0,
-  WHITE = 1,
-  EMPTY = 2,
-  BROWN = 3
-};
 
 const int DELTAS[] = {1, -1, DELTA_UP, DELTA_DOWN};
 
-static int pos(int y, int x) { return (y + 1) * BIG_X + x + 1; }
+int pos(int y, int x) { return (y + 1) * BIG_X + x + 1; }
 
 #if SIZE_X == 6 and SIZE_Y == 6
 #define REP(a) pos(a, 0), pos(a, 1), pos(a, 2), pos(a, 3), pos(a, 4), pos(a, 5)
@@ -37,17 +19,12 @@ static const int idx[N] = { REP(0), REP(1), REP(2), REP(3), REP(4), REP(5) };
 const auto Black = [](int color) { return color == BLACK; };
 const auto Empty = [](int color) { return color == EMPTY; };
 
-
-// template<typename T>
-
-
 struct Cell {
 public:
   Cell(): color(EMPTY), group(0) { }
   unsigned color:2;
   unsigned group:6;
 } __attribute__((packed));
-
 
 template<typename T> class Region;
 template<typename R, typename T> class Region2;
@@ -227,15 +204,4 @@ bool Board::move(int p, int color) {
     return false;
   }
   return true;  
-}
-
-int main() {
-  Board b;
-  b.move(pos(1, 1), BLACK);
-  b.move(pos(0, 1), BLACK);
-  auto black = b.region(pos(1, 1), Black);
-  print(black);
-  auto libs = border(black, Empty);
-  print(libs);
-  printf("Dead %d\n", isDead(black));
 }
