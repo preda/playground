@@ -1,8 +1,9 @@
 #include "go.h"
 
-#include <stdio.h>
 #include <bitset>
 #include <cassert>
+#include <cstdio>
+#include <string>
 
 using namespace std;
 
@@ -65,6 +66,8 @@ public:
 
   template<typename T> auto region(int start, T accept);
   auto regionOfColor(int start, int color);
+
+  void print();
 };
 
 template<typename T, int openSize>
@@ -204,4 +207,51 @@ bool Board::move(int p, int color) {
     return false;
   }
   return true;  
+}
+
+void Board::print() {
+  std::string line;
+  for (int y = 0; y < SIZE_Y; ++y) {
+    line.clear();
+    for (int x = 0; x < SIZE_X; ++x) {
+      int color = cells[pos(y, x)].color;
+      char c = color == BLACK ? 'x' : color == WHITE ? 'o' : '.';
+      line += ' ';
+      line += c;
+    }
+    printf("\n%s", line.c_str());
+  }
+  printf("\n\n");
+}
+
+bool valid(int y, int x) { return y >= 0 && y < SIZE_Y && x >= 0 && x < SIZE_X; }
+
+int main() {
+  Board b;
+  b.print();
+  while (true) {
+    char buf[16] = {0};
+    int y = -1;
+    int x = -1;
+    printf("> ");
+    scanf("%1s %1d %1d", buf, &y, &x);
+    char c = buf[0];
+    int color = c == 'b' ? BLACK : c == 'w' ? WHITE : EMPTY;
+    if ((color == BLACK || color == WHITE) && valid(y, x) && b.color(pos(y, x)) == EMPTY) {
+      b.move(pos(y, x), color);
+      b.print();
+    }
+  }
+  
+  /*  
+  b.move(pos(1, 1), BLACK);
+  b.move(pos(0, 1), BLACK);
+  b.print();
+
+  auto black = b.region(pos(1, 1), Black);
+  print(black);
+  auto libs = border(black, Empty);
+  print(libs);
+  printf("Dead %d\n", isDead(black));
+  */
 }
