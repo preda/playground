@@ -28,6 +28,12 @@ public:
 } __attribute__((packed));
 
 struct Group {
+  Group(): size(0), libs(0), pos(0) { }
+  Group(int size, int libs, int pos) :
+    size((byte) size),
+    libs((byte) libs),
+    pos((byte) pos) { }
+  
   byte size;
   byte libs;
   byte pos;
@@ -270,7 +276,7 @@ bool Board::move(int p, int color) {
   assert(libs >= 0);
   if (libs == 0) { return false; }
   int gid = nSame == 0 ? newGid() : gids[0];
-  groups[gid] = {(byte)(sumSize + 1), (byte)sumLibs, (byte)p};
+  groups[gid] = Group(sumSize + 1, sumLibs, p);
   for (int i = 1; i < nSame; ++i) {
     Group g = groups[gids[i]];
     for (int pp : regionOfColor(g.pos, color)) {
