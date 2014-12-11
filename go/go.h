@@ -16,5 +16,7 @@ enum {
   BLACK = 0,
   WHITE = 1,
   EMPTY = 2,
-  BROWN = 3
+  BROWN = 3,
+
+  MAX_GROUPS = N / 4,
 };

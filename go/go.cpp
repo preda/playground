@@ -27,6 +27,12 @@ public:
   unsigned group:6;
 } __attribute__((packed));
 
+struct Group {
+  byte size;
+  byte libs;
+  byte pos;
+};
+
 template<typename T> class Region;
 template<typename R, typename T> class Region2;
 
@@ -49,16 +55,20 @@ template<typename R> bool isDead(R region) {
 }
 
 template<typename T>
-void set(Region<T> r, int color) {
+int set(Region<T> r, int color) {
   Cell *cells = r.board->cells;
+  int n = 0;
   for (int p : r) {
     cells[p].color = color;
+    ++n;
   }
+  return n;
 }
 
 class Board {
 public:
   Cell cells[BIG_N];
+  Group groups[MAX_GROUPS];
 
   Board();
   int color(int p) const { return cells[p].color; }
@@ -67,6 +77,11 @@ public:
   template<typename T> auto region(int start, T accept);
   auto regionOfColor(int start, int color);
 
+  int nearGroupsOfColor(int p, int color, int *outGroups);
+  int nearLibs(int p);
+  int newGid();
+  int remove(int p, int color);
+  
   void print();
 };
 
@@ -191,22 +206,80 @@ Board::Board() {
   }
 }
 
+int Board::nearGroupsOfColor(int p, int color, int *out) {
+  int n = 0;
+  out[0] = out[1] = out[2] = out[3] = 0;
+  for (int delta : DELTAS) {
+    int pp = p + delta;
+    Cell c = cells[pp];
+    if (c.color == color) {
+      int g = c.group;
+      if (out[0] == g || out[1] == g || out[2] == g) { continue; }
+      out[n++] = g;
+    }
+  }
+  return n;
+}
+
+int Board::nearLibs(int p) {
+  int n = 0;
+  for (int delta : DELTAS) { if (cells[p + delta].color == EMPTY) { ++n; } }
+  return n;
+}
+
+int Board::newGid() {
+  for (int i = 0; i < MAX_GROUPS; ++i) {
+    if (groups[i].size == 0) {
+      return i;
+    }
+  }
+  assert(false && "max groups exceeded");
+}
+
+int Board::remove(int p, int color) {
+  return set(regionOfColor(p, color), EMPTY);
+}
+
 bool Board::move(int p, int color) {
   assert(cells[p].color == EMPTY);
   assert(color == WHITE || color == BLACK);
-  cells[p].color = color;
   int otherCol = 1 - color;
-  for (int delta : DELTAS) {
-    auto r = regionOfColor(p + delta, otherCol);
-    if (isDead(r)) {
-      set(r, EMPTY);
+  int gids[4];
+  int nOther = nearGroupsOfColor(p, otherCol, gids);
+  for (int i = 0; i < nOther; ++i) {
+    Group g = groups[gids[i]];
+    g.libs--;
+    if (g.libs == 0) {
+      int size = remove(g.pos, otherCol);
+      assert(size == g.size);
+      g.size = 0;
+    }    
+  }
+
+  int newLibs = nearLibs(p);
+  
+  int nSame = nearGroupsOfColor(p, color, gids);
+
+  int sumLibs = 0;
+  int sumSize = 0;
+  for (int i = 0; i < nSame; ++i) {
+    sumLibs += groups[gids[i]].libs;
+    sumSize += groups[gids[i]].size;
+  }
+  int libs = sumLibs + newLibs - nSame;
+  assert(libs >= 0);
+  if (libs == 0) { return false; }
+  int gid = nSame == 0 ? newGid() : gids[0];
+  groups[gid] = {(byte)(sumSize + 1), (byte)sumLibs, (byte)p};
+  for (int i = 1; i < nSame; ++i) {
+    Group g = groups[gids[i]];
+    for (int pp : regionOfColor(g.pos, color)) {
+      cells[pp].group = gid;
     }
+    g.size = 0;
   }
-  if (isDead(regionOfColor(p, color))) {
-    cells[p].color = EMPTY;
-    return false;
-  }
-  return true;  
+  cells[p].group = gid;
+  return true;
 }
 
 void Board::print() {
