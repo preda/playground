@@ -41,7 +41,7 @@ struct Group {
 
 template<typename T> class Region;
 template<typename R, typename T> class Region2;
-
+/*
 template<typename R>
 void print(R r) {
   for (int p : r) {
@@ -59,7 +59,9 @@ template<typename R, typename T> Region2<R, T> border(R reg, T accept) {
 template<typename R> bool isDead(R region) {
   return !isEmpty(region) && isEmpty(border(region, Empty));
 }
+*/
 
+/*
 template<typename T>
 int set(Region<T> r, Cell cell) {
   Cell *cells = r.board->cells;
@@ -70,6 +72,7 @@ int set(Region<T> r, Cell cell) {
   }
   return n;
 }
+*/
 
 class Board {
 public:
@@ -85,10 +88,11 @@ public:
   int groupColor(const Group &g) { return color(g.pos); }
   
   bool move(int p, int color);
-  int remove(int p, int color);
+  // int remove(int p, int color);
   
   void updateGroup(int p, int gid);
   void updateGroupLibs(int p);
+  void removeGroup(int p);
   
   template<typename T> auto region(int start, T accept);
   auto regionOfColor(int start, int color);
@@ -289,16 +293,28 @@ void Board::updateGroup(int p, int gid) {
   g->pos = p;
 }
 
+void Board::removeGroup(int p) {
+  int col = color(p);
+  assert(col == BLACK || col == WHITE);
+  Cell empty = Cell(EMPTY, 0);
+  Cell *cells = this->cells;
+  walk(p, [cells, col](int p) {
+      if (cells[p].color == col) { cells[p] = Cell(EMPTY, 0); return true; }
+      return false;
+    });
+}
+
 Group *Board::newGroup() {
   for (Group *g = groups, *end = groups + MAX_GROUPS; g < end; ++g) {
     if (g->size == 0) { return g; }
   }
   assert(false && "max groups exceeded");
 }
-
+/*
 int Board::remove(int p, int color) {
   return set(regionOfColor(p, color), Cell(EMPTY, 0));
 }
+*/
 
 bool Board::move(int pos, int col) {
   assert(color(pos) == EMPTY);
@@ -309,7 +325,7 @@ bool Board::move(int pos, int col) {
   for (int p : neighb) {
     if (color(p) == otherCol && libs(p) == 1) {
       group(p)->size = 0;
-      remove(p, otherCol);
+      removeGroup(p);
       captured = true;
     }
   }
