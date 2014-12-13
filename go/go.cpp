@@ -23,6 +23,7 @@ const auto Empty = [](int color) { return color == EMPTY; };
 struct Cell {
 public:
   Cell(): color(EMPTY), group(0) { }
+  Cell(int color, int group) : color(color), group(group) { }
   unsigned color:2;
   unsigned group:6;
 } __attribute__((packed));
@@ -61,11 +62,11 @@ template<typename R> bool isDead(R region) {
 }
 
 template<typename T>
-int set(Region<T> r, int color) {
+int set(Region<T> r, Cell cell) {
   Cell *cells = r.board->cells;
   int n = 0;
   for (int p : r) {
-    cells[p].color = color;
+    cells[p] = cell;
     ++n;
   }
   return n;
@@ -87,6 +88,8 @@ public:
   int nearLibs(int p);
   int newGid();
   int remove(int p, int color);
+  int libs(int p);
+  int libsAndSetGroup(int p, int group);
   
   void print();
 };
@@ -210,6 +213,63 @@ Board::Board() {
     cells[x].color = BROWN;
     cells[(SIZE_Y + 1) * BIG_X + x].color = BROWN;
   }
+  // groups[0] = Group((BIG_X + SIZE_Y) * 2, 2, 0);
+}
+
+template<typename T, int N>
+class Vect {
+  T v[N];
+  int size = 0;
+
+public:
+  void push(T t) { v[size++] = t; }
+  T pop() { return v[--size]; }
+  bool isEmpty() { return size <= 0; }
+};
+
+class Bitset {
+  unsigned long long bits = 0;
+public:
+  bool testAndSet(int p) {
+    unsigned long long mask = (1ull << p);
+    bool bit = bits & mask;
+    if (!bit) { bits |= mask; }
+    return bit;
+  }
+};
+
+#define STEP(inip) { int p = inip; if (!seen.testAndSet(p)) { if (cells[p].color == color) { open.push(p); PROCESS; } else { ELSE; } } }
+
+#define WALK(p) open.push(p); PROCESS; do { int p = open.pop(); STEP(p+1); STEP(p-1); STEP(p+DELTA_UP); STEP(p-DELTA_UP); } while (!open.isEmpty());
+
+int Board::libsAndSetGroup(int p, int group) {
+#define PROCESS cells[p] = cell
+#define ELSE if (cells[p].color == EMPTY) { ++n; }
+  Bitset seen;
+  Vect<byte, N> open;
+  int color = cells[p].color;
+  assert(color == WHITE || color == BLACK);
+  int n = 0;
+  Cell cell(color, group);
+  WALK(p);
+  return n;
+#undef PROCESS
+#undef ELSE
+}
+
+int Board::libs(int p, int group) {
+#define PROCESS
+#define ELSE if (cells[p].color == EMPTY) { ++n; }
+  Bitset seen;
+  Vect<byte, N> open;
+  int color = cells[p].color;
+  assert(color == WHITE || color == BLACK);
+  int n = 0;
+  Cell cell(color, group);
+  WALK(p);
+  return n;
+#undef PROCESS
+#undef ELSE
 }
 
 int Board::nearGroupsOfColor(int p, int color, int *out) {
@@ -234,7 +294,7 @@ int Board::nearLibs(int p) {
 }
 
 int Board::newGid() {
-  for (int i = 0; i < MAX_GROUPS; ++i) {
+  for (int i = 1; i < MAX_GROUPS; ++i) {
     if (groups[i].size == 0) {
       return i;
     }
@@ -243,62 +303,120 @@ int Board::newGid() {
 }
 
 int Board::remove(int p, int color) {
-  return set(regionOfColor(p, color), EMPTY);
+  return set(regionOfColor(p, color), Cell(EMPTY, 0));
 }
 
 bool Board::move(int p, int color) {
-  assert(cells[p].color == EMPTY);
+  Cell &cell = cells[p];
+  assert(cell.color == EMPTY);
   assert(color == WHITE || color == BLACK);
   int otherCol = 1 - color;
-  int gids[4];
-  int nOther = nearGroupsOfColor(p, otherCol, gids);
+  bool hasRemoved = false;
+  for (int delta : DELTAS) {
+    int pp = p + delta;
+    if (cells[pp].color == otherCol) {
+      int gid = cells[pp].group;
+      if (groups[gid].libs == 1) {
+        remove(pp, otherCol);
+        groups[gid].size = 0;
+        hasRemoved = true;
+      }
+    }
+  }
+  if (hasRemoved) {
+    for (int gid = 0; gid < MAX_GROUPS; ++gid) {
+      if (groups[gid].size > 0) {
+        
+      }
+      Group &g = groups[gid];
+      if (g.size > 0 && cells[g.pos].color == color) {
+        g.libs = nLibs(g.pos);
+      }
+    }
+
+  }
+  
+  for (int gid : gids) {
+    
+  }
+  
+  
+  int gidsOther[4];
+  int nOther = nearGroupsOfColor(p, otherCol, gidsOther);
+  bool anyRemoved = false;
   for (int i = 0; i < nOther; ++i) {
-    Group g = groups[gids[i]];
-    g.libs--;
-    if (g.libs == 0) {
-      int size = remove(g.pos, otherCol);
-      assert(size == g.size);
-      g.size = 0;
-    }    
+    int gid = gidsOther[i];
+    Group &group = groups[gid];
+    assert(group.size > 0 && group.libs > 0);
+    if (--group.libs == 0) {
+      int size = remove(group.pos, otherCol);
+      assert(size == group.size);
+      group.size = 0;
+      anyRemoved = true;      
+    }
+  }
+  
+  if (anyRemoved) {
   }
 
   int newLibs = nearLibs(p);
-  
-  int nSame = nearGroupsOfColor(p, color, gids);
+
+  int gidsSame[4];
+  int nSame = nearGroupsOfColor(p, color, gidsSame);
+  printf("other %d same %d libs %d\n", nOther, nSame, newLibs);
 
   int sumLibs = 0;
   int sumSize = 0;
   for (int i = 0; i < nSame; ++i) {
-    sumLibs += groups[gids[i]].libs;
-    sumSize += groups[gids[i]].size;
+    int gid = gidsSame[i];
+    sumLibs += groups[gid].libs;
+    sumSize += groups[gid].size;
   }
   int libs = sumLibs + newLibs - nSame;
   assert(libs >= 0);
-  if (libs == 0) { return false; }
-  int gid = nSame == 0 ? newGid() : gids[0];
-  groups[gid] = Group(sumSize + 1, sumLibs, p);
+  if (libs == 0) {
+    for (int i = 0; i < nOther; ++i) {
+      ++groups[gidsOther[i]].libs;
+    }
+    return false;
+  }
+  int gid = nSame == 0 ? newGid() : gidsSame[0];
+  groups[gid] = Group(sumSize + 1, libs, p);
   for (int i = 1; i < nSame; ++i) {
-    Group g = groups[gids[i]];
+    Group &g = groups[gidsSame[i]];
     for (int pp : regionOfColor(g.pos, color)) {
       cells[pp].group = gid;
     }
     g.size = 0;
   }
-  cells[p].group = gid;
+  cell = Cell(color, gid);
   return true;
 }
 
+char charForColor(int color) {
+  return color == BLACK ? 'x' : color == WHITE ? 'o' : '.';
+}
+
 void Board::print() {
-  std::string line;
+  std::string line1, line2;
   for (int y = 0; y < SIZE_Y; ++y) {
-    line.clear();
+    line1.clear();
+    line2.clear();
     for (int x = 0; x < SIZE_X; ++x) {
-      int color = cells[pos(y, x)].color;
-      char c = color == BLACK ? 'x' : color == WHITE ? 'o' : '.';
-      line += ' ';
-      line += c;
+      Cell c = cells[pos(y, x)];
+      line1 += ' ';
+      line1 += charForColor(c.color);
+      line2 += ' ';
+      line2 += '0' + c.group;
     }
-    printf("\n%s", line.c_str());
+    printf("\n%s    %s", line1.c_str(), line2.c_str());
+  }
+  printf("\n\nGroups:\n");
+  for (int gid = 0; gid < MAX_GROUPS; ++gid) {
+    Group g = groups[gid];
+    if (g.size > 0) {
+      printf("%d size %d libs %d pos %d\n", gid, g.size, g.libs, g.pos);
+    }
   }
   printf("\n\n");
 }
