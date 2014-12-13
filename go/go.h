@@ -10,9 +10,6 @@ enum {
   N = SIZE_X * SIZE_Y,
   BIG_N = BIG_X * BIG_Y,
 
-  DELTA_UP = -BIG_X,
-  DELTA_DOWN = BIG_X,  
-
   BLACK = 0,
   WHITE = 1,
   EMPTY = 2,

@@ -7,7 +7,7 @@
 
 using namespace std;
 
-const int DELTAS[] = {1, -1, DELTA_UP, DELTA_DOWN};
+const int DELTAS[] = {1, -1, -BIG_X, BIG_X};
 
 int pos(int y, int x) { return (y + 1) * BIG_X + x + 1; }
 
@@ -17,7 +17,6 @@ static const int idx[N] = { REP(0), REP(1), REP(2), REP(3), REP(4), REP(5) };
 #undef REP
 #endif
 
-const auto Black = [](int color) { return color == BLACK; };
 const auto Empty = [](int color) { return color == EMPTY; };
 
 struct Cell {
@@ -117,8 +116,8 @@ protected:
   void addNeighbours(int p) {
     add(p + 1);
     add(p - 1);
-    add(p + DELTA_DOWN);
-    add(p + DELTA_UP);
+    add(p + BIG_X);
+    add(p - BIG_X);
   }
 
   bool atEnd() const { return size <= 0; }
@@ -252,17 +251,11 @@ void walk(int p, T t) {
     const int p = open.pop();
     STEP(p + 1);
     STEP(p - 1);
-    STEP(p + DELTA_UP);
-    STEP(p - DELTA_UP);
+    STEP(p + BIG_X);
+    STEP(p - BIG_X);
   }
 #undef STEP
 }
-
-/*
-#define STEP(inip) { int p = inip; if (!seen.testAndSet(p)) { if (cells[p].color == color) { open.push(p); PROCESS; } else { ELSE; } } }
-
-#define WALK(p) open.push(p); PROCESS; do { int p = open.pop(); STEP(p+1); STEP(p-1); STEP(p+DELTA_UP); STEP(p-DELTA_UP); } while (!open.isEmpty());
-*/
 
 void Board::updateGroupLibs(int p) {
   int libs = 0;
@@ -311,19 +304,19 @@ bool Board::move(int pos, int col) {
   assert(color(pos) == EMPTY);
   assert(col == WHITE || col == BLACK);
   int otherCol = 1 - col;
-  int neighb[] = {pos+1, pos-1, pos+DELTA_UP, pos-DELTA_UP};
+  int neighb[] = {pos+1, pos-1, pos+BIG_X, pos-BIG_X};
   bool captured = false;
   for (int p : neighb) {
     if (color(p) == otherCol && libs(p) == 1) {
-      remove(p, otherCol);
       group(p)->size = 0;
+      remove(p, otherCol);
       captured = true;
     }
   }
   if (captured) {
     for (Group *g = groups, *end = groups + MAX_GROUPS; g < end; ++g) {
       if (g->size > 0 && groupColor(*g) == col) {
-          g->libs = libs(g->pos);
+        updateGroupLibs(g->pos);
       }
     }
   } else {
@@ -334,7 +327,7 @@ bool Board::move(int pos, int col) {
       }
     }
     if (suicide) { return false; }
-  }
+  }  
   Group *g = 0;
   for (int p : neighb) {
     if (color(p) == col) {
@@ -343,6 +336,8 @@ bool Board::move(int pos, int col) {
       } else if (group(p) != g) {
         group(p)->size = 0;
       }
+    } else if (color(p) == otherCol) {
+      --group(p)->libs;
     }
   }
   if (!g) { g = newGroup(); }
@@ -352,9 +347,7 @@ bool Board::move(int pos, int col) {
   return true;
 }
 
-char charForColor(int color) {
-  return color == BLACK ? 'x' : color == WHITE ? 'o' : '.';
-}
+char charForColor(int color) { return color == BLACK ? 'x' : color == WHITE ? 'o' : '.'; }
 
 void Board::print() {
   std::string line1, line2;
@@ -394,20 +387,10 @@ int main() {
     char c = buf[0];
     int color = c == 'b' ? BLACK : c == 'w' ? WHITE : EMPTY;
     if ((color == BLACK || color == WHITE) && valid(y, x) && b.color(pos(y, x)) == EMPTY) {
-      b.move(pos(y, x), color);
+      if (!b.move(pos(y, x), color)) {
+        printf("suicide\n");
+      }
       b.print();
     }
   }
-  
-  /*  
-  b.move(pos(1, 1), BLACK);
-  b.move(pos(0, 1), BLACK);
-  b.print();
-
-  auto black = b.region(pos(1, 1), Black);
-  print(black);
-  auto libs = border(black, Empty);
-  print(libs);
-  printf("Dead %d\n", isDead(black));
-  */
 }
