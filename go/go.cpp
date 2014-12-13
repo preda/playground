@@ -1,7 +1,6 @@
 #include "go.h"
 
 #include <bitset>
-#include <string>
 #include <cassert>
 #include <cstdio>
 
@@ -18,6 +17,8 @@ static const int idx[N] = { REP(0), REP(1), REP(2), REP(3), REP(4), REP(5) };
 #endif
 
 const auto Empty = [](int color) { return color == EMPTY; };
+
+bool isBlackOrWhite(int color) { return color == BLACK || color == WHITE; }
 
 struct Cell {
 public:
@@ -276,7 +277,7 @@ void Board::updateGroupLibs(int p) {
 
 void Board::updateGroup(int p, int gid) {
   int col = color(p);
-  assert(col == BLACK || col == WHITE);  
+  assert(isBlackOrWhite(col));  
   Cell cell(col, gid);
   int libs = 0;
   int size = 0;
@@ -295,7 +296,7 @@ void Board::updateGroup(int p, int gid) {
 
 void Board::removeGroup(int p) {
   int col = color(p);
-  assert(col == BLACK || col == WHITE);
+  assert(isBlackOrWhite(col));
   Cell empty = Cell(EMPTY, 0);
   Cell *cells = this->cells;
   walk(p, [cells, col](int p) {
@@ -318,7 +319,7 @@ int Board::remove(int p, int color) {
 
 bool Board::move(int pos, int col) {
   assert(color(pos) == EMPTY);
-  assert(col == WHITE || col == BLACK);
+  assert(isBlackOrWhite(col));
   int otherCol = 1 - col;
   int neighb[] = {pos+1, pos-1, pos+BIG_X, pos-BIG_X};
   bool captured = false;
@@ -366,18 +367,18 @@ bool Board::move(int pos, int col) {
 char charForColor(int color) { return color == BLACK ? 'x' : color == WHITE ? 'o' : '.'; }
 
 void Board::print() {
-  std::string line1, line2;
+  char line1[256], line2[256];
   for (int y = 0; y < SIZE_Y; ++y) {
-    line1.clear();
-    line2.clear();
     for (int x = 0; x < SIZE_X; ++x) {
       Cell c = cells[pos(y, x)];
-      line1 += ' ';
-      line1 += charForColor(c.color);
-      line2 += ' ';
-      line2 += '0' + c.group;
+      line1[2*x] = ' ';
+      line1[2*x+1] = charForColor(c.color);
+      line2[2*x] = ' ';
+      line2[2*x+1] = '0' + c.group;
     }
-    printf("\n%s    %s", line1.c_str(), line2.c_str());
+    line1[SIZE_X*2] = 0;
+    line2[SIZE_X*2] = 0;
+    printf("\n%s    %s", line1, line2);
   }
   printf("\n\nGroups:\n");
   for (int gid = 0; gid < MAX_GROUPS; ++gid) {
@@ -389,7 +390,7 @@ void Board::print() {
   printf("\n\n");
 }
 
-bool valid(int y, int x) { return y >= 0 && y < SIZE_Y && x >= 0 && x < SIZE_X; }
+bool isValid(int y, int x) { return y >= 0 && y < SIZE_Y && x >= 0 && x < SIZE_X; }
 
 int main() {
   Board b;
@@ -402,11 +403,15 @@ int main() {
     scanf("%1s %1d %1d", buf, &y, &x);
     char c = buf[0];
     int color = c == 'b' ? BLACK : c == 'w' ? WHITE : EMPTY;
-    if ((color == BLACK || color == WHITE) && valid(y, x) && b.color(pos(y, x)) == EMPTY) {
+    if (isBlackOrWhite(color) && isValid(y, x) && b.color(pos(y, x)) == EMPTY) {
       if (!b.move(pos(y, x), color)) {
         printf("suicide\n");
       }
       b.print();
     }
   }
+}
+
+void Board::uncondLife() {
+
 }
