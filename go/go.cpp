@@ -1,9 +1,9 @@
 #include "go.h"
 
 #include <bitset>
+#include <string>
 #include <cassert>
 #include <cstdio>
-#include <string>
 
 using namespace std;
 
@@ -78,23 +78,22 @@ public:
   Group groups[MAX_GROUPS];
 
   Board();
+  
   int color(int p) const { return cells[p].color; }
-  Group *group(int p) const { return groups + cells[p].group; }
-  int libs(int p) const { return group(p)->libs; }
+  Group *group(int p) { return groups + cells[p].group; }
+  Group *newGroup();
+  int libs(int p) { return group(p)->libs; }
+  int groupColor(const Group &g) { return color(g.pos); }
   
   bool move(int p, int color);
-
+  int remove(int p, int color);
+  
+  void updateGroup(int p, int gid);
+  void updateGroupLibs(int p);
+  
   template<typename T> auto region(int start, T accept);
   auto regionOfColor(int start, int color);
 
-  int nearGroupsOfColor(int p, int color, int *outGroups);
-  int nearLibs(int p);
-  int newGid();
-  int remove(int p, int color);
-  int libs(int p);
-  int libsAndSetGroup(int p, int group);
-  int groupColor(const Group &g) { return cells[g.pos].color; }
-  
   void print();
 };
 
@@ -256,6 +255,7 @@ void walk(int p, T t) {
     STEP(p + DELTA_UP);
     STEP(p - DELTA_UP);
   }
+#undef STEP
 }
 
 /*
@@ -264,89 +264,41 @@ void walk(int p, T t) {
 #define WALK(p) open.push(p); PROCESS; do { int p = open.pop(); STEP(p+1); STEP(p-1); STEP(p+DELTA_UP); STEP(p-DELTA_UP); } while (!open.isEmpty());
 */
 
-int Board::libs(int p, int color) {
-  int n = 0;
-  walk(p, [&n, cells, color](int p) {
-      int c = cells[p].color;
-      if (c == color) { return true; }
-      if (c == EMPTY) { ++n; }
-      return false;
-    });
-}
-
-void Board::updateGroup(int p, int group) {
-  int col = color(p);
-  assert(col == BLACK || col == WHITE);  
-  Cell cell(col, group);
+void Board::updateGroupLibs(int p) {
   int libs = 0;
-  int size = 0;
-  walk(p, [&libs, &size, cells, color, cell](int p) {
+  int col = color(p);
+  Cell *cells = this->cells;
+  walk(p, [&libs, cells, col](int p) {
       int c = cells[p].color;
-      if (c == color) { cells[p] = cell; ++size; return true; }
+      if (c == col) { return true; }
       if (c == EMPTY) { ++libs; }
       return false;
     });
-  Group *g = groups + group;
+  group(p)->libs = libs;
+}
+
+void Board::updateGroup(int p, int gid) {
+  int col = color(p);
+  assert(col == BLACK || col == WHITE);  
+  Cell cell(col, gid);
+  int libs = 0;
+  int size = 0;
+  Cell *cells = this->cells;
+  walk(p, [&libs, &size, cells, col, cell](int p) {
+      int c = cells[p].color;
+      if (c == col) { cells[p] = cell; ++size; return true; }
+      if (c == EMPTY) { ++libs; }
+      return false;
+    });
+  Group *g = groups + gid;
   g->size = size;
   g->libs = libs;
   g->pos = p;
 }
-  
-#define PROCESS cells[p] = cell
-#define ELSE if (cells[p].color == EMPTY) { ++n; }
-  Bitset seen;
-  Vect<byte, N> open;
-  int color = cells[p].color;
-  assert(color == WHITE || color == BLACK);
-  int n = 0;
-  Cell cell(color, group);
-  WALK(p);
-  return n;
-#undef PROCESS
-#undef ELSE
-}
 
-int Board::libs(int p, int group) {
-#define PROCESS
-#define ELSE if (cells[p].color == EMPTY) { ++n; }
-  Bitset seen;
-  Vect<byte, N> open;
-  int color = cells[p].color;
-  assert(color == WHITE || color == BLACK);
-  int n = 0;
-  Cell cell(color, group);
-  WALK(p);
-  return n;
-#undef PROCESS
-#undef ELSE
-}
-
-int Board::nearGroupsOfColor(int p, int color, int *out) {
-  int n = 0;
-  out[0] = out[1] = out[2] = out[3] = 0;
-  for (int delta : DELTAS) {
-    int pp = p + delta;
-    Cell c = cells[pp];
-    if (c.color == color) {
-      int g = c.group;
-      if (out[0] == g || out[1] == g || out[2] == g) { continue; }
-      out[n++] = g;
-    }
-  }
-  return n;
-}
-
-int Board::nearLibs(int p) {
-  int n = 0;
-  for (int delta : DELTAS) { if (cells[p + delta].color == EMPTY) { ++n; } }
-  return n;
-}
-
-int Board::newGid() {
-  for (int i = 1; i < MAX_GROUPS; ++i) {
-    if (groups[i].size == 0) {
-      return i;
-    }
+Group *Board::newGroup() {
+  for (Group *g = groups, *end = groups + MAX_GROUPS; g < end; ++g) {
+    if (g->size == 0) { return g; }
   }
   assert(false && "max groups exceeded");
 }
@@ -356,7 +308,7 @@ int Board::remove(int p, int color) {
 }
 
 bool Board::move(int pos, int col) {
-  assert(color(p) == EMPTY);
+  assert(color(pos) == EMPTY);
   assert(col == WHITE || col == BLACK);
   int otherCol = 1 - col;
   int neighb[] = {pos+1, pos-1, pos+DELTA_UP, pos-DELTA_UP};
