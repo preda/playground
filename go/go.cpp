@@ -79,6 +79,9 @@ public:
 
   Board();
   int color(int p) const { return cells[p].color; }
+  Group *group(int p) const { return groups + cells[p].group; }
+  int libs(int p) const { return group(p)->libs; }
+  
   bool move(int p, int color);
 
   template<typename T> auto region(int start, T accept);
@@ -90,6 +93,7 @@ public:
   int remove(int p, int color);
   int libs(int p);
   int libsAndSetGroup(int p, int group);
+  int groupColor(const Group &g) { return cells[g.pos].color; }
   
   void print();
 };
@@ -238,11 +242,56 @@ public:
   }
 };
 
+template<typename T>
+void walk(int p, T t) {
+#define STEP(p) if (!seen.testAndSet(p) && t(p)) { open.push(p); }
+  Bitset seen;
+  Vect<byte, N> open;
+  // if (t(p)) { open.push(p); }
+  STEP(p);
+  while (!open.isEmpty()) {
+    const int p = open.pop();
+    STEP(p + 1);
+    STEP(p - 1);
+    STEP(p + DELTA_UP);
+    STEP(p - DELTA_UP);
+  }
+}
+
+/*
 #define STEP(inip) { int p = inip; if (!seen.testAndSet(p)) { if (cells[p].color == color) { open.push(p); PROCESS; } else { ELSE; } } }
 
 #define WALK(p) open.push(p); PROCESS; do { int p = open.pop(); STEP(p+1); STEP(p-1); STEP(p+DELTA_UP); STEP(p-DELTA_UP); } while (!open.isEmpty());
+*/
 
-int Board::libsAndSetGroup(int p, int group) {
+int Board::libs(int p, int color) {
+  int n = 0;
+  walk(p, [&n, cells, color](int p) {
+      int c = cells[p].color;
+      if (c == color) { return true; }
+      if (c == EMPTY) { ++n; }
+      return false;
+    });
+}
+
+void Board::updateGroup(int p, int group) {
+  int col = color(p);
+  assert(col == BLACK || col == WHITE);  
+  Cell cell(col, group);
+  int libs = 0;
+  int size = 0;
+  walk(p, [&libs, &size, cells, color, cell](int p) {
+      int c = cells[p].color;
+      if (c == color) { cells[p] = cell; ++size; return true; }
+      if (c == EMPTY) { ++libs; }
+      return false;
+    });
+  Group *g = groups + group;
+  g->size = size;
+  g->libs = libs;
+  g->pos = p;
+}
+  
 #define PROCESS cells[p] = cell
 #define ELSE if (cells[p].color == EMPTY) { ++n; }
   Bitset seen;
@@ -306,90 +355,48 @@ int Board::remove(int p, int color) {
   return set(regionOfColor(p, color), Cell(EMPTY, 0));
 }
 
-bool Board::move(int p, int color) {
-  Cell &cell = cells[p];
-  assert(cell.color == EMPTY);
-  assert(color == WHITE || color == BLACK);
-  int otherCol = 1 - color;
-  bool hasRemoved = false;
-  for (int delta : DELTAS) {
-    int pp = p + delta;
-    if (cells[pp].color == otherCol) {
-      int gid = cells[pp].group;
-      if (groups[gid].libs == 1) {
-        remove(pp, otherCol);
-        groups[gid].size = 0;
-        hasRemoved = true;
+bool Board::move(int pos, int col) {
+  assert(color(p) == EMPTY);
+  assert(col == WHITE || col == BLACK);
+  int otherCol = 1 - col;
+  int neighb[] = {pos+1, pos-1, pos+DELTA_UP, pos-DELTA_UP};
+  bool captured = false;
+  for (int p : neighb) {
+    if (color(p) == otherCol && libs(p) == 1) {
+      remove(p, otherCol);
+      group(p)->size = 0;
+      captured = true;
+    }
+  }
+  if (captured) {
+    for (Group *g = groups, *end = groups + MAX_GROUPS; g < end; ++g) {
+      if (g->size > 0 && groupColor(*g) == col) {
+          g->libs = libs(g->pos);
+      }
+    }
+  } else {
+    bool suicide = true;
+    for (int p : neighb) {
+      if (color(p) == EMPTY || (color(p) == col && group(p)->libs > 1)) {
+        suicide = false;
+      }
+    }
+    if (suicide) { return false; }
+  }
+  Group *g = 0;
+  for (int p : neighb) {
+    if (color(p) == col) {
+      if (!g) {
+        g = group(p);
+      } else if (group(p) != g) {
+        group(p)->size = 0;
       }
     }
   }
-  if (hasRemoved) {
-    for (int gid = 0; gid < MAX_GROUPS; ++gid) {
-      if (groups[gid].size > 0) {
-        
-      }
-      Group &g = groups[gid];
-      if (g.size > 0 && cells[g.pos].color == color) {
-        g.libs = nLibs(g.pos);
-      }
-    }
-
-  }
-  
-  for (int gid : gids) {
-    
-  }
-  
-  
-  int gidsOther[4];
-  int nOther = nearGroupsOfColor(p, otherCol, gidsOther);
-  bool anyRemoved = false;
-  for (int i = 0; i < nOther; ++i) {
-    int gid = gidsOther[i];
-    Group &group = groups[gid];
-    assert(group.size > 0 && group.libs > 0);
-    if (--group.libs == 0) {
-      int size = remove(group.pos, otherCol);
-      assert(size == group.size);
-      group.size = 0;
-      anyRemoved = true;      
-    }
-  }
-  
-  if (anyRemoved) {
-  }
-
-  int newLibs = nearLibs(p);
-
-  int gidsSame[4];
-  int nSame = nearGroupsOfColor(p, color, gidsSame);
-  printf("other %d same %d libs %d\n", nOther, nSame, newLibs);
-
-  int sumLibs = 0;
-  int sumSize = 0;
-  for (int i = 0; i < nSame; ++i) {
-    int gid = gidsSame[i];
-    sumLibs += groups[gid].libs;
-    sumSize += groups[gid].size;
-  }
-  int libs = sumLibs + newLibs - nSame;
-  assert(libs >= 0);
-  if (libs == 0) {
-    for (int i = 0; i < nOther; ++i) {
-      ++groups[gidsOther[i]].libs;
-    }
-    return false;
-  }
-  int gid = nSame == 0 ? newGid() : gidsSame[0];
-  groups[gid] = Group(sumSize + 1, libs, p);
-  for (int i = 1; i < nSame; ++i) {
-    Group &g = groups[gidsSame[i]];
-    for (int pp : regionOfColor(g.pos, color)) {
-      cells[pp].group = gid;
-    }
-    g.size = 0;
-  }
-  cell = Cell(color, gid);
+  if (!g) { g = newGroup(); }
+  int gid = g - groups;
+  cells[pos] = Cell(col, gid);
+  updateGroup(pos, gid);
   return true;
 }
 
