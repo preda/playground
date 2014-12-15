@@ -1,11 +1,8 @@
 #include "data.h"
 #include "go.h"
 
-#include <bitset>
-#include <cassert>
-#include <cstdio>
-
-using namespace std;
+#include <assert.h>
+#include <stdio.h>
 
 const int DELTAS[] = {1, -1, -BIG_X, BIG_X};
 
@@ -41,9 +38,6 @@ struct Group {
   byte pos;
 };
 
-template<typename T> class Region;
-template<typename R, typename T> class Region2;
-
 class Board {
 public:
   Cell cells[BIG_N];
@@ -63,124 +57,11 @@ public:
   void updateGroupLibs(int p);
   void removeGroup(int p);
   
-  template<typename T> auto region(int start, T accept);
-  auto regionOfColor(int start, int color);
-
   Set<byte, 4> neibGroupsOfColor(int p, int col);
   void bensonLife(int col);
   
   void print();
 };
-
-template<typename T, int openSize>
-class BaseIt {
-protected:
-  Cell * const cells;
-  const T accept;
-  int size;
-  bitset<BIG_N> seen;
-  byte open[openSize];
-
-  void add(int p) {
-    int color = cells[p].color;
-    if (accept(color) && color != BROWN && !seen[p]) {
-      seen[p] = true;
-      open[size++] = p;
-    }
-  }
-
-  void addNeighbours(int p) {
-    add(p + 1);
-    add(p - 1);
-    add(p + BIG_X);
-    add(p - BIG_X);
-  }
-
-  bool atEnd() const { return size <= 0; }
-
-  BaseIt(Cell *cells, T accept) : cells(cells), accept(accept), size(0) { } 
-
-public:
-  int operator*() {
-    assert(!atEnd());
-    return open[size - 1];
-  }
-
-  bool operator!=(const BaseIt &other) { return atEnd() != other.atEnd(); }
-};
-
-template<typename R, typename T>
-class Region2 {
-private:  
-  class Iterator : public BaseIt<T, 4> {
-  private:
-    typedef typename R::Iterator SubIt;
-    SubIt it, itEnd;
-
-    void lookAhead() {
-      while (this->atEnd() && it != itEnd) {
-        this->addNeighbours(*it);
-        ++it;
-      }
-    }
-        
-  public:
-    Iterator(Cell *cells, T accept, SubIt it, SubIt itEnd) :
-      BaseIt<T, 4>(cells, accept), it(it), itEnd(itEnd) {
-      lookAhead();
-    }
-
-    void operator++() {
-      assert(!this->atEnd());
-      --this->size;
-      if (this->atEnd()) { lookAhead(); }
-    }
-  };
-
-  Board *board;
-  R subreg;
-  const T accept;
-      
-public:
-  Region2(Board *b, R subreg, T accept) : board(b), subreg(subreg), accept(accept) { }
-  Iterator begin() { return Iterator(board->cells, accept, subreg.begin(), subreg.end()); }
-  Iterator end()   { return Iterator(board->cells, accept, subreg.end(), subreg.end()); }
-};
-
-
-template<typename T>
-class Region {
-public:
-  Board *board;
-  const int start;
-  const T accept;
-
-public:
-  class Iterator: public BaseIt<T, N> {
-  public:
-    Iterator(Cell *cells, T accept, int start) : BaseIt<T, N>(cells, accept) { this->add(start); }
-    Iterator(T accept) : BaseIt<T, N>(0, accept) { }
-
-    void operator++() {
-      int p = this->operator*();
-      --this->size;
-      this->addNeighbours(p);
-    }
-  };
-
-  Region(Board *b, int start, T accept) : board(b), start(start), accept(accept) { }
-  Iterator begin() { return Iterator(board->cells, accept, start); }
-  Iterator end()   { return Iterator(accept); }
-};
-
-template<typename T>
-auto Board::region(int start, T accept) {
-  return Region<T>(this, start, accept);
-}
-
-auto Board::regionOfColor(int start, int color) {
-  return region(start, [color](int c) { return c == color; });
-}
 
 Board::Board() {
   for (int y = 0; y < SIZE_Y + 1; ++y) {
@@ -191,9 +72,7 @@ Board::Board() {
     cells[x].color = BROWN;
     cells[(SIZE_Y + 1) * BIG_X + x].color = BROWN;
   }
-  // groups[0] = Group((BIG_X + SIZE_Y) * 2, 2, 0);
 }
-
 
 template<typename T>
 void walk(int p, T t) {
