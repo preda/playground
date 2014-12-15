@@ -4,16 +4,8 @@
 #include <stdio.h>
 
 int pos(int y, int x) { return (y + 1) * BIG_X + x + 1; }
-
-/*
-#if SIZE_X == 6 and SIZE_Y == 6
-#define REP(a) pos(a, 0), pos(a, 1), pos(a, 2), pos(a, 3), pos(a, 4), pos(a, 5)
-static const int idx[N] = { REP(0), REP(1), REP(2), REP(3), REP(4), REP(5) };
-#undef REP
-#endif
-*/
-
 bool isBlackOrWhite(int color) { return color == BLACK || color == WHITE; }
+bool isValid(int y, int x) { return y >= 0 && y < SIZE_Y && x >= 0 && x < SIZE_X; }
 
 struct Cell {
 public:
@@ -71,9 +63,10 @@ Board::Board() {
   }
 }
 
+#define STEP(p) if (!seen.testAndSet(p) && t(p)) { open.push(p); }
+
 template<typename T>
 void walk(int p, T t) {
-#define STEP(p) if (!seen.testAndSet(p) && t(p)) { open.push(p); }
   Bitset seen;
   Vect<byte, N> open;
   STEP(p);
@@ -84,8 +77,22 @@ void walk(int p, T t) {
     STEP(p + DELTA);
     STEP(p - DELTA);
   }
-#undef STEP
 }
+
+template<typename T>
+void walk(Bitset &seen, int p, T t) {
+  Vect<byte, N> open;
+  STEP(p);
+  while (!open.isEmpty()) {
+    const int p = open.pop();
+    STEP(p + 1);
+    STEP(p - 1);
+    STEP(p + DELTA);
+    STEP(p - DELTA);
+  }
+}
+  
+#undef STEP
 
 void Board::updateGroupLibs(int p) {
   int libs = 0;
@@ -210,8 +217,6 @@ void Board::print() {
   printf("\n\n");
 }
 
-bool isValid(int y, int x) { return y >= 0 && y < SIZE_Y && x >= 0 && x < SIZE_X; }
-
 int main() {
   Board b;
   b.print();
@@ -251,8 +256,11 @@ unsigned Board::neibGroupsOfColor(int p, int col) {
 }
 
 struct Region {
-  Region(): p(0), border(0), vital() { }
-  Region(int p, unsigned vitalBits, unsigned border) : p(p), border(border) {
+  unsigned border;
+  Vect<byte, 4> vital;
+
+  Region(): border(0), vital() { }
+  Region(unsigned vitalBits, unsigned border) : border(border) {
     int i = 0;
     while (vitalBits) {
       if (vitalBits & 1) { vital.push(i); }
@@ -260,10 +268,14 @@ struct Region {
       vitalBits >>= 1;
     }
   }
-  
-  int  p;
-  unsigned border;
-  Vect<byte, 4> vital;
+
+  void print() {
+    printf("region border %x vital ", border);
+    for (int gid : vital) {
+      printf("%d ", gid);
+    }
+    printf("\n");
+  }
 };
 
 Vect<byte, MAX_GROUPS> Board::bensonAlive(int col) {
@@ -274,10 +286,12 @@ Vect<byte, MAX_GROUPS> Board::bensonAlive(int col) {
   
   for (int y = 0; y < SIZE_Y; ++y) {
     for (int p = pos(y, 0), end = p + SIZE_X; p < end; ++p) {
-      if (color(p) == EMPTY && !seen.testAndSet(p)) {
-        unsigned vital = neibGroupsOfColor(p, col);
+      if (color(p) == EMPTY && !seen.test(p)) {
+        unsigned vital = -1;
         unsigned border = 0;
-        walk(p, [&vital, &border, this, col](int p) {
+        // printf("walk(%d): ", p);
+        walk(seen, p, [&vital, &border, this, col](int p) {
+            // printf("%d ", p);
             int c = cells[p].color;
             if (c == EMPTY) {
               unsigned bits = neibGroupsOfColor(p, col);
@@ -289,20 +303,23 @@ Vect<byte, MAX_GROUPS> Board::bensonAlive(int col) {
             }
             return false;
           });
+        // printf("\n");
         if (vital) {
-          regions.push(Region(p, vital, border));
+          Region r(vital, border);
+          regions.push(r);
+          // printf("p %d; ", p); r.print();         
         }
       }
     }
   }
 
-  bool anyChange = false;
   Vect<byte, MAX_GROUPS> aliveGids;
-  do {
+  while (true) {
     int vitality[MAX_GROUPS] = {0};
     unsigned vitalBits = 0;
     aliveGids.clear();
     for (Region r : regions) {
+      // r.print();
       for (byte gid : r.vital) {
         if (++vitality[gid] >= 2) {
           vitalBits |= (1 << gid);
@@ -310,13 +327,15 @@ Vect<byte, MAX_GROUPS> Board::bensonAlive(int col) {
         }
       }
     }
-    if (!vitalBits) { break; }
-    for (Region r : regions) {
+    if (aliveGids.isEmpty()) { break; }
+    bool anyChange = false;
+    for (Region &r : regions) {
       if (!r.vital.isEmpty() && ((vitalBits & r.border) != r.border)) {
         r.vital.clear();
         anyChange = true;
       }
     }
-  } while(anyChange);
+    if (!anyChange) { break; }
+  }
   return aliveGids;  
 }

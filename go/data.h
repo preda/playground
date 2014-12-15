@@ -1,3 +1,5 @@
+// -*- C++ -*-
+
 #include "go.h"
 
 template<typename T, int N>
@@ -27,5 +29,9 @@ public:
     bool bit = bits & mask;
     if (!bit) { bits |= mask; }
     return bit;
+  }
+
+  bool test(int p) {
+    return bits & (1ull << p);
   }
 };
