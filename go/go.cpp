@@ -1,20 +1,17 @@
 #include "data.h"
 #include "go.h"
-
 #include <assert.h>
 #include <stdio.h>
 
-const int DELTAS[] = {1, -1, -BIG_X, BIG_X};
-
 int pos(int y, int x) { return (y + 1) * BIG_X + x + 1; }
 
+/*
 #if SIZE_X == 6 and SIZE_Y == 6
 #define REP(a) pos(a, 0), pos(a, 1), pos(a, 2), pos(a, 3), pos(a, 4), pos(a, 5)
 static const int idx[N] = { REP(0), REP(1), REP(2), REP(3), REP(4), REP(5) };
 #undef REP
 #endif
-
-const auto Empty = [](int color) { return color == EMPTY; };
+*/
 
 bool isBlackOrWhite(int color) { return color == BLACK || color == WHITE; }
 
@@ -57,8 +54,8 @@ public:
   void updateGroupLibs(int p);
   void removeGroup(int p);
   
-  Set<byte, 4> neibGroupsOfColor(int p, int col);
-  void bensonLife(int col);
+  unsigned neibGroupsOfColor(int p, int col);
+  Vect<byte, MAX_GROUPS> bensonAlive(int col);
   
   void print();
 };
@@ -84,8 +81,8 @@ void walk(int p, T t) {
     const int p = open.pop();
     STEP(p + 1);
     STEP(p - 1);
-    STEP(p + BIG_X);
-    STEP(p - BIG_X);
+    STEP(p + DELTA);
+    STEP(p - DELTA);
   }
 #undef STEP
 }
@@ -231,56 +228,95 @@ int main() {
         printf("suicide\n");
       }
       b.print();
+      auto alive = b.bensonAlive(color);
+      if (!alive.isEmpty()) {
+        printf("Alive: ");
+        for (int gid : alive) {
+          printf("%d ", gid);
+        }
+        printf("\n");
+      }
     }
   }
 }
 
-Set<byte, 4> Board::neibGroupsOfColor(int p, int col) {
-  Set<byte, 4> gids;
+unsigned Board::neibGroupsOfColor(int p, int col) {
+  unsigned bits = 0;
   Cell c;
-  c = cells[p+1]; if (c.color == col) { gids.push(c.group); }
-  c = cells[p-1]; if (c.color == col) { gids.push(c.group); }
-  c = cells[p+DELTA]; if (c.color == col) { gids.push(c.group); }
-  c = cells[p-DELTA]; if (c.color == col) { gids.push(c.group); }
-  return gids;
+  c = cells[p+1]; if (c.color == col) { bits |= (1 << c.group); }
+  c = cells[p-1]; if (c.color == col) { bits |= (1 << c.group); }
+  c = cells[p+DELTA]; if (c.color == col) { bits |= (1 << c.group); }
+  c = cells[p-DELTA]; if (c.color == col) { bits |= (1 << c.group); }
+  return bits;
 }
 
-struct Reg {
-  Set<byte, MAX_GROUPS> borderGids;
-  Set<byte, 4> vitalGids;
-  int p;
-  
-  Reg(Set<byte, 4> gids) : vitalGids(gids) { }
-  
-  void update(Set<byte, 4> gids) {
-    if (!vitalGids.isEmpty()) {
-      vitalGids.intersect(gids);
-      borderGids.merge(gids);
+struct Region {
+  Region(): p(0), border(0), vital() { }
+  Region(int p, unsigned vitalBits, unsigned border) : p(p), border(border) {
+    int i = 0;
+    while (vitalBits) {
+      if (vitalBits & 1) { vital.push(i); }
+      ++i;
+      vitalBits >>= 1;
     }
   }
+  
+  int  p;
+  unsigned border;
+  Vect<byte, 4> vital;
 };
 
-void Board::bensonLife(int col) {
+Vect<byte, MAX_GROUPS> Board::bensonAlive(int col) {
   assert(isBlackOrWhite(col));
   int otherCol = 1 - col;
+  Vect<Region, MAX_GROUPS> regions;
   Bitset seen;
+  
   for (int y = 0; y < SIZE_Y; ++y) {
-    int p = pos(y, 0);
     for (int p = pos(y, 0), end = p + SIZE_X; p < end; ++p) {
       if (color(p) == EMPTY && !seen.testAndSet(p)) {
-        Reg reg(neibGroupsOfColor(p, col));
-        // Cell *cells = this->cells;
-        walk(p, [&reg, this, col](int p) {
+        unsigned vital = neibGroupsOfColor(p, col);
+        unsigned border = 0;
+        walk(p, [&vital, &border, this, col](int p) {
             int c = cells[p].color;
             if (c == EMPTY) {
-              reg.update(neibGroupsOfColor(p, col));
+              unsigned bits = neibGroupsOfColor(p, col);
+              vital &= bits;
+              border |= bits;
               return true;
             } else if (c == (1-col)) {
               return true;
             }
             return false;
-          });        
+          });
+        if (vital) {
+          regions.push(Region(p, vital, border));
+        }
       }
     }
   }
+
+  bool anyChange = false;
+  Vect<byte, MAX_GROUPS> aliveGids;
+  do {
+    int vitality[MAX_GROUPS] = {0};
+    unsigned vitalBits = 0;
+    aliveGids.clear();
+    for (Region r : regions) {
+      for (byte gid : r.vital) {
+        if (++vitality[gid] >= 2) {
+          vitalBits |= (1 << gid);
+          aliveGids.push(gid);
+        }
+      }
+    }
+    if (!vitalBits) { break; }
+    for (Region r : regions) {
+      if (!r.vital.isEmpty() && ((vitalBits & r.border) != r.border)) {
+        r.vital.clear();
+        anyChange = true;
+      }
+    }
+  } while(anyChange);
+  return aliveGids;  
 }

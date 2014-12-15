@@ -19,6 +19,7 @@ public:
   T *end() { return v + size; }
 };
 
+/*
 template<typename T, int N>
 class Set : public Vect<T, N> {
 public:  
@@ -33,6 +34,7 @@ public:
     for (T e : other) { push(e); }
   }  
 };
+*/
 
 class Bitset {
   unsigned long long bits = 0;

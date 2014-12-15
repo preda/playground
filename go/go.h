@@ -18,5 +18,5 @@ enum {
   EMPTY = 2,
   BROWN = 3,
 
-  MAX_GROUPS = N / 4,
+  MAX_GROUPS = N / 2,
 };
