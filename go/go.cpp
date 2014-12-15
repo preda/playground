@@ -1,3 +1,4 @@
+#include "data.h"
 #include "go.h"
 
 #include <bitset>
@@ -42,38 +43,6 @@ struct Group {
 
 template<typename T> class Region;
 template<typename R, typename T> class Region2;
-/*
-template<typename R>
-void print(R r) {
-  for (int p : r) {
-    printf("%d ", p);
-  }
-  printf("\n");
-}
-
-template<typename R> bool isEmpty(R r) { return !(r.begin() != r.end()); }
-
-template<typename R, typename T> Region2<R, T> border(R reg, T accept) {
-  return Region2<R, T>(reg.board, reg, accept);
-}
-
-template<typename R> bool isDead(R region) {
-  return !isEmpty(region) && isEmpty(border(region, Empty));
-}
-*/
-
-/*
-template<typename T>
-int set(Region<T> r, Cell cell) {
-  Cell *cells = r.board->cells;
-  int n = 0;
-  for (int p : r) {
-    cells[p] = cell;
-    ++n;
-  }
-  return n;
-}
-*/
 
 class Board {
 public:
@@ -89,7 +58,6 @@ public:
   int groupColor(const Group &g) { return color(g.pos); }
   
   bool move(int p, int color);
-  // int remove(int p, int color);
   
   void updateGroup(int p, int gid);
   void updateGroupLibs(int p);
@@ -98,6 +66,9 @@ public:
   template<typename T> auto region(int start, T accept);
   auto regionOfColor(int start, int color);
 
+  Set<byte, 4> neibGroupsOfColor(int p, int col);
+  void bensonLife(int col);
+  
   void print();
 };
 
@@ -223,34 +194,12 @@ Board::Board() {
   // groups[0] = Group((BIG_X + SIZE_Y) * 2, 2, 0);
 }
 
-template<typename T, int N>
-class Vect {
-  T v[N];
-  int size = 0;
-
-public:
-  void push(T t) { v[size++] = t; }
-  T pop() { return v[--size]; }
-  bool isEmpty() { return size <= 0; }
-};
-
-class Bitset {
-  unsigned long long bits = 0;
-public:
-  bool testAndSet(int p) {
-    unsigned long long mask = (1ull << p);
-    bool bit = bits & mask;
-    if (!bit) { bits |= mask; }
-    return bit;
-  }
-};
 
 template<typename T>
 void walk(int p, T t) {
 #define STEP(p) if (!seen.testAndSet(p) && t(p)) { open.push(p); }
   Bitset seen;
   Vect<byte, N> open;
-  // if (t(p)) { open.push(p); }
   STEP(p);
   while (!open.isEmpty()) {
     const int p = open.pop();
@@ -311,11 +260,6 @@ Group *Board::newGroup() {
   }
   assert(false && "max groups exceeded");
 }
-/*
-int Board::remove(int p, int color) {
-  return set(regionOfColor(p, color), Cell(EMPTY, 0));
-}
-*/
 
 bool Board::move(int pos, int col) {
   assert(color(pos) == EMPTY);
@@ -400,7 +344,7 @@ int main() {
     int y = -1;
     int x = -1;
     printf("> ");
-    scanf("%1s %1d %1d", buf, &y, &x);
+    if (scanf("%1s %1d %1d", buf, &y, &x) != 3) { continue; }
     char c = buf[0];
     int color = c == 'b' ? BLACK : c == 'w' ? WHITE : EMPTY;
     if (isBlackOrWhite(color) && isValid(y, x) && b.color(pos(y, x)) == EMPTY) {
@@ -412,6 +356,52 @@ int main() {
   }
 }
 
-void Board::uncondLife() {
+Set<byte, 4> Board::neibGroupsOfColor(int p, int col) {
+  Set<byte, 4> gids;
+  Cell c;
+  c = cells[p+1]; if (c.color == col) { gids.push(c.group); }
+  c = cells[p-1]; if (c.color == col) { gids.push(c.group); }
+  c = cells[p+DELTA]; if (c.color == col) { gids.push(c.group); }
+  c = cells[p-DELTA]; if (c.color == col) { gids.push(c.group); }
+  return gids;
+}
 
+struct Reg {
+  Set<byte, MAX_GROUPS> borderGids;
+  Set<byte, 4> vitalGids;
+  int p;
+  
+  Reg(Set<byte, 4> gids) : vitalGids(gids) { }
+  
+  void update(Set<byte, 4> gids) {
+    if (!vitalGids.isEmpty()) {
+      vitalGids.intersect(gids);
+      borderGids.merge(gids);
+    }
+  }
+};
+
+void Board::bensonLife(int col) {
+  assert(isBlackOrWhite(col));
+  int otherCol = 1 - col;
+  Bitset seen;
+  for (int y = 0; y < SIZE_Y; ++y) {
+    int p = pos(y, 0);
+    for (int p = pos(y, 0), end = p + SIZE_X; p < end; ++p) {
+      if (color(p) == EMPTY && !seen.testAndSet(p)) {
+        Reg reg(neibGroupsOfColor(p, col));
+        // Cell *cells = this->cells;
+        walk(p, [&reg, this, col](int p) {
+            int c = cells[p].color;
+            if (c == EMPTY) {
+              reg.update(neibGroupsOfColor(p, col));
+              return true;
+            } else if (c == (1-col)) {
+              return true;
+            }
+            return false;
+          });        
+      }
+    }
+  }
 }

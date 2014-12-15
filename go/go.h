@@ -1,3 +1,5 @@
+#pragma once
+
 typedef unsigned char byte;
 
 enum {
@@ -6,6 +8,7 @@ enum {
 
   BIG_X = SIZE_X + 2,
   BIG_Y = SIZE_Y + 2,
+  DELTA = BIG_X,
   
   N = SIZE_X * SIZE_Y,
   BIG_N = BIG_X * BIG_Y,
