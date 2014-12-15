@@ -19,23 +19,6 @@ public:
   T *end() { return v + size; }
 };
 
-/*
-template<typename T, int N>
-class Set : public Vect<T, N> {
-public:  
-  void push(T t) { if (!this->has(t)) { Vect<T, N>::push(t); } }
-  void intersect(Set<T, N> &other) {
-    auto v = *this;
-    this->clear();
-    for (T e : v) { if (other.has(e)) { push(e); } }
-  }
-  
-  template<int M> void merge(Set<T, M> &other) {
-    for (T e : other) { push(e); }
-  }  
-};
-*/
-
 class Bitset {
   unsigned long long bits = 0;
 public:
