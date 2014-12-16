@@ -24,21 +24,31 @@ public:
 class Bitset {
   unsigned long long bits = 0;
 public:
-  int size = 0;
 
   bool testAndSet(int p) {
     unsigned long long mask = (1ull << p);
     bool bit = bits & mask;
-    if (!bit) { bits |= mask; ++size; }
+    if (!bit) { bits |= mask; }
     return bit;
   }
 
+  void set(int p) {
+    bits |= (1ull << p);
+  }
+  
   bool test(int p) const {
     return bits & (1ull << p);
   }
 
   void clear() {
     bits = 0;
-    size = 0;
+  }
+
+  void operator|=(Bitset o) {
+    bits |= o.bits;
+  }
+
+  int size() const {
+    return __builtin_popcount(bits);
   }
 };

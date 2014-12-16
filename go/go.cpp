@@ -74,7 +74,7 @@ Board::Board() {
 #define STEP(p) if (!seen.testAndSet(p) && t(p)) { open.push(p); }
 
 template<typename T>
-void walk(int p, T t) {
+Bitset walk(int p, T t) {
   Bitset seen;
   Vect<byte, N> open;
   STEP(p);
@@ -85,21 +85,9 @@ void walk(int p, T t) {
     STEP(p + DELTA);
     STEP(p - DELTA);
   }
+  return seen;
 }
-
-template<typename T>
-void walk(Bitset &seen, int p, T t) {
-  Vect<byte, N> open;
-  STEP(p);
-  while (!open.isEmpty()) {
-    const int p = open.pop();
-    STEP(p + 1);
-    STEP(p - 1);
-    STEP(p + DELTA);
-    STEP(p - DELTA);
-  }
-}
-  
+ 
 #undef STEP
 
 void Board::updateGroupLibs(int p) {
@@ -262,16 +250,6 @@ int main() {
       } else {
         b.print(pointsOth, pointsMe);
       }
-
-      /*
-      if (!alive.isEmpty()) {
-        printf("Alive: ");
-        for (int gid : alive) {
-          printf("%d ", gid);
-        }
-        printf("\n");
-      }
-      */
     }
   }
 }
@@ -289,11 +267,11 @@ unsigned Board::neibGroupsOfColor(int p, int col) {
 struct Region {
   unsigned border;
   Vect<byte, 4> vital;
-  byte size;
-  byte p;
+  Bitset area;
 
   Region(): border(0), vital() { }
-  Region(unsigned vitalBits, unsigned border, int size, int p) : border(border), size(size), p(p) {
+  Region(unsigned vitalBits, unsigned border, Bitset area) :
+    border(border), area(area) {
     int i = 0;
     while (vitalBits) {
       if (vitalBits & 1) { vital.push(i); }
@@ -307,12 +285,14 @@ struct Region {
   }
   
   void print() {
-    printf("region border %x vital ", border);
+    printf("region border %x area %d vital ", border, area.size());
     for (int gid : vital) {
       printf("%d ", gid);
     }
     printf("\n");
   }
+
+  int size() { return area.size(); }
 };
 
 void Board::bensonAlive(int col, Bitset &points, unsigned *outAliveGids) {
@@ -323,25 +303,24 @@ void Board::bensonAlive(int col, Bitset &points, unsigned *outAliveGids) {
   
   for (int y = 0; y < SIZE_Y; ++y) {
     for (int p = pos(y, 0), end = p + SIZE_X; p < end; ++p) {
-      if (color(p) == EMPTY && !seen.test(p)) {
+      if (!seen.test(p) && color(p) == EMPTY) {
         unsigned vital = -1;
         unsigned border = 0;
-        int size = 0;
-        walk(seen, p, [&size, &vital, &border, this, col](int p) {
+        Bitset area;
+        seen |= walk(p, [&area, &vital, &border, this, col](int p) {
             int c = color(p);
-            if (c == EMPTY) {
-              unsigned bits = neibGroupsOfColor(p, col);
-              vital &= bits;
-              border |= bits;
-            }
             if (c == EMPTY || c == (1-col)) {
-              ++size;
+              unsigned bits = neibGroupsOfColor(p, col);
+              border |= bits;
+              if (c == EMPTY) { vital &= bits; }
+              area.set(p);
               return true;
             } else {
               return false;
             }
-          });        
-        regions.push(Region(vital, border, size, p));
+          });
+        Region r = Region(vital, border, area);
+        regions.push(r);
       }
     }
   }
@@ -377,16 +356,8 @@ void Board::bensonAlive(int col, Bitset &points, unsigned *outAliveGids) {
   *outAliveGids = aliveBits;
   if (!aliveGids.isEmpty()) {
     for (Region &r : regions) {
-      if (r.isCoveredBy(aliveBits) && r.size <= 8) {
-        walk(r.p, [this, &points, col](int p) {
-            int c = color(p);
-            if (c == EMPTY || c == (1-col)) {
-              points.testAndSet(p);
-              return true;
-            } else {
-              return false;
-            }
-          });
+      if (r.isCoveredBy(aliveBits) && r.size() <= 8) {
+        points |= r.area;
       }
     }
     for (int gid : aliveGids) {
