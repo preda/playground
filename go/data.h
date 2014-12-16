@@ -24,14 +24,21 @@ public:
 class Bitset {
   unsigned long long bits = 0;
 public:
+  int size = 0;
+
   bool testAndSet(int p) {
     unsigned long long mask = (1ull << p);
     bool bit = bits & mask;
-    if (!bit) { bits |= mask; }
+    if (!bit) { bits |= mask; ++size; }
     return bit;
   }
 
-  bool test(int p) {
+  bool test(int p) const {
     return bits & (1ull << p);
+  }
+
+  void clear() {
+    bits = 0;
+    size = 0;
   }
 };

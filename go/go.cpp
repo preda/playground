@@ -20,7 +20,8 @@ struct Group {
   Group(int size, int libs, int pos) :
     size((byte) size),
     libs((byte) libs),
-    pos((byte) pos) { }
+    pos((byte) pos)
+  { }
   
   byte size;
   byte libs;
@@ -47,9 +48,16 @@ public:
   void removeGroup(int p);
   
   unsigned neibGroupsOfColor(int p, int col);
-  Vect<byte, MAX_GROUPS> bensonAlive(int col);
+  void bensonAlive(int col, Bitset &points, unsigned *outAliveBits);
   
-  void print();
+  void print(const Bitset &, const Bitset &);
+};
+
+struct State {
+  Board board;
+  int ko;
+
+  State() : board(), ko(0) { }
 };
 
 Board::Board() {
@@ -193,19 +201,31 @@ bool Board::move(int pos, int col) {
 
 char charForColor(int color) { return color == BLACK ? 'x' : color == WHITE ? 'o' : '.'; }
 
-void Board::print() {
-  char line1[256], line2[256];
+char *expand(char *line) {
+  for (int i = SIZE_X - 1; i >= 0; --i) {
+    line[2*i+1] = line[i];
+    line[2*i] = ' ';
+  }
+  line[SIZE_X * 2] = 0;
+  return line;
+}
+
+void Board::print(const Bitset &pointsBlack, const Bitset &pointsWhite) {
+  char line1[256], line2[256], line3[256];
   for (int y = 0; y < SIZE_Y; ++y) {
     for (int x = 0; x < SIZE_X; ++x) {
-      Cell c = cells[pos(y, x)];
-      line1[2*x] = ' ';
-      line1[2*x+1] = charForColor(c.color);
-      line2[2*x] = ' ';
-      line2[2*x+1] = '0' + c.group;
+      int p = pos(y, x);
+      Cell c = cells[p];
+      line1[x] = charForColor(c.color);
+      line2[x] = '0' + c.group;
+      bool isPointBlack = pointsBlack.test(p);
+      bool isPointWhite = pointsWhite.test(p);
+      assert(!(isPointBlack && isPointWhite));
+      line3[x] = charForColor(isPointBlack ? BLACK : isPointWhite ? WHITE : EMPTY);
     }
     line1[SIZE_X*2] = 0;
     line2[SIZE_X*2] = 0;
-    printf("\n%s    %s", line1, line2);
+    printf("\n%s    %s    %s", expand(line1), expand(line2), expand(line3));
   }
   printf("\n\nGroups:\n");
   for (int gid = 0; gid < MAX_GROUPS; ++gid) {
@@ -219,7 +239,8 @@ void Board::print() {
 
 int main() {
   Board b;
-  b.print();
+  Bitset pointsMe, pointsOth;
+  b.print(pointsMe, pointsOth);
   while (true) {
     char buf[16] = {0};
     int y = -1;
@@ -227,13 +248,22 @@ int main() {
     printf("> ");
     if (scanf("%1s %1d %1d", buf, &y, &x) != 3) { continue; }
     char c = buf[0];
-    int color = c == 'b' ? BLACK : c == 'w' ? WHITE : EMPTY;
-    if (isBlackOrWhite(color) && isValid(y, x) && b.color(pos(y, x)) == EMPTY) {
-      if (!b.move(pos(y, x), color)) {
+    int col = c == 'b' ? BLACK : c == 'w' ? WHITE : EMPTY;
+    if (isBlackOrWhite(col) && isValid(y, x) && b.color(pos(y, x)) == EMPTY) {
+      if (!b.move(pos(y, x), col)) {
         printf("suicide\n");
       }
-      b.print();
-      auto alive = b.bensonAlive(color);
+
+      unsigned aliveGroupBitsMe, aliveGroupBitsOth;
+      b.bensonAlive(col, pointsMe, &aliveGroupBitsMe);
+      b.bensonAlive((1-col), pointsOth, &aliveGroupBitsOth);
+      if (col == BLACK) {
+        b.print(pointsMe, pointsOth);
+      } else {
+        b.print(pointsOth, pointsMe);
+      }
+
+      /*
       if (!alive.isEmpty()) {
         printf("Alive: ");
         for (int gid : alive) {
@@ -241,6 +271,7 @@ int main() {
         }
         printf("\n");
       }
+      */
     }
   }
 }
@@ -258,9 +289,11 @@ unsigned Board::neibGroupsOfColor(int p, int col) {
 struct Region {
   unsigned border;
   Vect<byte, 4> vital;
+  byte size;
+  byte p;
 
   Region(): border(0), vital() { }
-  Region(unsigned vitalBits, unsigned border) : border(border) {
+  Region(unsigned vitalBits, unsigned border, int size, int p) : border(border), size(size), p(p) {
     int i = 0;
     while (vitalBits) {
       if (vitalBits & 1) { vital.push(i); }
@@ -269,6 +302,10 @@ struct Region {
     }
   }
 
+  bool isCoveredBy(unsigned gidBits) {
+    return (border & gidBits) == border;
+  }
+  
   void print() {
     printf("region border %x vital ", border);
     for (int gid : vital) {
@@ -278,7 +315,7 @@ struct Region {
   }
 };
 
-Vect<byte, MAX_GROUPS> Board::bensonAlive(int col) {
+void Board::bensonAlive(int col, Bitset &points, unsigned *outAliveGids) {
   assert(isBlackOrWhite(col));
   int otherCol = 1 - col;
   Vect<Region, MAX_GROUPS> regions;
@@ -289,53 +326,78 @@ Vect<byte, MAX_GROUPS> Board::bensonAlive(int col) {
       if (color(p) == EMPTY && !seen.test(p)) {
         unsigned vital = -1;
         unsigned border = 0;
-        // printf("walk(%d): ", p);
-        walk(seen, p, [&vital, &border, this, col](int p) {
-            // printf("%d ", p);
-            int c = cells[p].color;
+        int size = 0;
+        walk(seen, p, [&size, &vital, &border, this, col](int p) {
+            int c = color(p);
             if (c == EMPTY) {
               unsigned bits = neibGroupsOfColor(p, col);
               vital &= bits;
               border |= bits;
-              return true;
-            } else if (c == (1-col)) {
-              return true;
             }
-            return false;
-          });
-        // printf("\n");
-        if (vital) {
-          Region r(vital, border);
-          regions.push(r);
-          // printf("p %d; ", p); r.print();         
-        }
+            if (c == EMPTY || c == (1-col)) {
+              ++size;
+              return true;
+            } else {
+              return false;
+            }
+          });        
+        regions.push(Region(vital, border, size, p));
       }
     }
   }
 
   Vect<byte, MAX_GROUPS> aliveGids;
+  unsigned aliveBits = 0;
   while (true) {
     int vitality[MAX_GROUPS] = {0};
-    unsigned vitalBits = 0;
     aliveGids.clear();
     for (Region r : regions) {
-      // r.print();
-      for (byte gid : r.vital) {
-        if (++vitality[gid] >= 2) {
-          vitalBits |= (1 << gid);
-          aliveGids.push(gid);
+      for (int g : r.vital) {
+        if (++vitality[g] >= 2) {
+          aliveGids.push(g);
         }
       }
     }
+    aliveBits = 0;
     if (aliveGids.isEmpty()) { break; }
-    bool anyChange = false;
+    for (int g : aliveGids) {
+      aliveBits |= (1 << g);
+    }
+    bool changed = false;
     for (Region &r : regions) {
-      if (!r.vital.isEmpty() && ((vitalBits & r.border) != r.border)) {
+      if (!r.vital.isEmpty() && !r.isCoveredBy(aliveBits)) {
         r.vital.clear();
-        anyChange = true;
+        changed = true;
       }
     }
-    if (!anyChange) { break; }
+    if (!changed) { break; }
   }
-  return aliveGids;  
+
+  points.clear();
+  *outAliveGids = aliveBits;
+  if (!aliveGids.isEmpty()) {
+    for (Region &r : regions) {
+      if (r.isCoveredBy(aliveBits) && r.size <= 8) {
+        walk(r.p, [this, &points, col](int p) {
+            int c = color(p);
+            if (c == EMPTY || c == (1-col)) {
+              points.testAndSet(p);
+              return true;
+            } else {
+              return false;
+            }
+          });
+      }
+    }
+    for (int gid : aliveGids) {
+      walk(groups[gid].pos, [this, &points, col](int p) {
+          if (color(p) == col) {
+            points.testAndSet(p);
+            return true;
+          } else {
+            return false;
+          }
+        });
+    }
+  }
 }
