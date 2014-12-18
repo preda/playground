@@ -1,5 +1,5 @@
-#include "Board.h"
-#include "data.h"
+#include "Board.hpp"
+#include "data.hpp"
 #include "go.h"
 #include <assert.h>
 // #include <stdio.h>
@@ -94,6 +94,10 @@ Group *Board::newGroup() {
     if (g->size == 0) { return g; }
   }
   assert(false && "max groups exceeded");
+}
+
+bool Board::play(int pos) {
+
 }
 
 bool Board::play(int pos, int col) {
