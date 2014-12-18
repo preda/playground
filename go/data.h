@@ -1,4 +1,5 @@
 // -*- C++ -*-
+#pragma once
 
 #include "go.h"
 

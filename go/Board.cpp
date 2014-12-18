@@ -1,66 +1,11 @@
+#include "Board.h"
 #include "data.h"
 #include "go.h"
 #include <assert.h>
-#include <stdio.h>
+// #include <stdio.h>
 
 #include "zobrist.h"
 
-int pos(int y, int x) { return (y + 1) * BIG_X + x + 1; }
-bool isBlackOrWhite(int color) { return color == BLACK || color == WHITE; }
-bool isValid(int y, int x) { return y >= 0 && y < SIZE_Y && x >= 0 && x < SIZE_X; }
-
-struct Cell {
-public:
-  Cell(): color(EMPTY), group(0) { }
-  Cell(int color, int group) : color(color), group(group) { }
-  unsigned color:2;
-  unsigned group:6;
-} __attribute__((packed));
-
-struct Group {
-  Group(): size(0), libs(0), pos(0) { }
-  Group(int size, int libs, int pos) :
-    size((byte) size),
-    libs((byte) libs),
-    pos((byte) pos)
-  { }
-  
-  byte size;
-  byte libs;
-  byte pos;
-};
-
-class Board {
-private:
-  int stonesOnBoard;
-  uint64_t hash;
-  
-public:
-  Cell cells[BIG_N];
-  Group groups[MAX_GROUPS];
-  int colorToPlay;  
-
-  Board();
-
-  int nStonesOnBoard() { return stonesOnBoard; }
-  int color(int p) const { return cells[p].color; }
-  Group *group(int p) { return groups + cells[p].group; }
-  Group *newGroup();
-  int libs(int p) { return group(p)->libs; }
-  int groupColor(const Group &g) { return color(g.pos); }
-  
-  bool play(int p, int color);
-  bool play(int p);  
-  
-  void updateGroup(int p, int gid);
-  void updateGroupLibs(int p);
-  void removeGroup(int p);
-  
-  unsigned neibGroupsOfColor(int p, int col);
-  void bensonAlive(int col, Bitset &points, unsigned *outAliveBits);
-  
-  void print(const Bitset &, const Bitset &);
-};
 /*
 struct State {
   Board board;
@@ -200,73 +145,6 @@ bool Board::play(int pos, int col) {
   return true;
 }
 
-char charForColor(int color) { return color == BLACK ? 'x' : color == WHITE ? 'o' : '.'; }
-
-char *expand(char *line) {
-  for (int i = SIZE_X - 1; i >= 0; --i) {
-    line[2*i+1] = line[i];
-    line[2*i] = ' ';
-  }
-  line[SIZE_X * 2] = 0;
-  return line;
-}
-
-void Board::print(const Bitset &pointsBlack, const Bitset &pointsWhite) {
-  char line1[256], line2[256], line3[256];
-  for (int y = 0; y < SIZE_Y; ++y) {
-    for (int x = 0; x < SIZE_X; ++x) {
-      int p = pos(y, x);
-      Cell c = cells[p];
-      line1[x] = charForColor(c.color);
-      line2[x] = '0' + c.group;
-      bool isPointBlack = pointsBlack.test(p);
-      bool isPointWhite = pointsWhite.test(p);
-      assert(!(isPointBlack && isPointWhite));
-      line3[x] = charForColor(isPointBlack ? BLACK : isPointWhite ? WHITE : EMPTY);
-    }
-    line1[SIZE_X*2] = 0;
-    line2[SIZE_X*2] = 0;
-    printf("\n%s    %s    %s", expand(line1), expand(line2), expand(line3));
-  }
-  printf("\n\nGroups:\n");
-  for (int gid = 0; gid < MAX_GROUPS; ++gid) {
-    Group g = groups[gid];
-    if (g.size > 0) {
-      printf("%d size %d libs %d pos %d\n", gid, g.size, g.libs, g.pos);
-    }
-  }
-  printf("\n\n");
-}
-
-int main() {
-  Board board;
-  Bitset pointsMe, pointsOth;
-  board.print(pointsMe, pointsOth);
-  while (true) {
-    char buf[16] = {0};
-    int y = -1;
-    int x = -1;
-    printf("> ");
-    if (scanf("%1s %1d %1d", buf, &y, &x) != 3) { continue; }
-    char c = buf[0];
-    int col = c == 'b' ? BLACK : c == 'w' ? WHITE : EMPTY;
-    if (isBlackOrWhite(col) && isValid(y, x) && board.color(pos(y, x)) == EMPTY) {
-      if (!board.play(pos(y, x), col)) {
-        printf("suicide\n");
-      }
-
-      unsigned aliveGroupBitsMe, aliveGroupBitsOth;
-      board.bensonAlive(col, pointsMe, &aliveGroupBitsMe);
-      board.bensonAlive((1-col), pointsOth, &aliveGroupBitsOth);
-      if (col == BLACK) {
-        board.print(pointsMe, pointsOth);
-      } else {
-        board.print(pointsOth, pointsMe);
-      }
-    }
-  }
-}
-
 unsigned Board::neibGroupsOfColor(int p, int col) {
   unsigned bits = 0;
   Cell c;
@@ -296,7 +174,8 @@ struct Region {
   bool isCoveredBy(unsigned gidBits) {
     return (border & gidBits) == border;
   }
-  
+
+  /*
   void print() {
     printf("region border %x area %d vital ", border, area.size());
     for (int gid : vital) {
@@ -304,6 +183,7 @@ struct Region {
     }
     printf("\n");
   }
+  */
 
   int size() { return area.size(); }
 };

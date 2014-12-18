@@ -21,3 +21,7 @@ enum {
 
   MAX_GROUPS = N / 2,
 };
+
+static int pos(int y, int x) { return (y + 1) * BIG_X + x + 1; }
+static bool isBlackOrWhite(int color) { return color == BLACK || color == WHITE; }
+static bool isValid(int y, int x) { return y >= 0 && y < SIZE_Y && x >= 0 && x < SIZE_X; }
