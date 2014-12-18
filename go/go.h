@@ -1,6 +1,7 @@
 #pragma once
 
 typedef unsigned char byte;
+typedef unsigned long long uint64_t;
 
 enum {
   SIZE_Y = 6,
