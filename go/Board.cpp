@@ -15,7 +15,7 @@ struct State {
 };
 */
 
-Board::Board() : colorToPlay(BLACK) {
+Board::Board() : mColorToPlay(BLACK), hash(0) {
   for (int y = 0; y < SIZE_Y + 1; ++y) {
     cells[y * BIG_X].color = BROWN;
     cells[y * BIG_X + SIZE_X + 1].color = BROWN;
@@ -25,6 +25,11 @@ Board::Board() : colorToPlay(BLACK) {
     cells[(SIZE_Y + 1) * BIG_X + x].color = BROWN;
   }
   hash = hashSideToPlay(colorToPlay);
+}
+
+void Board::swapColorToPlay() {
+  mColorToPlay = 1 - mColorToPlay;
+  hash ^= hashChangeSide();
 }
 
 #define STEP(p) if (!seen.testAndSet(p) && t(p)) { open.push(p); }
@@ -97,7 +102,9 @@ Group *Board::newGroup() {
 }
 
 bool Board::play(int pos) {
-
+  int col = colorToPlay();
+  play(pos, col);
+  swapColorToPlay();
 }
 
 bool Board::play(int pos, int col) {
@@ -128,7 +135,6 @@ bool Board::play(int pos, int col) {
     }
     if (suicide) { return false; }
   }
-  bool needUpdateGroup = false;
   Group *g = 0;
   for (int p : neighb) {
     if (color(p) == col) {
@@ -136,7 +142,6 @@ bool Board::play(int pos, int col) {
         g = group(p);
       } else if (group(p) != g) {
         group(p)->size = 0;
-        needUpdateGroup = true;
       }
     } else if (color(p) == otherCol) {
       --group(p)->libs;
@@ -145,7 +150,7 @@ bool Board::play(int pos, int col) {
   if (!g) { g = newGroup(); }
   int gid = g - groups;
   cells[pos] = Cell(col, gid);
-  if (needUpdateGroup) { updateGroup(pos, gid); }
+  updateGroup(pos, gid);
   return true;
 }
 

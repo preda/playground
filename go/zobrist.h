@@ -35,4 +35,4 @@ const uint64_t zob[128] = {
 
 uint64_t hashPos(int p, int color) { return zob[(p << 1) + color]; }
 uint64_t hashKo(int p) { return hashPos(p, BLACK) ^ hashPos(p, WHITE); }
-uint64_t hashSideToPlay(int color) { return hashPos(0, color); }
+uint64_t hashChangeSide() { return hashPos(0, 0); }

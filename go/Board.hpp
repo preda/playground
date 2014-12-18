@@ -26,15 +26,18 @@ struct Group {
 class Board {
 private:
   int stonesOnBoard;
+  int mColorToPlay;
   uint64_t hash;
   
 public:
   Cell cells[BIG_N];
   Group groups[MAX_GROUPS];
-  int colorToPlay;  
 
   Board();
 
+  int colorToPlay() { return mColorToPlay; }
+  void swapColorToPlay();
+  
   int nStonesOnBoard() { return stonesOnBoard; }
   int color(int p) const { return cells[p].color; }
   Group *group(int p) { return groups + cells[p].group; }
