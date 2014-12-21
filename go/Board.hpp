@@ -2,58 +2,57 @@
 #include "data.hpp"
 #include "go.h"
 
-struct Cell {
-public:
-  Cell(): color(EMPTY), group(0) { }
-  Cell(int color, int group) : color(color), group(group) { }
-  unsigned color:2;
-  unsigned group:6;
-} __attribute__((packed));
+static inline int size(uint64_t bits) { return __builtin_popcount(bits); }
 
-struct Group {
-  Group(): size(0), libs(0), pos(0) { }
-  Group(int size, int libs, int pos) :
-    size((byte) size),
-    libs((byte) libs),
-    pos((byte) pos)
-  { }
-  
-  byte size;
-  byte libs;
-  byte pos;
-};
+#define SET(p, bits) bits |= (1ull << (p))
+#define IS(p, bits) ((bits) & (1ull << (p)))
 
 class Board {
 private:
-  int stonesOnBoard;
   int mColorToPlay;
   uint64_t hash;
   
 public:
-  Cell cells[BIG_N];
-  Group groups[MAX_GROUPS];
-
+  uint64_t borderOrStone[2] = {0};
+  uint64_t stone[2] = {0};
+  uint64_t empty = 0;
+  uint64_t groups[MAX_GROUPS] = {0};
+  byte gids[BIG_N] = {0};
+  
   Board();
+ 
+  void putBorder(int p) {
+    SET(p, borderOrStone[BLACK]);
+    SET(p, borderOrStone[WHITE]);
+  }
+
+  template<int C> bool is(int p) { return IS(p, stone[C]); }
+  bool isEmpty(int p) { return IS(p, empty); }
+  bool isBorder(int p) { return IS(p, borderOrStone[BLACK]) && IS(p, borderOrStone[WHITE]); }
+
+  
+  void update() {
+    stone[BLACK] = borderOrStone[BLACK] & ~borderOrStone[WHITE];
+    stone[WHITE] = borderOrStone[WHITE] & ~borderOrStone[BLACK];
+    empty = ~borderOrStone[BLACK] & ~borderOrStone[WHITE];
+  }
 
   int colorToPlay() { return mColorToPlay; }
   void swapColorToPlay();
+
+  uint64_t *newGroup();
+  int groupLibs(int gid) { return size(groups[gid] & empty); }
+
+  template<int C> bool play(int p);
   
-  int nStonesOnBoard() { return stonesOnBoard; }
-  int color(int p) const { return cells[p].color; }
-  Group *group(int p) { return groups + cells[p].group; }
-  Group *newGroup();
-  int libs(int p) { return group(p)->libs; }
-  int groupColor(const Group &g) { return color(g.pos); }
+  template<int C> unsigned neibGroups(int p);
+  template<int C> void updateGroup(int p, int gid);
+  template<int C> void removeGroup(int gid);
+  template<int C> unsigned bensonAlive(uint64_t *points);
   
-  bool play(int p, int color);
-  bool play(int p);  
-  
-  void updateGroup(int p, int gid);
-  void updateGroupLibs(int p);
-  void removeGroup(int p);
-  
-  unsigned neibGroupsOfColor(int p, int col);
-  void bensonAlive(int col, Bitset &points, unsigned *outAliveBits);
-  
-  void print(const Bitset &, const Bitset &);
+  void print(uint64_t, uint64_t);
+  char charForPos(int p);
+
+private:
+  template<int C> bool tryCapture(int p);
 };

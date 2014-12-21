@@ -1,8 +1,6 @@
 // -*- C++ -*-
 #pragma once
 
-#include "go.h"
-
 template<typename T, int N>
 class Vect {
   T v[N];
@@ -26,6 +24,8 @@ class Bitset {
   unsigned long long bits = 0;
 public:
 
+  bool operator[](int p) const { return bits & (1ull << p); }
+  
   bool testAndSet(int p) {
     unsigned long long mask = (1ull << p);
     bool bit = bits & mask;
@@ -36,10 +36,11 @@ public:
   void set(int p) {
     bits |= (1ull << p);
   }
-  
+  /*
   bool test(int p) const {
     return bits & (1ull << p);
   }
+  */
 
   void clear() {
     bits = 0;
