@@ -10,15 +10,12 @@
 Board::Board() : mColorToPlay(BLACK), hash(0) {
   for (int y = 0; y < SIZE_Y; ++y) {
     putBorder(pos(y, SIZE_X));
-    printf("%d ", pos(y, SIZE_X));
   }
   for (int x = 0; x < BIG_X; ++x) {
-    printf("+%d %d ", pos(-1, x), pos(SIZE_Y, x));
     putBorder(pos(-1, x));
     putBorder(pos(SIZE_Y, x));
   }
   update();
-  // printf("%Lx %Lx %Lx %Lx %Lx\n", borderOrStone[0], borderOrStone[1], stone[0], stone[1], empty);
 }
 
 void Board::swapColorToPlay() {
@@ -44,20 +41,6 @@ Bitset walk(int p, T t) {
 }
  
 #undef STEP
-/*
-void Board::updateGroupLibs(int p) {
-  int libs = 0;
-  int col = color(p);
-  Cell *cells = this->cells;
-  walk(p, [&libs, cells, col](int p) {
-      int c = cells[p].color;
-      if (c == col) { return true; }
-      if (c == EMPTY) { ++libs; }
-      return false;
-    });
-  group(p)->libs = libs;
-}
-*/
 
 template <int C> void Board::updateGroup(int p, int gid) {
   walk(p, [this, gid](int p) {
@@ -68,7 +51,7 @@ template <int C> void Board::updateGroup(int p, int gid) {
 }
 
 template<int C> void Board::removeGroup(int gid) {
-  borderOrStone[C] &= ~(groups[gid] & stone[C]);
+  stone[C] &= ~groups[gid];
   update();
 }
 
@@ -144,7 +127,7 @@ template<int C> bool Board::play(int pos) {
   if (!g) { g = newGroup(); }
   int gid = g - groups;
   *g |= shadow(pos);
-  SET(pos, borderOrStone[C]);
+  SET(pos, stone[C]);
   update();
   if (needUpdate) {
     updateGroup<C>(pos, gid);
@@ -206,11 +189,9 @@ template<int C> unsigned Board::bensonAlive(uint64_t *outPoints) {
         unsigned vital = -1;
         unsigned border = 0;
         uint64_t area;
-        uint64_t emptyOrOth = empty | stone[1 - C];
-        seen |= walk(p, [&area, &vital, &border, this](int p) {
-            if (IS(p, borderOrStone[C])) {
-              return false;
-            }
+        uint64_t borderOrCol = border | stone[C];
+        seen |= walk(p, [&area, &vital, &border, borderOrCol, this](int p) {
+            if (IS(p, borderOrCol)) { return false; }
             unsigned gidBits = neibGroups<C>(p);
             border |= gidBits;
             SET(p, area);

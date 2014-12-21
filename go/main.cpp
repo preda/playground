@@ -15,6 +15,15 @@ char Board::charForPos(int p) {
   return is<BLACK>(p) ? 'x' : is<WHITE>(p) ? 'o' : isEmpty(p) ? '.' : isBorder(p) ? '-' : '?';
 }
 
+int Board::groupColor(int gid) {
+  for (int p = 0; p < BIG_N; ++p) {
+    if (gids[p] == gid && (is<BLACK>(p) || is<WHITE>(p))) {
+      return is<BLACK>(p) ? BLACK : WHITE;
+    }
+  }
+  assert(false);
+}
+
 void Board::print(uint64_t pointsBlack, uint64_t pointsWhite) {
   char line1[256], line2[256], line3[256];
   for (int y = 0; y < SIZE_Y; ++y) {
@@ -35,7 +44,9 @@ void Board::print(uint64_t pointsBlack, uint64_t pointsWhite) {
   for (int gid = 0; gid < MAX_GROUPS; ++gid) {
     uint64_t g = groups[gid];
     if (g) {
-      printf("%d size %d libs %d\n", gid, size(g), groupLibs(gid));
+      int col = groupColor(g);
+      int size = (col == BLACK) ? groupSize<BLACK>(gid) : groupSize<WHITE>(gid);
+      printf("%d size %d libs %d\n", gid, size, groupLibs(gid));
     }
   }
   printf("\n\n");
