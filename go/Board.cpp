@@ -9,13 +9,13 @@
 
 Board::Board() : mColorToPlay(BLACK), hash(0) {
   for (int y = 0; y < SIZE_Y; ++y) {
-    putBorder(pos(y, SIZE_X));
+    SET(pos(y, SIZE_X), border);
   }
   for (int x = 0; x < BIG_X; ++x) {
-    putBorder(pos(-1, x));
-    putBorder(pos(SIZE_Y, x));
+    SET(pos(-1, x), border);
+    SET(pos(SIZE_Y, x), border);
   }
-  update();
+  updateEmpty();
 }
 
 void Board::swapColorToPlay() {
@@ -73,7 +73,7 @@ template<int C> bool Board::isSuicide(int pos) {
       if (libsOfGroupAtPos(p) > 1) {
         return false;
       }
-    } else if (is<1-C>(p) && (libsOfGroupAtPos(p) == 1)) {
+    } else if (is<1-C>(p) && libsOfGroupAtPos(p) == 1) {
       return false;
     }
   }
@@ -100,18 +100,15 @@ template<int C> void Board::play(int pos) {
         isSimple = false;
         groups[gid] = 0;
       }
-    } else if (is<1-C>(p)) {
-      if (libsOfGid(gid) == 1) {
+    } else if (is<1-C>(p) && libsOfGid(gid) == 1) {
         stone[1-C] &= ~groups[gid];
         groups[gid] = 0;
-      }
     }
   }
-  
+  SET(pos, stone[C]);
+  updateEmpty();  
   if (newGid == -1) { newGid = this->newGid(); }
   groups[newGid] = group;
-  SET(pos, stone[C]);
-  update();
   if (isSimple) {
     gids[pos] = newGid;
   } else {
@@ -147,16 +144,6 @@ struct Region {
   bool isCoveredBy(unsigned gidBits) {
     return (border & gidBits) == border;
   }
-
-  /*
-  void print() {
-    printf("region border %x area %d vital ", border, area.size());
-    for (int gid : vital) {
-      printf("%d ", gid);
-    }
-    printf("\n");
-  }
-  */
 
   int size() { return ::size(area); }
 };
