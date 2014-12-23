@@ -25,6 +25,9 @@ int Board::groupColor(int gid) {
   assert(false);
 }
 
+int yOfPos(int pos) { return pos / BIG_X - 1; }
+int xOfPos(int pos) { return pos % BIG_X; }
+
 void Board::print(uint64_t pointsBlack, uint64_t pointsWhite) {
   char line1[256], line2[256], line3[256];
   for (int y = 0; y < SIZE_Y; ++y) {
@@ -45,9 +48,12 @@ void Board::print(uint64_t pointsBlack, uint64_t pointsWhite) {
   for (int gid = 0; gid < MAX_GROUPS; ++gid) {
     if (groups[gid]) {
       int col = groupColor(gid);
-      int size = (col == BLACK) ? groupSize<BLACK>(gid) : groupSize<WHITE>(gid);
+      int size = (col == BLACK) ? sizeOfGid<BLACK>(gid) : sizeOfGid<WHITE>(gid);
       printf("%d size %d libs %d\n", gid, size, libsOfGid(gid));
     }
+  }
+  if (koPos) {
+    printf("ko: (%d, %d)\n", yOfPos(koPos), xOfPos(koPos));
   }
   printf("\n\n");
 }

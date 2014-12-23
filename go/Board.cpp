@@ -23,25 +23,6 @@ void Board::swapColorToPlay() {
   hash ^= hashChangeSide();
 }
 
-#define STEP(p) if (!seen.testAndSet(p) && t(p)) { open.push(p); }
-
-template<typename T>
-Bitset walk(int p, T t) {
-  Bitset seen;
-  Vect<byte, N> open;
-  STEP(p);
-  while (!open.isEmpty()) {
-    const int p = open.pop();
-    STEP(p + 1);
-    STEP(p - 1);
-    STEP(p + DELTA);
-    STEP(p - DELTA);
-  }
-  return seen;
-}
- 
-#undef STEP
-
 template <int C> void Board::updateGroupGids(uint64_t group, int gid) {
   uint64_t inside = group & stone[C];
   while (inside) {
@@ -88,6 +69,7 @@ template<int C> void Board::play(int pos) {
   
   int newGid = -1;
   bool isSimple = true;
+  int captureSize = 0;
   for (int p : NEIB(pos)) {
     if (isEmpty(p)) { continue; }
     
@@ -101,8 +83,10 @@ template<int C> void Board::play(int pos) {
         groups[gid] = 0;
       }
     } else if (is<1-C>(p) && libsOfGid(gid) == 1) {
-        stone[1-C] &= ~groups[gid];
-        groups[gid] = 0;
+      uint64_t group = groups[gid];
+      captureSize += sizeOfGroup<1-C>(group);
+      stone[1-C] &= ~group;
+      groups[gid] = 0;
     }
   }
   SET(pos, stone[C]);
@@ -113,6 +97,11 @@ template<int C> void Board::play(int pos) {
     gids[pos] = newGid;
   } else {
     updateGroupGids<C>(group, newGid);
+  }
+  if (captureSize == 1 && sizeOfGroup<C>(group) == 1 && libsOfGroup(group) == 1) {
+    koPos = pos;
+  } else {
+    koPos = 0;
   }
   assert(libsOfGroupAtPos(pos) > 0);
 }
@@ -147,6 +136,23 @@ struct Region {
 
   int size() { return ::size(area); }
 };
+
+template<typename T>
+Bitset walk(int p, T t) {
+#define STEP(p) if (!seen.testAndSet(p) && t(p)) { open.push(p); }
+  Bitset seen;
+  Vect<byte, N> open;
+  STEP(p);
+  while (!open.isEmpty()) {
+    const int p = open.pop();
+    STEP(p + 1);
+    STEP(p - 1);
+    STEP(p + DELTA);
+    STEP(p - DELTA);
+  }
+  return seen;
+#undef STEP
+}
 
 template<int C> unsigned Board::bensonAlive(uint64_t *outPoints) {
   assert(isBlackOrWhite(C));

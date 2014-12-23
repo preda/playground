@@ -4,9 +4,8 @@
 
 static inline int size(uint64_t bits) { return __builtin_popcountll(bits); }
 static inline bool IS(int p, uint64_t bits) { return (bits >> p) & 1; }
-
-#define SET(p, bits) bits |= (1ull << (p))
 // #define IS(p, bits) ((bits) & (1ull << (p)))
+#define SET(p, bits) bits |= (1ull << (p))
 
 class Board {
 private:
@@ -17,6 +16,7 @@ private:
   byte gids[BIG_N] = {0};
   int mColorToPlay;
   uint64_t hash;
+  int koPos;
   
 public:  
   Board();
@@ -36,12 +36,14 @@ public:
 
 private:
   void updateEmpty() { empty = ~border & ~stone[BLACK] & ~stone[WHITE]; }
-
   int newGid();
-  int libsOfGid(int gid) { return size(groups[gid] & empty); }
-  int libsOfGroupAtPos(int p) { return libsOfGid(gids[p]); }
   
-  template<int C> int groupSize(int gid) { return size(groups[gid] & stone[C]); }
+  int libsOfGroup(uint64_t group) { return size(group & empty); }
+  int libsOfGid(int gid) { return libsOfGroup(groups[gid]); }
+  int libsOfGroupAtPos(int p) { return libsOfGid(gids[p]); }
+  template<int C> int sizeOfGroup(uint64_t group) { return size(group & stone[C]); }
+  template<int C> int sizeOfGid(int gid) { return sizeOfGroup<C>(groups[gid]); }
+      
   template<int C> unsigned neibGroups(int p);
   template<int C> void updateGroupGids(uint64_t group, int gid);
   
