@@ -42,35 +42,22 @@ Bitset walk(int p, T t) {
  
 #undef STEP
 
-template <int C> void Board::updateGroup(int p, int gid) {
-  walk(p, [this, gid](int p) {
-      bool isColor = is<C>(p);
-      if (isColor) { gids[p] = gid; }
-      return isColor;
-    });
+template <int C> void Board::updateGroupGids(uint64_t group, int gid) {
+  uint64_t inside = group & stone[C];
+  while (inside) {
+    int p = __builtin_ctzll(inside);
+    inside &= inside - 1; // ~(1ull << p);
+    gids[p] = gid;
+  }
 }
 
-template<int C> void Board::removeGroup(int gid) {
-  stone[C] &= ~groups[gid];
-  update();
-}
-
-
-uint64_t *Board::newGroup() {
+int Board::newGid() {
   for (uint64_t *g = groups, *end = groups + MAX_GROUPS; g < end; ++g) {
-    if (*g == 0) { return g; }
+    if (*g == 0) { return g - groups; }
   }
   assert(false && "max groups exceeded");
-  return 0;
+  return -1;
 }
-
-/*
-bool Board::play(int pos) {
-  int col = colorToPlay();
-  play(pos, col);
-  swapColorToPlay();
-}
-*/
 
 #define NEIB(p) {p+1, p-1, p+DELTA, p-DELTA}
 
@@ -78,63 +65,59 @@ inline uint64_t shadow(int p) {
   return ((uint64_t)(1 | (7 << (BIG_X-1)) | (1 << (BIG_X + BIG_X)))) << (p - BIG_X);
 }
 
-template<int C> bool Board::tryCapture(int p) {
-  if (is<C>(p) && groupLibs(gids[p]) == 1) {
-    removeGroup<C>(p);
-    groups[gids[p]] = 0;
-    return true;
-  } else {
-    return false;
-  }
-}
-
-
-
-template<int C> bool Board::play(int pos) {
-  assert(isEmpty(pos));
-  assert(isBlackOrWhite(C));
-  bool captured = false;
-  captured |= tryCapture<1-C>(pos+1);
-  captured |= tryCapture<1-C>(pos-1);
-  captured |= tryCapture<1-C>(pos+DELTA);
-  captured |= tryCapture<1-C>(pos-DELTA);
-
-  /*
-  if (!captured) {
-    bool suicide = true;
-    for (int p : neighb) {
-      if (color(p) == EMPTY || (color(p) == col && group(p)->libs > 1)) {
-        suicide = false;
-      }
-    }
-    if (suicide) { return false; }
-  }
-  */
-  uint64_t *g = 0;
-  bool needUpdate = false;
+template<int C> bool Board::isSuicide(int pos) {
   for (int p : NEIB(pos)) {
-    if (is<C>(p)) { 
-      uint64_t *gg = groups + gids[p];
-      if (!g) {
-        g = gg;
-      } else if (g != gg) {
-        *g |= *gg;
-        *gg = 0;
-        needUpdate = true;
+    if (isEmpty(p)) {
+      return false;
+    } else if (is<C>(p)) {
+      if (libsOfGroupAtPos(p) > 1) {
+        return false;
       }
+    } else if (is<1-C>(p) && (libsOfGroupAtPos(p) == 1)) {
+      return false;
     }
-  }
-  if (!g) { g = newGroup(); }
-  int gid = g - groups;
-  *g |= shadow(pos);
-  SET(pos, stone[C]);
-  update();
-  if (needUpdate) {
-    updateGroup<C>(pos, gid);
-  } else {
-    gids[pos] = gid;
   }
   return true;
+}
+
+template<int C> void Board::play(int pos) {
+  assert(isEmpty(pos));
+  assert(isBlackOrWhite(C));
+  
+  uint64_t group = shadow(pos);
+  
+  int newGid = -1;
+  bool isSimple = true;
+  for (int p : NEIB(pos)) {
+    if (isEmpty(p)) { continue; }
+    
+    int gid = gids[p];
+    if (is<C>(p)) {
+      group |= groups[gid];
+      if (newGid == -1) {
+        newGid = gid;
+      } else if (newGid != gid) {
+        isSimple = false;
+        groups[gid] = 0;
+      }
+    } else if (is<1-C>(p)) {
+      if (libsOfGid(gid) == 1) {
+        stone[1-C] &= ~groups[gid];
+        groups[gid] = 0;
+      }
+    }
+  }
+  
+  if (newGid == -1) { newGid = this->newGid(); }
+  groups[newGid] = group;
+  SET(pos, stone[C]);
+  update();
+  if (isSimple) {
+    gids[pos] = newGid;
+  } else {
+    updateGroupGids<C>(group, newGid);
+  }
+  assert(libsOfGroupAtPos(pos) > 0);
 }
 
 template<int C> unsigned Board::neibGroups(int p) {
@@ -248,7 +231,9 @@ template<int C> unsigned Board::bensonAlive(uint64_t *outPoints) {
   return aliveBits;
 }
 
-template bool Board::play<BLACK>(int);
-template bool Board::play<WHITE>(int);
+template void Board::play<BLACK>(int);
+template void Board::play<WHITE>(int);
+template bool Board::isSuicide<BLACK>(int);
+template bool Board::isSuicide<WHITE>(int);
 template unsigned Board::bensonAlive<BLACK>(uint64_t *points);
 template unsigned Board::bensonAlive<WHITE>(uint64_t *points);

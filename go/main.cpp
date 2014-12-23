@@ -21,6 +21,7 @@ int Board::groupColor(int gid) {
       return is<BLACK>(p) ? BLACK : WHITE;
     }
   }
+  printf("groupColor gid %d %Lx %d\n", gid, groups[gid], gids[pos(0, 0)]);
   assert(false);
 }
 
@@ -42,19 +43,23 @@ void Board::print(uint64_t pointsBlack, uint64_t pointsWhite) {
   }
   printf("\n\nGroups:\n");
   for (int gid = 0; gid < MAX_GROUPS; ++gid) {
-    uint64_t g = groups[gid];
-    if (g) {
-      int col = groupColor(g);
+    if (groups[gid]) {
+      int col = groupColor(gid);
       int size = (col == BLACK) ? groupSize<BLACK>(gid) : groupSize<WHITE>(gid);
-      printf("%d size %d libs %d\n", gid, size, groupLibs(gid));
+      printf("%d size %d libs %d\n", gid, size, libsOfGid(gid));
     }
   }
   printf("\n\n");
 }
 
 template<int C> void doPlay(Board &board, int p) {
+  if (board.isSuicide<C>(p)) {
+    printf("suicide\n");
+    return;
+  }
+  
   uint64_t pointsMe, pointsOth;
-  if (!board.play<C>(p)) { printf("suicide\n"); }
+  board.play<C>(p);
   board.bensonAlive<C>(&pointsMe);
   board.bensonAlive<1-C>(&pointsOth);
   if (C == BLACK) {
@@ -63,6 +68,8 @@ template<int C> void doPlay(Board &board, int p) {
     board.print(pointsOth, pointsMe);
   }  
 }
+
+static bool isValid(int y, int x) { return y >= 0 && y < SIZE_Y && x >= 0 && x < SIZE_X; }
 
 int main() {
   Board board;

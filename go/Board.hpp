@@ -3,9 +3,10 @@
 #include "go.h"
 
 static inline int size(uint64_t bits) { return __builtin_popcountll(bits); }
+static inline bool IS(int p, uint64_t bits) { return (bits >> p) & 1; }
 
 #define SET(p, bits) bits |= (1ull << (p))
-#define IS(p, bits) ((bits) & (1ull << (p)))
+// #define IS(p, bits) ((bits) & (1ull << (p)))
 
 class Board {
 private:
@@ -28,22 +29,24 @@ public:
   int colorToPlay() { return mColorToPlay; }
   void swapColorToPlay();
 
-  template<int C> bool play(int p);
+  template<int C> void play(int p);
+  template<int C> bool isSuicide(int p);
   
   template<int C> unsigned bensonAlive(uint64_t *points);
   
   void print(uint64_t, uint64_t);
 
 private:
-  template<int C> bool tryCapture(int p);
   void putBorder(int p) { SET(p, border); }
   void update() { empty = ~border & ~stone[BLACK] & ~stone[WHITE]; }
 
-  uint64_t *newGroup();
-  template<int C> void updateGroup(int p, int gid);
-  template<int C> void removeGroup(int gid);
+  int newGid();
+  template<int C> void updateGroupGids(uint64_t group, int gid);
+  // template<int C> void removeGroup(int gid) { stone[C] &= ~groups[gid]; update(); }
   
-  int groupLibs(int gid) { return size(groups[gid] & empty); }
+  int libsOfGid(int gid) { return size(groups[gid] & empty); }
+  int libsOfGroupAtPos(int p) { return libsOfGid(gids[p]); }
+  
   template<int C> int groupSize(int gid) { return size(groups[gid] & stone[C]); }
   int groupColor(int gid);
   

@@ -1,0 +1,2 @@
+g++ Board.cpp main.cpp -std=c++1y -g -Wall
+g++ Board.cpp main.cpp -std=c++1y -O2 -Wall -march=native
