@@ -23,13 +23,17 @@ void Board::swapColorToPlay() {
   hash ^= hashChangeSide();
 }
 
-template <int C> void Board::updateGroupGids(uint64_t group, int gid) {
-  uint64_t inside = group & stone[C];
-  while (inside) {
-    int p = __builtin_ctzll(inside);
-    inside &= inside - 1; // ~(1ull << p);
-    gids[p] = gid;
+template<typename T>
+void walkBits(uint64_t bits, T t) {
+  while (bits) {
+    t(__builtin_ctzll(bits));
+    bits &= bits - 1;
   }
+}
+
+template <int C> void Board::updateGroupGids(uint64_t group, int gid) {
+  byte *gids = this->gids;
+  walkBits(group & stone[C], [gids, gid](int p) { gids[p] = gid; });
 }
 
 int Board::newGid() {
@@ -61,6 +65,29 @@ template<int C> bool Board::isSuicide(int pos) {
   return true;
 }
 
+template<int C> uint64_t Board::deltaHashOnPlay(int pos) {
+  uint64_t capture = 0;
+  bool maybeKo = true;
+  for (int p : NEIB(pos)) {
+    if (is<1-C>(p)) {
+      int gid = gids[p];
+      uint64_t g = groups[gid];
+      if (libsOfGroup(g) == 1) {
+        capture |= g;
+      }
+    } else if (is<C>(p) || isEmpty(p)) {
+      maybeKo = false;
+    }
+  }
+  bool isKo = maybeKo && sizeOfGroup<1-C>(capture) == 1;
+  uint64_t delta = 0;
+  assert(!isKo || koPos != pos);
+  if (koPos) { delta ^= hashKo(koPos); }
+  if (isKo) { delta ^= hashKo(pos); }
+  walkBits(capture, [&delta](int p) { delta ^= hashPos<C>(p); });
+  return delta;
+}
+
 template<int C> void Board::play(int pos) {
   assert(isEmpty(pos));
   assert(isBlackOrWhite(C));
@@ -69,12 +96,16 @@ template<int C> void Board::play(int pos) {
   
   int newGid = -1;
   bool isSimple = true;
-  int captureSize = 0;
+  bool maybeKo = true;
+  uint64_t capture = 0;
   for (int p : NEIB(pos)) {
-    if (isEmpty(p)) { continue; }
-    
+    if (isEmpty(p)) {
+      maybeKo = false;
+      continue;
+    }    
     int gid = gids[p];
     if (is<C>(p)) {
+      maybeKo = false;
       group |= groups[gid];
       if (newGid == -1) {
         newGid = gid;
@@ -82,13 +113,17 @@ template<int C> void Board::play(int pos) {
         isSimple = false;
         groups[gid] = 0;
       }
-    } else if (is<1-C>(p) && libsOfGid(gid) == 1) {
-      uint64_t group = groups[gid];
-      captureSize += sizeOfGroup<1-C>(group);
-      stone[1-C] &= ~group;
-      groups[gid] = 0;
+    } else if (is<1-C>(p)) {
+      uint64_t g = groups[gid];
+      if (libsOfGroup(g) == 1) {
+        capture |= g;
+        groups[gid] = 0;
+      }
     }
   }
+  bool isKo = maybeKo && sizeOfGroup<1-C>(capture) == 1;
+  koPos = isKo ? pos : 0;
+  stone[1-C] &= ~capture;
   SET(pos, stone[C]);
   updateEmpty();  
   if (newGid == -1) { newGid = this->newGid(); }
@@ -97,11 +132,6 @@ template<int C> void Board::play(int pos) {
     gids[pos] = newGid;
   } else {
     updateGroupGids<C>(group, newGid);
-  }
-  if (captureSize == 1 && sizeOfGroup<C>(group) == 1 && libsOfGroup(group) == 1) {
-    koPos = pos;
-  } else {
-    koPos = 0;
   }
   assert(libsOfGroupAtPos(pos) > 0);
 }

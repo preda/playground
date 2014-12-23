@@ -1,4 +1,4 @@
-const uint64_t zob[128] = {
+const uint64_t zob0[64] = {
 0x54d918dd5d2f0090ull, 0xb75f37ff7f4ad6c2ull, 0x63d1c96eb2586f32ull, 0x03c5f87034eaeb43ull, 
 0xe0bbd16d8c0920ceull, 0x8cfa0698245226eaull, 0x75d16a1fe38cc36dull, 0xd10f09a578f5a73cull, 
 0x45cb961a9a71a545ull, 0x23c7d169df814c15ull, 0x84c52c5548c7ae71ull, 0x9ced066f2fb08692ull, 
@@ -15,6 +15,9 @@ const uint64_t zob[128] = {
 0xd400ab94780f5c5aull, 0x015523d135c55c98ull, 0x5004e65eb2b37ccdull, 0xf1885c4eb8fff31cull, 
 0x11b19b9e732adb95ull, 0x4369f17b9463db52ull, 0x967dd0f4f20c30d0ull, 0x79d46e3e8eb0835cull, 
 0xc11191839fa454f8ull, 0xd0c37879f8721cc1ull, 0xb7c25bf2b1ad6ec2ull, 0xe0ca3dbcbccc917cull,
+};
+
+const uint64_t zob1[64] = {
 0x6a43c083b7a7d552ull, 0x87caad3d937b9b75ull, 0x0462397716b2cd36ull, 0x1341ef131df700ceull, 
 0x6765bf7621089a4full, 0x58af8231a2714e0cull, 0x221438f13d217b0bull, 0x2b4e0a20d40d1778ull, 
 0x4b9d7ab7790a64ecull, 0x3423f44cbbf22283ull, 0x0850597d42877e2bull, 0x07ac1679f3a8c52cull, 
@@ -33,6 +36,10 @@ const uint64_t zob[128] = {
 0xd1f0311d2b5e403cull, 0x510b773fe3223973ull, 0xb22aba50f53fa7bcull, 0x7df1caec709f35b8ull,
 };
 
-uint64_t hashPos(int p, int color) { return zob[(p << 1) + color]; }
-uint64_t hashKo(int p) { return hashPos(p, BLACK) ^ hashPos(p, WHITE); }
-uint64_t hashChangeSide() { return hashPos(0, 0); }
+template<int C> uint64_t hashPos(int p);
+template<> uint64_t hashPos<BLACK>(int p) { return zob0[p]; }
+template<> uint64_t hashPos<WHITE>(int p) { return zob1[p]; }
+
+uint64_t hashKo(int p) { return hashPos<BLACK>(p) ^ hashPos<WHITE>(p); }
+uint64_t hashChangeSide() { return hashPos<BLACK>(0); }
+
