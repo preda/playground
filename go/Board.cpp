@@ -20,7 +20,7 @@ Board::Board() : mColorToPlay(BLACK), hash(0) {
 
 void Board::swapColorToPlay() {
   mColorToPlay = 1 - mColorToPlay;
-  hash ^= hashChangeSide();
+  hash ^= hashWhiteToPlay();
 }
 
 template<typename T>
@@ -65,18 +65,39 @@ template<int C> bool Board::isSuicide(int pos) {
   return true;
 }
 
+uint64_t Board::computeFullHash() {
+  uint64_t hash = 0;
+  for (int y = 0; y < SIZE_Y; ++y) {
+    int p = pos(y, 0);
+    for (int x = 0; x < SIZE_X; ++x, ++p) {
+      if (is<BLACK>(p)) {
+        hash ^= hashPos<BLACK>(p);
+      } else if (is<WHITE>(p)) {
+        hash ^= hashPos<WHITE>(p);
+      }
+    }
+  }
+  if (koPos) {
+    hash ^= hashKo(koPos);
+  }
+  if (colorToPlay() == WHITE) {
+    hash ^= hashWhiteToPlay();
+  }
+  return hash;
+}
+
 template<int C> uint64_t Board::deltaHashOnPlay(int pos) {
   uint64_t capture = 0;
   bool maybeKo = true;
   for (int p : NEIB(pos)) {
-    if (is<1-C>(p)) {
+    if (isEmpty(p) || is<C>(p)) {
+      maybeKo = false;
+    } else if (is<1-C>(p)) {
       int gid = gids[p];
       uint64_t g = groups[gid];
       if (libsOfGroup(g) == 1) {
         capture |= g;
       }
-    } else if (is<C>(p) || isEmpty(p)) {
-      maybeKo = false;
     }
   }
   bool isKo = maybeKo && sizeOfGroup<1-C>(capture) == 1;

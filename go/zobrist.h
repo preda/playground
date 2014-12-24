@@ -41,5 +41,5 @@ template<> uint64_t hashPos<BLACK>(int p) { return zob0[p]; }
 template<> uint64_t hashPos<WHITE>(int p) { return zob1[p]; }
 
 uint64_t hashKo(int p) { return hashPos<BLACK>(p) ^ hashPos<WHITE>(p); }
-uint64_t hashChangeSide() { return hashPos<BLACK>(0); }
+uint64_t hashWhiteToPlay() { return hashPos<BLACK>(0); }
 

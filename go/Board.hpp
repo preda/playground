@@ -32,6 +32,7 @@ public:
   template<int C> void play(int p);
   template<int C> uint64_t deltaHashOnPlay(int p);
   template<int C> unsigned bensonAlive(uint64_t *points);
+  uint64_t computeFullHash();
   
   void print(uint64_t, uint64_t);
 
