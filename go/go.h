@@ -7,7 +7,8 @@ enum {
   SIZE_Y = 6,
   SIZE_X = 6,
 
-  BIG_X = SIZE_X + 1,
+  X_SHIFT = 3,
+  BIG_X = (1 << X_SHIFT),
   BIG_Y = SIZE_Y + 2,
   DELTA = BIG_X,
   
@@ -22,6 +23,9 @@ enum {
   MAX_GROUPS = N / 2,
 };
 
-static int pos(int y, int x) { return (y + 1) * BIG_X + x; }
+static inline int P(int y, int x) { return ((y + 1) << X_SHIFT) + x; }
+static inline int Y(int pos) { return (pos >> X_SHIFT) - 1; }
+static inline int X(int pos) { return pos & (BIG_X - 1); }
+
 static bool isBlackOrWhite(int color) { return color == BLACK || color == WHITE; }
 

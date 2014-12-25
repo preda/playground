@@ -9,11 +9,11 @@
 
 Board::Board() : mColorToPlay(BLACK), hash(0) {
   for (int y = 0; y < SIZE_Y; ++y) {
-    SET(pos(y, SIZE_X), border);
+    SET(P(y, SIZE_X), border);
   }
   for (int x = 0; x < BIG_X; ++x) {
-    SET(pos(-1, x), border);
-    SET(pos(SIZE_Y, x), border);
+    SET(P(-1, x), border);
+    SET(P(SIZE_Y, x), border);
   }
   updateEmpty();
 }
@@ -65,7 +65,22 @@ template<int C> bool Board::isSuicide(int pos) {
   return true;
 }
 
-uint64_t Board::computeFullHash() {
+template<typename T>
+uint64_t Board::transformedHash(T t) {
+  uint64_t hash = 0;
+  walkBits(stone[BLACK], [&hash, t](int p) { hash ^= hashPos<BLACK>(t(p)); });
+  walkBits(stone[WHITE], [&hash, t](int p) { hash ^= hashPos<WHITE>(t(p)); });
+  if (koPos) {
+    hash ^= hashKo(t(koPos));    
+  }
+  return hash;
+}
+
+uint64_t Board::fullHash() {
+  return transformedHash([](int p) { return p; });
+}
+
+/*  
   uint64_t hash = 0;
   for (int y = 0; y < SIZE_Y; ++y) {
     int p = pos(y, 0);
@@ -85,6 +100,7 @@ uint64_t Board::computeFullHash() {
   }
   return hash;
 }
+*/
 
 template<int C> uint64_t Board::deltaHashOnPlay(int pos) {
   uint64_t capture = 0;
@@ -211,7 +227,7 @@ template<int C> unsigned Board::bensonAlive(uint64_t *outPoints) {
   Bitset seen;
   
   for (int y = 0; y < SIZE_Y; ++y) {
-    for (int p = pos(y, 0), end = p + SIZE_X; p < end; ++p) {
+    for (int p = P(y, 0), end = p + SIZE_X; p < end; ++p) {
       if (!seen[p] && isEmpty(p)) {
         unsigned vital = -1;
         unsigned border = 0;

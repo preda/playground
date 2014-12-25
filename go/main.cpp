@@ -21,18 +21,15 @@ int Board::groupColor(int gid) {
       return is<BLACK>(p) ? BLACK : WHITE;
     }
   }
-  printf("groupColor gid %d %Lx %d\n", gid, groups[gid], gids[pos(0, 0)]);
+  printf("groupColor gid %d %Lx %d\n", gid, groups[gid], gids[P(0, 0)]);
   assert(false);
 }
-
-int yOfPos(int pos) { return pos / BIG_X - 1; }
-int xOfPos(int pos) { return pos % BIG_X; }
 
 void Board::print(uint64_t pointsBlack, uint64_t pointsWhite) {
   char line1[256], line2[256], line3[256];
   for (int y = 0; y < SIZE_Y; ++y) {
     for (int x = 0; x < SIZE_X; ++x) {
-      int p = pos(y, x);
+      int p = P(y, x);
       line1[x] = charForPos(p);
       line2[x] = '0' + gids[p];
       bool isPointBlack = IS(p, pointsBlack);
@@ -53,7 +50,7 @@ void Board::print(uint64_t pointsBlack, uint64_t pointsWhite) {
     }
   }
   if (koPos) {
-    printf("ko: (%d, %d)\n", yOfPos(koPos), xOfPos(koPos));
+    printf("ko: (%d, %d)\n", Y(koPos), X(koPos));
   }
   printf("\n\n");
 }
@@ -90,7 +87,7 @@ int main() {
     char c = buf[0];
     int col = c == 'b' ? BLACK : c == 'w' ? WHITE : EMPTY;
     if (isBlackOrWhite(col) && isValid(y, x)) {
-      int p = pos(y, x);
+      int p = P(y, x);
       if (board.isEmpty(p)) {
         if (col == BLACK) {
           doPlay<BLACK>(board, p);
