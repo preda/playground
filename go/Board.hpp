@@ -1,6 +1,6 @@
 #pragma once
 #include "data.hpp"
-#include "go.h"
+#include "go.hpp"
 
 static inline int size(uint64_t bits) { return __builtin_popcountll(bits); }
 static inline bool IS(int p, uint64_t bits) { return (bits >> p) & 1; }
@@ -13,9 +13,9 @@ private:
   uint64_t border = 0;
   uint64_t stone[2] = {0};
   uint64_t groups[MAX_GROUPS] = {0};
+  uint64_t hash;
   byte gids[BIG_N] = {0};
   int mColorToPlay;
-  uint64_t hash;
   int koPos;
   
 public:  
@@ -30,7 +30,7 @@ public:
 
   template<int C> bool isSuicide(int p);
   template<int C> void play(int p);
-  template<int C> uint64_t deltaHashOnPlay(int p);
+  template<int C> uint64_t hashOnPlay(int p);
   template<int C> unsigned bensonAlive(uint64_t *points);
 
   uint64_t fullHash();

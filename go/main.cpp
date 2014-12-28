@@ -1,4 +1,5 @@
 #include "Board.hpp"
+#include "TransTable.hpp"
 #include <stdio.h>
 #include <assert.h>
 
@@ -75,6 +76,8 @@ template<int C> void doPlay(Board &board, int p) {
 static bool isValid(int y, int x) { return y >= 0 && y < SIZE_Y && x >= 0 && x < SIZE_X; }
 
 int main() {
+  TransTable tt;
+  
   Board board;
   uint64_t pointsMe = 0, pointsOth = 0;
   board.print(pointsMe, pointsOth);

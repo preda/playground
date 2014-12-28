@@ -1,7 +1,10 @@
 #pragma once
 
+// #include <stdint.h>
+
 typedef unsigned char byte;
 typedef unsigned long long uint64_t;
+typedef unsigned __int128 uint128_t;
 
 enum {
   SIZE_Y = 6,
@@ -27,5 +30,4 @@ static inline int P(int y, int x) { return ((y + 1) << X_SHIFT) + x; }
 static inline int Y(int pos) { return (pos >> X_SHIFT) - 1; }
 static inline int X(int pos) { return pos & (BIG_X - 1); }
 
-static bool isBlackOrWhite(int color) { return color == BLACK || color == WHITE; }
-
+static inline bool isBlackOrWhite(int color) { return color == BLACK || color == WHITE; }

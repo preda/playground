@@ -1,14 +1,15 @@
 #include "Board.hpp"
 #include "data.hpp"
-#include "go.h"
+#include "zobrist.hpp"
+#include "go.hpp"
 
 #include <initializer_list>
 #include <assert.h>
 #include <stdio.h>
-#include "zobrist.h"
 
-Board::Board() : mColorToPlay(BLACK), hash(0) {
+Board::Board() : hash(0), mColorToPlay(BLACK) {
   for (int y = 0; y < SIZE_Y; ++y) {
+    SET(P(y, -1), border);
     SET(P(y, SIZE_X), border);
   }
   for (int x = 0; x < BIG_X; ++x) {
@@ -20,7 +21,7 @@ Board::Board() : mColorToPlay(BLACK), hash(0) {
 
 void Board::swapColorToPlay() {
   mColorToPlay = 1 - mColorToPlay;
-  hash ^= hashWhiteToPlay();
+  hash ^= hashSide();
 }
 
 template<typename T>
@@ -102,7 +103,7 @@ uint64_t Board::fullHash() {
 }
 */
 
-template<int C> uint64_t Board::deltaHashOnPlay(int pos) {
+template<int C> uint64_t Board::hashOnPlay(int pos) {
   uint64_t capture = 0;
   bool maybeKo = true;
   for (int p : NEIB(pos)) {
@@ -122,7 +123,7 @@ template<int C> uint64_t Board::deltaHashOnPlay(int pos) {
   if (koPos) { delta ^= hashKo(koPos); }
   if (isKo) { delta ^= hashKo(pos); }
   walkBits(capture, [&delta](int p) { delta ^= hashPos<C>(p); });
-  return delta;
+  return delta ^ hashSide() ^ hash;
 }
 
 template<int C> void Board::play(int pos) {
