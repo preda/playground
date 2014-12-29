@@ -1,6 +1,23 @@
 // -*- C++ -*-
 #pragma once
 
+typedef unsigned long long uint64_t;
+
+class Bits {
+  struct BitsIt {
+    uint64_t bits;
+    int operator*() { return __builtin_ctzll(bits); }
+    void operator++() { bits &= bits - 1; }
+    bool operator!=(BitsIt o) { return bits != o.bits; }
+  };
+
+  uint64_t bits;
+public:
+  Bits(uint64_t bits) : bits(bits) {}
+  BitsIt begin() { return {bits}; }
+  BitsIt end() { return {0}; }
+};
+
 template<typename T, int N>
 class Vect {
   T v[N];
@@ -36,11 +53,6 @@ public:
   void set(int p) {
     bits |= (1ull << p);
   }
-  /*
-  bool test(int p) const {
-    return bits & (1ull << p);
-  }
-  */
 
   void clear() {
     bits = 0;
@@ -51,6 +63,6 @@ public:
   }
 
   int size() const {
-    return __builtin_popcount(bits);
+    return __builtin_popcountll(bits);
   }
 };

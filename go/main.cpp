@@ -62,10 +62,9 @@ template<int C> void doPlay(Board &board, int p) {
     return;
   }
   
-  uint64_t pointsMe, pointsOth;
   board.play<C>(p);
-  board.bensonAlive<C>(&pointsMe);
-  board.bensonAlive<1-C>(&pointsOth);
+  uint64_t pointsMe = board.bensonAlive<C>();
+  uint64_t pointsOth = board.bensonAlive<1-C>();
   if (C == BLACK) {
     board.print(pointsMe, pointsOth);
   } else {

@@ -21,17 +21,24 @@ TransTable::~TransTable() {
   slots = 0;
 }
 
-HashKey makeKey(uint128_t hash) {
-  uint64_t lock = (hash >> 64) & ((1ull << 48) - 1);
-  uint64_t pos  = hash & MASK;
+inline uint64_t getPos(uint128_t hash) {
+  uint64_t pos = hash & MASK;
   while (pos >= SIZE) {
     pos >>= RES_BITS;
   }
-  return {pos, lock};
+  return pos;
+}
+
+inline uint64_t getLock(uint128_t hash) {
+  return ((uint64_t) (hash >> 64)) & ((1ull << LOCK_BITS) - 1);
 }
 
 inline SlotInfo makeInfo(Slot *s) {
-  return {s->score, s->pos, s->over, s->under};
+  return {s->pos, s->min, s->max};
+}
+
+SlotInfo TransTable::lookup(uint128_t hash) {
+  return lookup(getPos(hash), getLock(hash));
 }
 
 SlotInfo TransTable::lookup(uint64_t pos, uint64_t lock) {
@@ -65,6 +72,6 @@ void TransTable::set(uint64_t pos, uint64_t lock, SlotInfo info) {
       *p = *s;
     }
   }
-  buf[0] = {lock, info.score, info.pos, info.over, info.under};
+  buf[0] = {lock, info.pos, info.min, info.max};
   memmove(begin, buf, (p - buf) * sizeof(Slot));
 }

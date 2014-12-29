@@ -31,8 +31,10 @@ public:
   template<int C> bool isSuicide(int p);
   template<int C> void play(int p);
   template<int C> uint64_t hashOnPlay(int p);
-  template<int C> unsigned bensonAlive(uint64_t *points);
+  
+  template<int C> uint64_t bensonAlive();
 
+  void changeSide();
   uint64_t fullHash();
   template<typename T> uint64_t transformedHash(T t);
   

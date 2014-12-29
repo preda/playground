@@ -24,17 +24,8 @@ void Board::swapColorToPlay() {
   hash ^= hashSide();
 }
 
-template<typename T>
-void walkBits(uint64_t bits, T t) {
-  while (bits) {
-    t(__builtin_ctzll(bits));
-    bits &= bits - 1;
-  }
-}
-
 template <int C> void Board::updateGroupGids(uint64_t group, int gid) {
-  byte *gids = this->gids;
-  walkBits(group & stone[C], [gids, gid](int p) { gids[p] = gid; });
+  for (int p : Bits(group & stone[C])) { gids[p] = gid; }
 }
 
 int Board::newGid() {
@@ -69,11 +60,9 @@ template<int C> bool Board::isSuicide(int pos) {
 template<typename T>
 uint64_t Board::transformedHash(T t) {
   uint64_t hash = 0;
-  walkBits(stone[BLACK], [&hash, t](int p) { hash ^= hashPos<BLACK>(t(p)); });
-  walkBits(stone[WHITE], [&hash, t](int p) { hash ^= hashPos<WHITE>(t(p)); });
-  if (koPos) {
-    hash ^= hashKo(t(koPos));    
-  }
+  for (int p : Bits(stone[BLACK])) { hash ^= hashPos<BLACK>(t(p)); }
+  for (int p : Bits(stone[WHITE])) { hash ^= hashPos<WHITE>(t(p)); }
+  if (koPos) { hash ^= hashKo(t(koPos)); }
   return hash;
 }
 
@@ -81,27 +70,9 @@ uint64_t Board::fullHash() {
   return transformedHash([](int p) { return p; });
 }
 
-/*  
-  uint64_t hash = 0;
-  for (int y = 0; y < SIZE_Y; ++y) {
-    int p = pos(y, 0);
-    for (int x = 0; x < SIZE_X; ++x, ++p) {
-      if (is<BLACK>(p)) {
-        hash ^= hashPos<BLACK>(p);
-      } else if (is<WHITE>(p)) {
-        hash ^= hashPos<WHITE>(p);
-      }
-    }
-  }
-  if (koPos) {
-    hash ^= hashKo(koPos);
-  }
-  if (colorToPlay() == WHITE) {
-    hash ^= hashWhiteToPlay();
-  }
-  return hash;
+void Board::changeSide() {
+  hash ^= hashSide();
 }
-*/
 
 template<int C> uint64_t Board::hashOnPlay(int pos) {
   uint64_t capture = 0;
@@ -118,12 +89,12 @@ template<int C> uint64_t Board::hashOnPlay(int pos) {
     }
   }
   bool isKo = maybeKo && sizeOfGroup<1-C>(capture) == 1;
-  uint64_t delta = 0;
+  uint64_t newHash = hash;
   assert(!isKo || koPos != pos);
-  if (koPos) { delta ^= hashKo(koPos); }
-  if (isKo) { delta ^= hashKo(pos); }
-  walkBits(capture, [&delta](int p) { delta ^= hashPos<C>(p); });
-  return delta ^ hashSide() ^ hash;
+  if (koPos) { newHash ^= hashKo(koPos); }
+  if (isKo) { newHash ^= hashKo(pos); }
+  if (capture) { for (int p : Bits(capture & stone[1-C])) { newHash ^= hashPos<1-C>(p); } }
+  return newHash;
 }
 
 template<int C> void Board::play(int pos) {
@@ -222,18 +193,18 @@ Bitset walk(int p, T t) {
 #undef STEP
 }
 
-template<int C> unsigned Board::bensonAlive(uint64_t *outPoints) {
-  assert(isBlackOrWhite(C));
+template<int C> uint64_t Board::bensonAlive() {
+  // assert(isBlackOrWhite(C));
   Vect<Region, MAX_GROUPS> regions;
   Bitset seen;
-  
+  uint64_t borderOrCol = border | stone[C];
   for (int y = 0; y < SIZE_Y; ++y) {
     for (int p = P(y, 0), end = p + SIZE_X; p < end; ++p) {
       if (!seen[p] && isEmpty(p)) {
         unsigned vital = -1;
         unsigned border = 0;
         uint64_t area;
-        uint64_t borderOrCol = border | stone[C];
+
         seen |= walk(p, [&area, &vital, &border, borderOrCol, this](int p) {
             if (IS(p, borderOrCol)) { return false; }
             unsigned gidBits = neibGroups<C>(p);
@@ -284,17 +255,44 @@ template<int C> unsigned Board::bensonAlive(uint64_t *outPoints) {
         points |= r.area;
       }
     }
+    uint64_t stonePoints = 0;
     for (int gid : aliveGids) {
-      points |= groups[gid] & stone[C];
+      stonePoints |= groups[gid];
     }
+    points |= (stonePoints & stone[C]);
   }
-  *outPoints = points;
-  return aliveBits;
+  return points;
 }
 
 template void Board::play<BLACK>(int);
 template void Board::play<WHITE>(int);
 template bool Board::isSuicide<BLACK>(int);
 template bool Board::isSuicide<WHITE>(int);
-template unsigned Board::bensonAlive<BLACK>(uint64_t *points);
-template unsigned Board::bensonAlive<WHITE>(uint64_t *points);
+template uint64_t Board::bensonAlive<BLACK>();
+template uint64_t Board::bensonAlive<WHITE>();
+
+
+
+
+
+/*  
+  uint64_t hash = 0;
+  for (int y = 0; y < SIZE_Y; ++y) {
+    int p = pos(y, 0);
+    for (int x = 0; x < SIZE_X; ++x, ++p) {
+      if (is<BLACK>(p)) {
+        hash ^= hashPos<BLACK>(p);
+      } else if (is<WHITE>(p)) {
+        hash ^= hashPos<WHITE>(p);
+      }
+    }
+  }
+  if (koPos) {
+    hash ^= hashKo(koPos);
+  }
+  if (colorToPlay() == WHITE) {
+    hash ^= hashWhiteToPlay();
+  }
+  return hash;
+}
+*/
