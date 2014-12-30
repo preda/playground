@@ -257,35 +257,58 @@ template<int C> uint64_t Node::bensonAlive() {
   return points;
 }
 
+template<typename T> static uint64_t selectPoints(T t) {
+  uint64_t points = 0;
+  for (int y = 0; y < SIZE_Y; ++y) {
+    for (int x = 0; x < SIZE_X; ++x) {
+      if (t(y, x)) { SET(P(y, x), points); }
+    }
+  }
+  return points;
+}
+
+static const uint64_t INSIDE = selectPoints([](int y, int x) {return true; });
+static const uint64_t HALF_Y = selectPoints([](int y, int x) {return y < (SIZE_Y + 1) / 2; });
+static const uint64_t HALF_X = selectPoints([](int y, int x) {return x < (SIZE_X + 1) / 2; });
+static const uint64_t HALF_DIAG = selectPoints([](int y, int x) {return x >= y; });
+
+template<typename T> static uint64_t transform(uint64_t points, T t) {
+  uint64_t r = 0;
+  for (int p : Bits(points)) { SET(t(p), r); }
+  return r;
+}
+
+static uint64_t reflectX(uint64_t points) {
+  return transform(points, [](int p) { return P(Y(p), SIZE_X - 1 - X(p)); });
+}
+
+static uint64_t reflectY(uint64_t points) {
+  return transform(points, [](int p) { return P(SIZE_Y - 1 - Y(p), X(p)); });
+}
+
+// uint64_t reflectXY(uint64_t points) { }
+
+static uint64_t reflectDiag(uint64_t points) {
+  return transform(points, [](int p) { return P(X(p), Y(p)); });
+}
+
+template<typename T> bool Node::isSymmetry(T t) {
+  return stone[BLACK] == t(stone[BLACK]) && stone[WHITE] == t(stone[WHITE]);
+}
+
+uint64_t Node::maybeMoves() {
+  uint64_t area = INSIDE;
+  if (!koPos) {
+    if (isSymmetry(reflectX)) { area &= HALF_X; }
+    if (isSymmetry(reflectY)) { area &= HALF_Y; }
+    if (isSymmetry(reflectDiag)) { area &= HALF_DIAG; }
+  }
+  return area;
+}
+
 template void Node::play<BLACK>(int);
 template void Node::play<WHITE>(int);
 template bool Node::isSuicide<BLACK>(int);
 template bool Node::isSuicide<WHITE>(int);
 template uint64_t Node::bensonAlive<BLACK>();
 template uint64_t Node::bensonAlive<WHITE>();
-
-
-
-
-
-/*  
-  uint64_t hash = 0;
-  for (int y = 0; y < SIZE_Y; ++y) {
-    int p = pos(y, 0);
-    for (int x = 0; x < SIZE_X; ++x, ++p) {
-      if (is<BLACK>(p)) {
-        hash ^= hashPos<BLACK>(p);
-      } else if (is<WHITE>(p)) {
-        hash ^= hashPos<WHITE>(p);
-      }
-    }
-  }
-  if (koPos) {
-    hash ^= hashKo(koPos);
-  }
-  if (colorToPlay() == WHITE) {
-    hash ^= hashWhiteToPlay();
-  }
-  return hash;
-}
-*/

@@ -4,7 +4,6 @@
 
 static inline int size(uint64_t bits) { return __builtin_popcountll(bits); }
 static inline bool IS(int p, uint64_t bits) { return (bits >> p) & 1; }
-// #define IS(p, bits) ((bits) & (1ull << (p)))
 #define SET(p, bits) bits |= (1ull << (p))
 
 class Node {
@@ -31,7 +30,6 @@ public:
 
   void changeSide();
   template<int C> uint128_t hashOnPlay(int p);
-  // uint128_t fullHash();
   uint128_t getHash() { return hash; }
   template<typename T> uint128_t transformedHash(T t);
   
@@ -49,7 +47,10 @@ private:
       
   template<int C> unsigned neibGroups(int p);
   template<int C> void updateGroupGids(uint64_t group, int gid);
+
+  uint64_t maybeMoves();
+  template<typename T> bool isSymmetry(T t);
   
   int groupColor(int gid);
-  char charForPos(int p);  
+  char charForPos(int p); 
 };
