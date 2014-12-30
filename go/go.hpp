@@ -1,7 +1,5 @@
 #pragma once
 
-// #include <stdint.h>
-
 typedef unsigned char byte;
 typedef unsigned long long uint64_t;
 typedef unsigned __int128 uint128_t;
@@ -24,7 +22,7 @@ enum {
   BROWN = 3,
 
   MAX_GROUPS = N / 2,
-  POINTS = SIZE_X * SIZE_Y,
+  TOTAL_POINTS = SIZE_X * SIZE_Y,
 };
 
 static inline int P(int y, int x) { return ((y + 1) << X_SHIFT) + x; }
