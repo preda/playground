@@ -7,7 +7,7 @@ static inline bool IS(int p, uint64_t bits) { return (bits >> p) & 1; }
 // #define IS(p, bits) ((bits) & (1ull << (p)))
 #define SET(p, bits) bits |= (1ull << (p))
 
-class Board {
+class Node {
 private:
   uint64_t empty = 0;
   uint64_t border = 0;
@@ -19,7 +19,7 @@ private:
   int koPos;
   
 public:  
-  Board();
+  Node();
    
   template<int C> bool is(int p) { return IS(p, stone[C]); }
   bool isEmpty(int p)  { return IS(p, empty); }

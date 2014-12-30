@@ -1,4 +1,4 @@
-#include "Board.hpp"
+#include "Node.hpp"
 #include "TransTable.hpp"
 #include <stdio.h>
 #include <assert.h>
@@ -12,11 +12,11 @@ char *expand(char *line) {
   return line;
 }
 
-char Board::charForPos(int p) {
+char Node::charForPos(int p) {
   return is<BLACK>(p) ? 'x' : is<WHITE>(p) ? 'o' : isEmpty(p) ? '.' : isBorder(p) ? '-' : '?';
 }
 
-int Board::groupColor(int gid) {
+int Node::groupColor(int gid) {
   for (int p = 0; p < BIG_N; ++p) {
     if (gids[p] == gid && (is<BLACK>(p) || is<WHITE>(p))) {
       return is<BLACK>(p) ? BLACK : WHITE;
@@ -26,7 +26,7 @@ int Board::groupColor(int gid) {
   assert(false);
 }
 
-void Board::print(uint64_t pointsBlack, uint64_t pointsWhite) {
+void Node::print(uint64_t pointsBlack, uint64_t pointsWhite) {
   char line1[256], line2[256], line3[256];
   for (int y = 0; y < SIZE_Y; ++y) {
     for (int x = 0; x < SIZE_X; ++x) {
@@ -56,19 +56,19 @@ void Board::print(uint64_t pointsBlack, uint64_t pointsWhite) {
   printf("\n\n");
 }
 
-template<int C> void doPlay(Board &board, int p) {
-  if (board.isSuicide<C>(p)) {
+template<int C> void doPlay(Node &node, int p) {
+  if (node.isSuicide<C>(p)) {
     printf("suicide\n");
     return;
   }
   
-  board.play<C>(p);
-  uint64_t pointsMe = board.bensonAlive<C>();
-  uint64_t pointsOth = board.bensonAlive<1-C>();
+  node.play<C>(p);
+  uint64_t pointsMe = node.bensonAlive<C>();
+  uint64_t pointsOth = node.bensonAlive<1-C>();
   if (C == BLACK) {
-    board.print(pointsMe, pointsOth);
+    node.print(pointsMe, pointsOth);
   } else {
-    board.print(pointsOth, pointsMe);
+    node.print(pointsOth, pointsMe);
   }  
 }
 
@@ -77,9 +77,9 @@ static bool isValid(int y, int x) { return y >= 0 && y < SIZE_Y && x >= 0 && x <
 int main() {
   TransTable tt;
   
-  Board board;
+  Node node;
   uint64_t pointsMe = 0, pointsOth = 0;
-  board.print(pointsMe, pointsOth);
+  node.print(pointsMe, pointsOth);
   while (true) {
     char buf[16] = {0};
     int y = -1;
@@ -90,11 +90,11 @@ int main() {
     int col = c == 'b' ? BLACK : c == 'w' ? WHITE : EMPTY;
     if (isBlackOrWhite(col) && isValid(y, x)) {
       int p = P(y, x);
-      if (board.isEmpty(p)) {
+      if (node.isEmpty(p)) {
         if (col == BLACK) {
-          doPlay<BLACK>(board, p);
+          doPlay<BLACK>(node, p);
         } else {
-          doPlay<WHITE>(board, p);
+          doPlay<WHITE>(node, p);
         }
       }
     }

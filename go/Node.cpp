@@ -1,4 +1,4 @@
-#include "Board.hpp"
+#include "Node.hpp"
 #include "data.hpp"
 #include "zobrist.hpp"
 #include "go.hpp"
@@ -7,7 +7,7 @@
 #include <assert.h>
 #include <stdio.h>
 
-Board::Board() : hash(0), mColorToPlay(BLACK) {
+Node::Node() : hash(0), mColorToPlay(BLACK) {
   for (int y = 0; y < SIZE_Y; ++y) {
     SET(P(y, -1), border);
     SET(P(y, SIZE_X), border);
@@ -19,16 +19,16 @@ Board::Board() : hash(0), mColorToPlay(BLACK) {
   updateEmpty();
 }
 
-void Board::swapColorToPlay() {
+void Node::swapColorToPlay() {
   mColorToPlay = 1 - mColorToPlay;
   hash ^= hashSide();
 }
 
-template <int C> void Board::updateGroupGids(uint64_t group, int gid) {
+template <int C> void Node::updateGroupGids(uint64_t group, int gid) {
   for (int p : Bits(group & stone[C])) { gids[p] = gid; }
 }
 
-int Board::newGid() {
+int Node::newGid() {
   for (uint64_t *g = groups, *end = groups + MAX_GROUPS; g < end; ++g) {
     if (*g == 0) { return g - groups; }
   }
@@ -42,7 +42,7 @@ inline uint64_t shadow(int p) {
   return ((uint64_t)(1 | (7 << (BIG_X-1)) | (1 << (BIG_X + BIG_X)))) << (p - BIG_X);
 }
 
-template<int C> bool Board::isSuicide(int pos) {
+template<int C> bool Node::isSuicide(int pos) {
   for (int p : NEIB(pos)) {
     if (isEmpty(p)) {
       return false;
@@ -58,7 +58,7 @@ template<int C> bool Board::isSuicide(int pos) {
 }
 
 template<typename T>
-uint64_t Board::transformedHash(T t) {
+uint64_t Node::transformedHash(T t) {
   uint64_t hash = 0;
   for (int p : Bits(stone[BLACK])) { hash ^= hashPos<BLACK>(t(p)); }
   for (int p : Bits(stone[WHITE])) { hash ^= hashPos<WHITE>(t(p)); }
@@ -66,15 +66,15 @@ uint64_t Board::transformedHash(T t) {
   return hash;
 }
 
-uint64_t Board::fullHash() {
+uint64_t Node::fullHash() {
   return transformedHash([](int p) { return p; });
 }
 
-void Board::changeSide() {
+void Node::changeSide() {
   hash ^= hashSide();
 }
 
-template<int C> uint64_t Board::hashOnPlay(int pos) {
+template<int C> uint64_t Node::hashOnPlay(int pos) {
   uint64_t capture = 0;
   bool maybeKo = true;
   for (int p : NEIB(pos)) {
@@ -97,7 +97,7 @@ template<int C> uint64_t Board::hashOnPlay(int pos) {
   return newHash;
 }
 
-template<int C> void Board::play(int pos) {
+template<int C> void Node::play(int pos) {
   assert(isEmpty(pos));
   assert(isBlackOrWhite(C));
   
@@ -145,7 +145,7 @@ template<int C> void Board::play(int pos) {
   assert(libsOfGroupAtPos(pos) > 0);
 }
 
-template<int C> unsigned Board::neibGroups(int p) {
+template<int C> unsigned Node::neibGroups(int p) {
   unsigned bits = 0;
   for (int pp : NEIB(p)) {
     if (is<C>(pp)) { SET(gids[pp], bits); }
@@ -193,7 +193,7 @@ Bitset walk(int p, T t) {
 #undef STEP
 }
 
-template<int C> uint64_t Board::bensonAlive() {
+template<int C> uint64_t Node::bensonAlive() {
   // assert(isBlackOrWhite(C));
   Vect<Region, MAX_GROUPS> regions;
   Bitset seen;
@@ -264,12 +264,12 @@ template<int C> uint64_t Board::bensonAlive() {
   return points;
 }
 
-template void Board::play<BLACK>(int);
-template void Board::play<WHITE>(int);
-template bool Board::isSuicide<BLACK>(int);
-template bool Board::isSuicide<WHITE>(int);
-template uint64_t Board::bensonAlive<BLACK>();
-template uint64_t Board::bensonAlive<WHITE>();
+template void Node::play<BLACK>(int);
+template void Node::play<WHITE>(int);
+template bool Node::isSuicide<BLACK>(int);
+template bool Node::isSuicide<WHITE>(int);
+template uint64_t Node::bensonAlive<BLACK>();
+template uint64_t Node::bensonAlive<WHITE>();
 
 
 
