@@ -2,48 +2,32 @@
 
 #include "go.hpp"
 
-#define LOCK_BITS 42
+#define LOCK_BITS 48
 
-struct SlotInfo {
-  byte pos;
+struct NodeInfo {
   signed char min;
   signed char max;
 };
 
 struct Slot {
   uint64_t lock:LOCK_BITS;
-  byte pos:6;
   signed char min;
   signed char max;
 
-  bool isEmpty() {
-    return pos == 0;
-    /*
-    union {
-      Slot s;
-      uint64_t v;
-    } u{*this};
-    return u.v == 0;
-    */
-  }
+  bool isEmpty() { return lock == 0 && min == 0 && max == 0; }
+  NodeInfo info() { return {min, max}; }
 };
-
-/*
-struct HashKey {
-  uint64_t pos;
-  uint64_t lock;
-};
-*/
 
 class TransTable {
 private:
   Slot *slots;
-  SlotInfo lookup(uint64_t pos, uint64_t lock);  
-  void set(uint64_t pos, uint64_t lock, SlotInfo info);
+  // NodeInfo lookup(uint64_t pos, uint64_t lock);  
+  // void set(uint64_t pos, uint64_t lock, NodeInfo info);
 
 public:
   TransTable();
   ~TransTable();
 
-  SlotInfo lookup(uint128_t hash);
+  NodeInfo lookup(uint128_t hash);
+  void set(uint128_t hash, int min, int max);
 };

@@ -7,7 +7,7 @@
 #include <assert.h>
 #include <stdio.h>
 
-Node::Node() : hash(0), mColorToPlay(BLACK) {
+Node::Node() {
   for (int y = 0; y < SIZE_Y; ++y) {
     SET(P(y, -1), border);
     SET(P(y, SIZE_X), border);
@@ -17,11 +17,6 @@ Node::Node() : hash(0), mColorToPlay(BLACK) {
     SET(P(SIZE_Y, x), border);
   }
   updateEmpty();
-}
-
-void Node::swapColorToPlay() {
-  mColorToPlay = 1 - mColorToPlay;
-  hash ^= hashSide();
 }
 
 template <int C> void Node::updateGroupGids(uint64_t group, int gid) {
@@ -58,23 +53,21 @@ template<int C> bool Node::isSuicide(int pos) {
 }
 
 template<typename T>
-uint64_t Node::transformedHash(T t) {
-  uint64_t hash = 0;
+uint128_t Node::transformedHash(T t) {
+  uint128_t hash = 0;
   for (int p : Bits(stone[BLACK])) { hash ^= hashPos<BLACK>(t(p)); }
   for (int p : Bits(stone[WHITE])) { hash ^= hashPos<WHITE>(t(p)); }
   if (koPos) { hash ^= hashKo(t(koPos)); }
   return hash;
 }
 
-uint64_t Node::fullHash() {
-  return transformedHash([](int p) { return p; });
-}
+// uint128_t Node::fullHash() { return transformedHash([](int p) { return p; }); }
 
 void Node::changeSide() {
   hash ^= hashSide();
 }
 
-template<int C> uint64_t Node::hashOnPlay(int pos) {
+template<int C> uint128_t Node::hashOnPlay(int pos) {
   uint64_t capture = 0;
   bool maybeKo = true;
   for (int p : NEIB(pos)) {
@@ -89,7 +82,7 @@ template<int C> uint64_t Node::hashOnPlay(int pos) {
     }
   }
   bool isKo = maybeKo && sizeOfGroup<1-C>(capture) == 1;
-  uint64_t newHash = hash;
+  uint128_t newHash = hash;
   assert(!isKo || koPos != pos);
   if (koPos) { newHash ^= hashKo(koPos); }
   if (isKo) { newHash ^= hashKo(pos); }

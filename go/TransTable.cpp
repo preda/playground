@@ -13,7 +13,7 @@ TransTable::TransTable() :
   slots(new Slot[SIZE + N - 1])
 {
   printf("Size %.2f GB, slot size %ld, info %ld\n",
-         SIZE * sizeof(Slot) / (1024 * 1024 * 1024.0f), sizeof(Slot), sizeof(SlotInfo));
+         SIZE * sizeof(Slot) / (1024 * 1024 * 1024.0f), sizeof(Slot), sizeof(NodeInfo));
 }
 
 TransTable::~TransTable() {
@@ -33,24 +33,19 @@ inline uint64_t getLock(uint128_t hash) {
   return ((uint64_t) (hash >> 64)) & ((1ull << LOCK_BITS) - 1);
 }
 
-inline SlotInfo makeInfo(Slot *s) {
-  return {s->pos, s->min, s->max};
-}
-
-SlotInfo TransTable::lookup(uint128_t hash) {
-  return lookup(getPos(hash), getLock(hash));
-}
-
-SlotInfo TransTable::lookup(uint64_t pos, uint64_t lock) {
+NodeInfo TransTable::lookup(uint128_t hash) {
+  uint64_t pos = getPos(hash);
+  uint64_t lock = getLock(hash);
+  
   Slot buf[N];
   for (Slot *begin = slots + pos, *s = begin, *end = begin + N, *p = buf + 1; s < end; ++s, ++p) {
     if (s->lock == lock) {
       if (s == begin) {
-        return makeInfo(s);
+        return s->info();
       } else {
         *buf = *s;
         memmove(begin, buf, (p - buf) * sizeof(Slot));
-        return makeInfo(buf);
+        return buf->info();
       }
     } else if (s->isEmpty()) {
         break;
@@ -58,10 +53,13 @@ SlotInfo TransTable::lookup(uint64_t pos, uint64_t lock) {
       *p = *s;
     }
   }
-  return SlotInfo();
+  return {-TOTAL_POINTS, TOTAL_POINTS};
 } 
 
-void TransTable::set(uint64_t pos, uint64_t lock, SlotInfo info) {
+void TransTable::set(uint128_t hash, int min, int max) {
+  uint64_t pos = getPos(hash);
+  uint64_t lock = getLock(hash);
+
   Slot buf[N];
   Slot *p = buf + 1;
   Slot *begin = slots + pos;
@@ -72,6 +70,6 @@ void TransTable::set(uint64_t pos, uint64_t lock, SlotInfo info) {
       *p = *s;
     }
   }
-  buf[0] = {lock, info.pos, info.min, info.max};
+  buf[0] = {lock, (signed char) min, (signed char) max};
   memmove(begin, buf, (p - buf) * sizeof(Slot));
 }

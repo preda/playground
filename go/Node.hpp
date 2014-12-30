@@ -13,10 +13,9 @@ private:
   uint64_t border = 0;
   uint64_t stone[2] = {0};
   uint64_t groups[MAX_GROUPS] = {0};
-  uint64_t hash;
+  uint128_t hash = 0;
   byte gids[BIG_N] = {0};
-  int mColorToPlay;
-  int koPos;
+  int koPos = 0;
   
 public:  
   Node();
@@ -25,18 +24,16 @@ public:
   bool isEmpty(int p)  { return IS(p, empty); }
   bool isBorder(int p) { return IS(p, border); }
   
-  int colorToPlay() { return mColorToPlay; }
-  void swapColorToPlay();
-
   template<int C> bool isSuicide(int p);
   template<int C> void play(int p);
-  template<int C> uint64_t hashOnPlay(int p);
-  
+
   template<int C> uint64_t bensonAlive();
 
   void changeSide();
-  uint64_t fullHash();
-  template<typename T> uint64_t transformedHash(T t);
+  template<int C> uint128_t hashOnPlay(int p);
+  // uint128_t fullHash();
+  uint128_t getHash() { return hash; }
+  template<typename T> uint128_t transformedHash(T t);
   
   void print(uint64_t, uint64_t);
 
