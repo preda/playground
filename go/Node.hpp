@@ -49,7 +49,8 @@ private:
   template<int C> void updateGroupGids(uint64_t group, int gid);
 
   uint64_t maybeMoves();
-  template<typename T> bool isSymmetry(T t);
+  template<typename T>
+  bool isSymmetry(T t);
   
   int groupColor(int gid);
   char charForPos(int p); 

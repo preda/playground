@@ -278,21 +278,22 @@ template<typename T> static uint64_t transform(uint64_t points, T t) {
   return r;
 }
 
-static uint64_t reflectX(uint64_t points) {
+uint64_t reflectX(uint64_t points) {
   return transform(points, [](int p) { return P(Y(p), SIZE_X - 1 - X(p)); });
 }
 
-static uint64_t reflectY(uint64_t points) {
+uint64_t reflectY(uint64_t points) {
   return transform(points, [](int p) { return P(SIZE_Y - 1 - Y(p), X(p)); });
 }
 
 // uint64_t reflectXY(uint64_t points) { }
 
-static uint64_t reflectDiag(uint64_t points) {
+uint64_t reflectDiag(uint64_t points) {
   return transform(points, [](int p) { return P(X(p), Y(p)); });
 }
 
-template<typename T> bool Node::isSymmetry(T t) {
+template<typename T>
+bool Node::isSymmetry(T t) {
   return stone[BLACK] == t(stone[BLACK]) && stone[WHITE] == t(stone[WHITE]);
 }
 
