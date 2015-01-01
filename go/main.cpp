@@ -22,7 +22,7 @@ int Node::groupColor(int gid) {
       return is<BLACK>(p) ? BLACK : WHITE;
     }
   }
-  printf("groupColor gid %d %Lx %d\n", gid, groups[gid], gids[P(0, 0)]);
+  printf("groupColor gid %d %lx %d\n", gid, groups[gid], gids[P(0, 0)]);
   assert(false);
 }
 
@@ -62,7 +62,7 @@ template<int C> void doPlay(Node &node, int p) {
     return;
   }
   
-  node.play<C>(p);
+  node = node.play<C>(p);
   uint64_t pointsMe = node.bensonAlive<C>();
   uint64_t pointsOth = node.bensonAlive<1-C>();
   if (C == BLACK) {
@@ -74,7 +74,7 @@ template<int C> void doPlay(Node &node, int p) {
 
 static bool isValid(int y, int x) { return y >= 0 && y < SIZE_Y && x >= 0 && x < SIZE_X; }
 
-int main() {
+int main() {  
   TransTable tt;
   
   Node node;

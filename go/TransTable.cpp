@@ -13,7 +13,7 @@ TransTable::TransTable() :
   slots(new Slot[SIZE + N - 1])
 {
   printf("Size %.2f GB, slot size %ld, info %ld\n",
-         SIZE * sizeof(Slot) / (1024 * 1024 * 1024.0f), sizeof(Slot), sizeof(NodeInfo));
+         SIZE * sizeof(Slot) / (1024 * 1024 * 1024.0f), sizeof(Slot), sizeof(ScoreBounds));
 }
 
 TransTable::~TransTable() {
@@ -33,7 +33,7 @@ inline uint64_t getLock(uint128_t hash) {
   return ((uint64_t) (hash >> 64)) & ((1ull << LOCK_BITS) - 1);
 }
 
-NodeInfo TransTable::lookup(uint128_t hash) {
+ScoreBounds TransTable::lookup(uint128_t hash) {
   uint64_t pos = getPos(hash);
   uint64_t lock = getLock(hash);
   
@@ -41,11 +41,11 @@ NodeInfo TransTable::lookup(uint128_t hash) {
   for (Slot *begin = slots + pos, *s = begin, *end = begin + N, *p = buf + 1; s < end; ++s, ++p) {
     if (s->lock == lock) {
       if (s == begin) {
-        return s->info();
+        return s->score();
       } else {
         *buf = *s;
         memmove(begin, buf, (p - buf) * sizeof(Slot));
-        return buf->info();
+        return buf->score();
       }
     } else if (s->isEmpty()) {
         break;
@@ -53,7 +53,7 @@ NodeInfo TransTable::lookup(uint128_t hash) {
       *p = *s;
     }
   }
-  return {-TOTAL_POINTS, TOTAL_POINTS};
+  return {-N, N};
 } 
 
 void TransTable::set(uint128_t hash, int min, int max) {

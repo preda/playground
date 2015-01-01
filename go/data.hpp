@@ -1,6 +1,6 @@
 #pragma once
 
-typedef unsigned long long uint64_t;
+#include <stdint.h>
 
 class Bits {
   struct BitsIt {

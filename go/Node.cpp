@@ -4,20 +4,19 @@
 #include "go.hpp"
 
 #include <initializer_list>
+#include <algorithm>
 #include <assert.h>
 #include <stdio.h>
 
-Node::Node() {
-  for (int y = 0; y < SIZE_Y; ++y) {
-    SET(P(y, -1), border);
-    SET(P(y, SIZE_X), border);
-  }
-  for (int x = 0; x < BIG_X; ++x) {
-    SET(P(-1, x), border);
-    SET(P(SIZE_Y, x), border);
-  }
-  updateEmpty();
-}
+Node::Node() :
+  hash(0),
+  empty(INSIDE),
+  stone{0},
+  points{0},
+  groups{0},
+  koPos(0),
+  gids{0}
+{ }
 
 template <int C> void Node::updateGroupGids(uint64_t group, int gid) {
   for (int p : Bits(group & stone[C])) { gids[p] = gid; }
@@ -31,7 +30,7 @@ int Node::newGid() {
   return -1;
 }
 
-#define NEIB(p) {p+1, p-1, p+DELTA, p-DELTA}
+#define NEIB(p) {p+1, p+DELTA, p-1, p-DELTA}
 
 inline uint64_t shadow(int p) {
   return ((uint64_t)(1 | (7 << (BIG_X-1)) | (1 << (BIG_X + BIG_X)))) << (p - BIG_X);
@@ -39,17 +38,52 @@ inline uint64_t shadow(int p) {
 
 template<int C> bool Node::isSuicide(int pos) {
   for (int p : NEIB(pos)) {
-    if (isEmpty(p)) {
-      return false;
-    } else if (is<C>(p)) {
-      if (libsOfGroupAtPos(p) > 1) {
-        return false;
-      }
-    } else if (is<1-C>(p) && libsOfGroupAtPos(p) == 1) {
-      return false;
+    if (isEmpty(p)) { return false; }
+    else if (isBorder(p)) { continue; }
+    else {
+      int libs = libsOfGroupAtPos(p);
+      if ((libs > 1 && is<C>(p)) || (libs == 1 && is<1-C>(p))) { return false; }
     }
   }
   return true;
+}
+
+template<int C> int Node::valueOfMove(int pos) {
+  bool isSuicide = true;
+  int value = 0;
+  int prevGid = -1;
+  for (int p : NEIB(pos)) {
+    if (isEmpty(p)) {
+      isSuicide = false;
+      ++value;
+    } else if (isBorder(p)) {
+      continue;
+    } else {
+      int gid = gids[p];
+      uint64_t group = groups[gids[p]];
+      int libs = libsOfGroup(group);      
+      if (is<C>(p)) {
+        if (libs > 1) { isSuicide = false; }
+        if (libs == 1) {
+          value += 2;
+        } else if (libs == 2) {
+          ++value;
+        }
+        if (gid != prevGid) {
+          prevGid = gid;
+          ++value;
+        }
+      } else if (is<1-C>(p)) {
+        if (libs == 1) {
+          isSuicide = false;
+          value += sizeOfGroup<1-C>(group) + 1;
+        } else if (libs == 2) {
+          ++value;
+        }
+      }
+    }
+  }
+  return isSuicide ? -1 : value;
 }
 
 template<typename T>
@@ -90,10 +124,9 @@ template<int C> uint128_t Node::hashOnPlay(int pos) {
   return newHash;
 }
 
-template<int C> void Node::play(int pos) {
-  assert(isEmpty(pos));
-  assert(isBlackOrWhite(C));
-  
+template<int C> void Node::playInt(int pos) {
+  static_assert(isBlackOrWhite(C), "color");
+  assert(isEmpty(pos));  
   uint64_t group = shadow(pos);
   
   int newGid = -1;
@@ -136,6 +169,7 @@ template<int C> void Node::play(int pos) {
     updateGroupGids<C>(group, newGid);
   }
   assert(libsOfGroupAtPos(pos) > 0);
+  points[C] = bensonAlive<C>();
 }
 
 template<int C> unsigned Node::neibGroups(int p) {
@@ -190,7 +224,7 @@ template<int C> uint64_t Node::bensonAlive() {
   // assert(isBlackOrWhite(C));
   Vect<Region, MAX_GROUPS> regions;
   Bitset seen;
-  uint64_t borderOrCol = border | stone[C];
+  uint64_t borderOrCol = BORDER | stone[C];
   for (int y = 0; y < SIZE_Y; ++y) {
     for (int p = P(y, 0), end = p + SIZE_X; p < end; ++p) {
       if (!seen[p] && isEmpty(p)) {
@@ -257,21 +291,6 @@ template<int C> uint64_t Node::bensonAlive() {
   return points;
 }
 
-template<typename T> static uint64_t selectPoints(T t) {
-  uint64_t points = 0;
-  for (int y = 0; y < SIZE_Y; ++y) {
-    for (int x = 0; x < SIZE_X; ++x) {
-      if (t(y, x)) { SET(P(y, x), points); }
-    }
-  }
-  return points;
-}
-
-static const uint64_t INSIDE = selectPoints([](int y, int x) {return true; });
-static const uint64_t HALF_Y = selectPoints([](int y, int x) {return y < (SIZE_Y + 1) / 2; });
-static const uint64_t HALF_X = selectPoints([](int y, int x) {return x < (SIZE_X + 1) / 2; });
-static const uint64_t HALF_DIAG = selectPoints([](int y, int x) {return x >= y; });
-
 template<typename T> static uint64_t transform(uint64_t points, T t) {
   uint64_t r = 0;
   for (int p : Bits(points)) { SET(t(p), r); }
@@ -286,8 +305,6 @@ uint64_t reflectY(uint64_t points) {
   return transform(points, [](int p) { return P(SIZE_Y - 1 - Y(p), X(p)); });
 }
 
-// uint64_t reflectXY(uint64_t points) { }
-
 uint64_t reflectDiag(uint64_t points) {
   return transform(points, [](int p) { return P(X(p), Y(p)); });
 }
@@ -299,16 +316,37 @@ bool Node::isSymmetry(T t) {
 
 uint64_t Node::maybeMoves() {
   uint64_t area = INSIDE;
-  if (!koPos) {
-    if (isSymmetry(reflectX)) { area &= HALF_X; }
-    if (isSymmetry(reflectY)) { area &= HALF_Y; }
+  if (!koPos && size(empty) > N - 10) {
+    if (isSymmetry(reflectX))    { area &= HALF_X; }
+    if (isSymmetry(reflectY))    { area &= HALF_Y; }
     if (isSymmetry(reflectDiag)) { area &= HALF_DIAG; }
   }
   return area;
 }
 
-template void Node::play<BLACK>(int);
-template void Node::play<WHITE>(int);
+template<int C> void Node::genMoves(Vect<byte, N> &moves) {
+  int tmp[N];
+  int n = 0;
+  uint64_t area = maybeMoves();
+  for (int p : Bits(area)) {
+    int v = valueOfMove<C>(p);
+    if (v >= 0) {
+      tmp[n++] = ((1000 - v) << 8) | p;
+    }
+  }
+  std::sort(tmp, tmp + n);
+  moves.clear();
+  for (int *pt = tmp, *end = tmp + n; pt < end; ++pt) {
+    moves.push(*pt & 0xff);
+  }
+}
+
+template<int C> ScoreBounds Node::score() {
+  return {-N + 2 * size(points[C]), N - 2 * size(points[1-C])};
+}
+
+template void Node::playInt<BLACK>(int);
+template void Node::playInt<WHITE>(int);
 template bool Node::isSuicide<BLACK>(int);
 template bool Node::isSuicide<WHITE>(int);
 template uint64_t Node::bensonAlive<BLACK>();
