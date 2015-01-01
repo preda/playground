@@ -36,18 +36,6 @@ inline uint64_t shadow(int p) {
   return ((uint64_t)(1 | (7 << (BIG_X-1)) | (1 << (BIG_X + BIG_X)))) << (p - BIG_X);
 }
 
-template<int C> bool Node::isSuicide(int pos) {
-  for (int p : NEIB(pos)) {
-    if (isEmpty(p)) { return false; }
-    else if (isBorder(p)) { continue; }
-    else {
-      int libs = libsOfGroupAtPos(p);
-      if ((libs > 1 && is<C>(p)) || (libs == 1 && is<1-C>(p))) { return false; }
-    }
-  }
-  return true;
-}
-
 template<int C> int Node::valueOfMove(int pos) {
   bool isSuicide = true;
   int value = 0;
@@ -221,7 +209,6 @@ Bitset walk(int p, T t) {
 }
 
 template<int C> uint64_t Node::bensonAlive() {
-  // assert(isBlackOrWhite(C));
   Vect<Region, MAX_GROUPS> regions;
   Bitset seen;
   uint64_t borderOrCol = BORDER | stone[C];
@@ -347,11 +334,11 @@ template<int C> ScoreBounds Node::score() {
 
 template void Node::playInt<BLACK>(int);
 template void Node::playInt<WHITE>(int);
-template bool Node::isSuicide<BLACK>(int);
-template bool Node::isSuicide<WHITE>(int);
 template uint64_t Node::bensonAlive<BLACK>();
 template uint64_t Node::bensonAlive<WHITE>();
 template ScoreBounds Node::score<BLACK>();
 template ScoreBounds Node::score<WHITE>();
 template void Node::genMoves<BLACK>(Vect<byte, N> &);
 template void Node::genMoves<WHITE>(Vect<byte, N> &);
+template int Node::valueOfMove<BLACK>(int);
+template int Node::valueOfMove<WHITE>(int);

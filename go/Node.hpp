@@ -23,15 +23,13 @@ public:
   bool isEmpty(int p)  { return IS(p, empty); }
   bool isBorder(int p) { return IS(p, BORDER); }
   
-  template<int C> bool isSuicide(int p);
+  template<int C> bool isSuicide(int p) { return valueOfMove<C>(p) < 0; }
   
   template<int C> Node play(int p) const {
     Node node(*this);
     node.playInt<C>(p);
     return node;
   }
-
-  template<int C> uint64_t bensonAlive();
 
   void changeSide();
   template<int C> uint128_t hashOnPlay(int p);
@@ -41,7 +39,7 @@ public:
   template<int C> void genMoves(Vect<byte, N> &outMoves);
   template<int C> ScoreBounds score();
   
-  void print(uint64_t, uint64_t);
+  void print();
 
 private:
   template<int C> void playInt(int p);
@@ -60,6 +58,7 @@ private:
   template<int C> void updateGroupGids(uint64_t group, int gid);
 
   template<int C> int valueOfMove(int pos);
+  template<int C> uint64_t bensonAlive();
 
   uint64_t maybeMoves();
   template<typename T>

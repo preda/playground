@@ -26,15 +26,15 @@ int Node::groupColor(int gid) {
   assert(false);
 }
 
-void Node::print(uint64_t pointsBlack, uint64_t pointsWhite) {
+void Node::print() {
   char line1[256], line2[256], line3[256];
   for (int y = 0; y < SIZE_Y; ++y) {
     for (int x = 0; x < SIZE_X; ++x) {
       int p = P(y, x);
       line1[x] = charForPos(p);
       line2[x] = '0' + gids[p];
-      bool isPointBlack = IS(p, pointsBlack);
-      bool isPointWhite = IS(p, pointsWhite);
+      bool isPointBlack = IS(p, points[BLACK]);
+      bool isPointWhite = IS(p, points[WHITE]);
       assert(!(isPointBlack && isPointWhite));
       line3[x] = isPointBlack ? 'x' : isPointWhite ? 'o' : '.';
     }
@@ -63,13 +63,7 @@ template<int C> void doPlay(Node &node, int p) {
   }
   
   node = node.play<C>(p);
-  uint64_t pointsMe = node.bensonAlive<C>();
-  uint64_t pointsOth = node.bensonAlive<1-C>();
-  if (C == BLACK) {
-    node.print(pointsMe, pointsOth);
-  } else {
-    node.print(pointsOth, pointsMe);
-  }  
+  node.print();
 }
 
 static bool isValid(int y, int x) { return y >= 0 && y < SIZE_Y && x >= 0 && x < SIZE_X; }
@@ -78,8 +72,7 @@ int main() {
   TransTable tt;
   
   Node node;
-  uint64_t pointsMe = 0, pointsOth = 0;
-  node.print(pointsMe, pointsOth);
+  node.print();
   while (true) {
     char buf[16] = {0};
     int y = -1;
