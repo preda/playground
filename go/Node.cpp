@@ -342,7 +342,7 @@ template<int C> void Node::genMoves(Vect<byte, N> &moves) {
 }
 
 template<int C> ScoreBounds Node::score() {
-  return {-N + 2 * size(points[C]), N - 2 * size(points[1-C])};
+  return {(signed char) (-N + 2 * size(points[C])), (signed char) (N - 2 * size(points[1-C]))};
 }
 
 template void Node::playInt<BLACK>(int);
@@ -351,3 +351,7 @@ template bool Node::isSuicide<BLACK>(int);
 template bool Node::isSuicide<WHITE>(int);
 template uint64_t Node::bensonAlive<BLACK>();
 template uint64_t Node::bensonAlive<WHITE>();
+template ScoreBounds Node::score<BLACK>();
+template ScoreBounds Node::score<WHITE>();
+template void Node::genMoves<BLACK>(Vect<byte, N> &);
+template void Node::genMoves<WHITE>(Vect<byte, N> &);
