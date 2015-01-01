@@ -13,6 +13,7 @@ private:
   uint64_t points[2];
   uint64_t groups[MAX_GROUPS];
   int koPos;
+  int nPass;
   byte gids[BIG_N];
 
 public:  
@@ -59,6 +60,7 @@ private:
 
   template<int C> int valueOfMove(int pos);
   template<int C> uint64_t bensonAlive();
+  void enclosedRegions(uint64_t *outEnclosed);
 
   uint64_t maybeMoves();
   template<typename T>

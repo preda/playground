@@ -2,10 +2,12 @@
 
 #include <stdint.h>
 
+inline int firstOf(uint64_t bits) { return __builtin_ctzll(bits); }
+
 class Bits {
   struct BitsIt {
     uint64_t bits;
-    int operator*() { return __builtin_ctzll(bits); }
+    int operator*() { return firstOf(bits); }
     void operator++() { bits &= bits - 1; }
     bool operator!=(BitsIt o) { return bits != o.bits; }
   };
@@ -34,34 +36,4 @@ public:
   
   T *begin() { return v; }
   T *end() { return v + size; }
-};
-
-class Bitset {
-  unsigned long long bits = 0;
-public:
-
-  bool operator[](int p) const { return bits & (1ull << p); }
-  
-  bool testAndSet(int p) {
-    unsigned long long mask = (1ull << p);
-    bool bit = bits & mask;
-    if (!bit) { bits |= mask; }
-    return bit;
-  }
-
-  void set(int p) {
-    bits |= (1ull << p);
-  }
-
-  void clear() {
-    bits = 0;
-  }
-
-  void operator|=(Bitset o) {
-    bits |= o.bits;
-  }
-
-  int size() const {
-    return __builtin_popcountll(bits);
-  }
 };

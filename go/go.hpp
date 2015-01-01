@@ -28,6 +28,8 @@ enum {
   BROWN = 3,
 
   MAX_GROUPS = N / 2,
+
+  PASS = 1,
 };
 
 static inline int P(int y, int x) { return ((y + 1) << X_SHIFT) + x; }

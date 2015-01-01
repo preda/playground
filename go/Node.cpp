@@ -192,9 +192,9 @@ struct Region {
 };
 
 template<typename T>
-Bitset walk(int p, T t) {
-#define STEP(p) if (!seen.testAndSet(p) && t(p)) { open.push(p); }
-  Bitset seen;
+uint64_t walk(int p, T t) {
+#define STEP(p) if (!IS(p, seen)) { SET(p, seen); if (t(p)) { open.push(p); }}
+  uint64_t seen = 0;
   Vect<byte, N> open;
   STEP(p);
   while (!open.isEmpty()) {
@@ -208,31 +208,61 @@ Bitset walk(int p, T t) {
 #undef STEP
 }
 
+void Node::enclosedRegions(uint64_t *outEnclosed) {
+  uint64_t emptyNotSeen = empty;
+  uint64_t enclosedBlack = 0;
+  uint64_t enclosedWhite = 0;
+  while (emptyNotSeen) {
+    int p = firstOf(emptyNotSeen);
+    uint64_t area = 0;
+    bool touchesBlack = false;
+    bool touchesWhite = false;
+    uint64_t seen = walk(p, [&area, &touchesBlack, &touchesWhite, this](int p) {
+        if (isEmpty(p)) {
+          SET(p, area);
+          return true;
+        } else if (is<BLACK>(p)) {
+          touchesBlack = true;
+        } else if (is<WHITE>(p)) {
+          touchesWhite = true;
+        }
+        return false;
+      });
+    emptyNotSeen &= ~seen;
+    assert(touchesBlack || touchesWhite);
+    if (touchesBlack && ~touchesWhite) {
+      enclosedBlack |= area;
+    } else if (touchesWhite && !touchesBlack) {
+      enclosedWhite |= area;
+    }
+  }
+  outEnclosed[0] = enclosedBlack;
+  outEnclosed[1] = enclosedWhite;
+}
+
 template<int C> uint64_t Node::bensonAlive() {
   Vect<Region, MAX_GROUPS> regions;
-  Bitset seen;
   uint64_t borderOrCol = BORDER | stone[C];
-  for (int y = 0; y < SIZE_Y; ++y) {
-    for (int p = P(y, 0), end = p + SIZE_X; p < end; ++p) {
-      if (!seen[p] && isEmpty(p)) {
-        unsigned vital = -1;
-        unsigned border = 0;
-        uint64_t area;
+  uint64_t emptyNotSeen = empty;
 
-        seen |= walk(p, [&area, &vital, &border, borderOrCol, this](int p) {
-            if (IS(p, borderOrCol)) { return false; }
-            unsigned gidBits = neibGroups<C>(p);
-            border |= gidBits;
-            SET(p, area);
-            if (isEmpty(p)) {
-              vital &= gidBits;
-            }
-            return true;
-          });
-        Region r = Region(vital, border, area);
-        regions.push(r);
-      }
-    }
+  while (emptyNotSeen) {
+    int p = firstOf(emptyNotSeen);
+    unsigned vital = -1;
+    unsigned border = 0;
+    uint64_t area = 0;
+    uint64_t seen = walk(p, [&area, &vital, &border, borderOrCol, this](int p) {
+        if (IS(p, borderOrCol)) { return false; }
+        unsigned gidBits = neibGroups<C>(p);
+        border |= gidBits;
+        SET(p, area);
+        if (isEmpty(p)) {
+          vital &= gidBits;
+        }
+        return true;
+      });
+    emptyNotSeen &= ~seen;
+    Region r = Region(vital, border, area);
+    regions.push(r);
   }
 
   Vect<byte, MAX_GROUPS> aliveGids;
@@ -329,7 +359,19 @@ template<int C> void Node::genMoves(Vect<byte, N> &moves) {
 }
 
 template<int C> ScoreBounds Node::score() {
-  return {(signed char) (-N + 2 * size(points[C])), (signed char) (N - 2 * size(points[1-C]))};
+  if (nPass < 3) {
+    return {(signed char) (-N + 2 * size(points[C])), (signed char) (N - 2 * size(points[1-C]))};
+  } else {
+    uint64_t enclosed[2] = {0};
+    enclosedRegions(enclosed);
+    uint64_t total[2];
+    for (int i : {BLACK, WHITE}) {
+      total[i] = points[i] | stone[i] | enclosed[i];
+    }
+    assert((total[BLACK] & total[WHITE]) == 0);
+    int score = size(total[C]) - size(total[1-C]);
+    return {(signed char)score, (signed char)score};
+  }
 }
 
 template void Node::playInt<BLACK>(int);
