@@ -1,11 +1,5 @@
 #include "Driver.hpp"
 
-/*
-int nega(int score) {
-  return (score == SCORE_UNKNOWN) ? SCORE_UNKNOWN : -score;
-}
-*/
-
 inline int negaMax(int g, int score) {
   if (g == SCORE_UNKNOWN || score == SCORE_UNKNOWN) {
     return SCORE_UNKNOWN;
@@ -71,11 +65,3 @@ template<int C> int Driver::AB(const Node &n, int beta, int d) {
 
 template int Driver::AB<BLACK>(const Node&, int, int);
 template int Driver::AB<WHITE>(const Node&, int, int);
-
-
-/*
-template<int C> int negaPlay(const Node &n, int g, int p, int beta, int d) {
-  return negaMax(g, AB<1-C>(n.play<C>(p), -(beta - 1), d + 1));
-}
-*/
-

@@ -395,44 +395,4 @@ template int Node::valueOfMove<C>(int) const;
 TEMPLATES(BLACK)
 TEMPLATES(WHITE)
 
-
-
-/*
-template<typename T>
-uint128_t Node::transformedHash(T t) {
-  uint128_t hash = 0;
-  for (int p : Bits(stone[BLACK])) { hash ^= hashPos<BLACK>(t(p)); }
-  for (int p : Bits(stone[WHITE])) { hash ^= hashPos<WHITE>(t(p)); }
-  if (koPos) { hash ^= hashKo(t(koPos)); }
-  return hash;
-}
-
-uint128_t Node::fullHash() { return transformedHash([](int p) { return p; }); }
-
-void Node::changeSide() {
-  hash ^= hashSide();
-}
-
-template<int C> uint128_t Node::hashOnPlay(int pos) {
-  uint64_t capture = 0;
-  bool maybeKo = true;
-  for (int p : NEIB(pos)) {
-    if (isEmpty(p) || is<C>(p)) {
-      maybeKo = false;
-    } else if (is<1-C>(p)) {
-      int gid = gids[p];
-      uint64_t g = groups[gid];
-      if (libsOfGroup(g) == 1) {
-        capture |= g;
-      }
-    }
-  }
-  bool isKo = maybeKo && sizeOfGroup<1-C>(capture) == 1;
-  uint128_t newHash = hash;
-  assert(!isKo || koPos != pos);
-  if (koPos) { newHash ^= hashKo(koPos); }
-  if (isKo) { newHash ^= hashKo(pos); }
-  if (capture) { for (int p : Bits(capture & stone[1-C])) { newHash ^= hashPos<1-C>(p); } }
-  return newHash;
-}
-*/
+#undef TEMPLATES

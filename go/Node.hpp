@@ -72,9 +72,3 @@ private:
   void setKoPos(int p);
   void setNPass(int n);
 };
-
-
-
-  // void changeSide();
-  // template<int C> uint128_t hashOnPlay(int p);
-  // template<typename T> uint128_t transformedHash(T t);
