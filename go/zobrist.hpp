@@ -78,6 +78,6 @@ template<int C> uint128_t hashPos(int p);
 template<> uint128_t hashPos<BLACK>(int p) { return zob0[p]; }
 template<> uint128_t hashPos<WHITE>(int p) { return zob1[p]; }
 
-uint128_t hashKo(int p) { return hashPos<BLACK>(p) ^ hashPos<WHITE>(p); }
-inline uint128_t hashSide() { return hashPos<BLACK>(0); }
-
+inline uint128_t hashKo(int p)       { return hashPos<BLACK>(p) ^ hashPos<WHITE>(p); }
+inline uint128_t hashSide()          { return hashPos<BLACK>(0); }
+inline uint128_t hashPass(int nPass) { return hashPos<BLACK>(nPass); }

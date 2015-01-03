@@ -15,6 +15,7 @@ Node::Node() :
   points{0},
   groups{0},
   koPos(0),
+  nPass(0),
   gids{0}
 { }
 
@@ -36,13 +37,16 @@ inline uint64_t shadow(int p) {
   return ((uint64_t)(1 | (7 << (BIG_X-1)) | (1 << (BIG_X + BIG_X)))) << (p - BIG_X);
 }
 
-template<int C> int Node::valueOfMove(int pos) {
+template<int C> int Node::valueOfMove(int pos) const {
+  assert(isEmpty(pos) && koPos != pos);
   bool isSuicide = true;
+  bool isSelfEye = true;
   int value = 0;
   int prevGid = -1;
   for (int p : NEIB(pos)) {
     if (isEmpty(p)) {
       isSuicide = false;
+      isSelfEye = false;
       ++value;
     } else if (isBorder(p)) {
       continue;
@@ -53,15 +57,18 @@ template<int C> int Node::valueOfMove(int pos) {
       if (is<C>(p)) {
         if (libs > 1) { isSuicide = false; }
         if (libs == 1) {
+          isSelfEye = false;
           value += 2;
         } else if (libs == 2) {
           ++value;
         }
         if (gid != prevGid) {
           prevGid = gid;
-          ++value;
+        } else {
+          --value;
         }
       } else if (is<1-C>(p)) {
+        isSelfEye = false;
         if (libs == 1) {
           isSuicide = false;
           value += sizeOfGroup<1-C>(group) + 1;
@@ -71,52 +78,43 @@ template<int C> int Node::valueOfMove(int pos) {
       }
     }
   }
-  return isSuicide ? -1 : value;
+  assert(value >= -2);
+  return (isSuicide || isSelfEye) ? -1 : (value + 2);
 }
 
-template<typename T>
-uint128_t Node::transformedHash(T t) {
-  uint128_t hash = 0;
-  for (int p : Bits(stone[BLACK])) { hash ^= hashPos<BLACK>(t(p)); }
-  for (int p : Bits(stone[WHITE])) { hash ^= hashPos<WHITE>(t(p)); }
-  if (koPos) { hash ^= hashKo(t(koPos)); }
-  return hash;
+void Node::setKoPos(int p) {
+  if (koPos)       { hash ^= hashKo(koPos); }
+  if ((koPos = p)) { hash ^= hashKo(koPos); }
 }
 
-// uint128_t Node::fullHash() { return transformedHash([](int p) { return p; }); }
-
-void Node::changeSide() {
-  hash ^= hashSide();
-}
-
-template<int C> uint128_t Node::hashOnPlay(int pos) {
-  uint64_t capture = 0;
-  bool maybeKo = true;
-  for (int p : NEIB(pos)) {
-    if (isEmpty(p) || is<C>(p)) {
-      maybeKo = false;
-    } else if (is<1-C>(p)) {
-      int gid = gids[p];
-      uint64_t g = groups[gid];
-      if (libsOfGroup(g) == 1) {
-        capture |= g;
-      }
-    }
-  }
-  bool isKo = maybeKo && sizeOfGroup<1-C>(capture) == 1;
-  uint128_t newHash = hash;
-  assert(!isKo || koPos != pos);
-  if (koPos) { newHash ^= hashKo(koPos); }
-  if (isKo) { newHash ^= hashKo(pos); }
-  if (capture) { for (int p : Bits(capture & stone[1-C])) { newHash ^= hashPos<1-C>(p); } }
-  return newHash;
+void Node::setNPass(int n) {
+  if (nPass)       { hash ^= hashPass(nPass); }
+  if ((nPass = n)) { hash ^= hashPass(nPass); }
 }
 
 template<int C> void Node::playInt(int pos) {
   static_assert(isBlackOrWhite(C), "color");
-  assert(isEmpty(pos));  
-  uint64_t group = shadow(pos);
+  hash ^= hashSide();
   
+  if (pos == PASS) {
+    if (koPos) {
+      assert(nPass == 0);
+      setKoPos(0);
+      setNPass(1);
+    } else {
+      assert(nPass < 3);
+      setNPass((nPass == 0) ? 2 : (nPass + 1));
+    }
+    return;
+  }
+  
+  assert(isEmpty(pos));
+  if (nPass) {
+    assert(nPass < 3);
+    setNPass(0);
+  }
+  
+  uint64_t group = shadow(pos);
   int newGid = -1;
   bool isSimple = true;
   bool maybeKo = true;
@@ -145,7 +143,7 @@ template<int C> void Node::playInt(int pos) {
     }
   }
   bool isKo = maybeKo && sizeOfGroup<1-C>(capture) == 1;
-  koPos = isKo ? pos : 0;
+  if (koPos || isKo) { setKoPos(isKo ? pos : 0); }
   stone[1-C] &= ~capture;
   SET(pos, stone[C]);
   updateEmpty();  
@@ -160,7 +158,7 @@ template<int C> void Node::playInt(int pos) {
   points[C] = bensonAlive<C>();
 }
 
-template<int C> unsigned Node::neibGroups(int p) {
+template<int C> unsigned Node::neibGroups(int p) const {
   unsigned bits = 0;
   for (int pp : NEIB(p)) {
     if (is<C>(pp)) { SET(gids[pp], bits); }
@@ -208,7 +206,7 @@ uint64_t walk(int p, T t) {
 #undef STEP
 }
 
-void Node::enclosedRegions(uint64_t *outEnclosed) {
+void Node::enclosedRegions(uint64_t *outEnclosed) const {
   uint64_t emptyNotSeen = empty;
   uint64_t enclosedBlack = 0;
   uint64_t enclosedWhite = 0;
@@ -240,7 +238,7 @@ void Node::enclosedRegions(uint64_t *outEnclosed) {
   outEnclosed[1] = enclosedWhite;
 }
 
-template<int C> uint64_t Node::bensonAlive() {
+template<int C> uint64_t Node::bensonAlive() const {
   Vect<Region, MAX_GROUPS> regions;
   uint64_t borderOrCol = BORDER | stone[C];
   uint64_t emptyNotSeen = empty;
@@ -326,14 +324,13 @@ uint64_t reflectDiag(uint64_t points) {
   return transform(points, [](int p) { return P(X(p), Y(p)); });
 }
 
-template<typename T>
-bool Node::isSymmetry(T t) {
+template<typename T> bool Node::isSymmetry(T t) const {
   return stone[BLACK] == t(stone[BLACK]) && stone[WHITE] == t(stone[WHITE]);
 }
 
-uint64_t Node::maybeMoves() {
+uint64_t Node::maybeMoves() const {
   uint64_t area = INSIDE;
-  if (!koPos && size(empty) > N - 10) {
+  if (!koPos && size(empty) > N - 12) {
     if (isSymmetry(reflectX))    { area &= HALF_X; }
     if (isSymmetry(reflectY))    { area &= HALF_Y; }
     if (isSymmetry(reflectDiag)) { area &= HALF_DIAG; }
@@ -341,10 +338,12 @@ uint64_t Node::maybeMoves() {
   return area;
 }
 
-template<int C> void Node::genMoves(Vect<byte, N> &moves) {
+template<int C> void Node::genMoves(Vect<byte, N> &moves) const {
+  assert(nPass < 3);
   int tmp[N];
   int n = 0;
   uint64_t area = maybeMoves();
+  if (koPos) { area &= ~(1 << koPos); }
   for (int p : Bits(area)) {
     int v = valueOfMove<C>(p);
     if (v >= 0) {
@@ -353,34 +352,87 @@ template<int C> void Node::genMoves(Vect<byte, N> &moves) {
   }
   std::sort(tmp, tmp + n);
   moves.clear();
+  if (nPass == 2) {
+    assert(!koPos);
+    moves.push(PASS);
+  }
   for (int *pt = tmp, *end = tmp + n; pt < end; ++pt) {
     moves.push(*pt & 0xff);
   }
-}
-
-template<int C> ScoreBounds Node::score() {
-  if (nPass < 3) {
-    return {(signed char) (-N + 2 * size(points[C])), (signed char) (N - 2 * size(points[1-C]))};
-  } else {
-    uint64_t enclosed[2] = {0};
-    enclosedRegions(enclosed);
-    uint64_t total[2];
-    for (int i : {BLACK, WHITE}) {
-      total[i] = points[i] | stone[i] | enclosed[i];
-    }
-    assert((total[BLACK] & total[WHITE]) == 0);
-    int score = size(total[C]) - size(total[1-C]);
-    return {(signed char)score, (signed char)score};
+  if (koPos) {
+    moves.push(PASS);
   }
 }
 
-template void Node::playInt<BLACK>(int);
-template void Node::playInt<WHITE>(int);
-template uint64_t Node::bensonAlive<BLACK>();
-template uint64_t Node::bensonAlive<WHITE>();
-template ScoreBounds Node::score<BLACK>();
-template ScoreBounds Node::score<WHITE>();
-template void Node::genMoves<BLACK>(Vect<byte, N> &);
-template void Node::genMoves<WHITE>(Vect<byte, N> &);
-template int Node::valueOfMove<BLACK>(int);
-template int Node::valueOfMove<WHITE>(int);
+template<int C> int Node::finalScore() const {
+  uint64_t enclosed[2] = {0};
+  enclosedRegions(enclosed);
+  uint64_t total[2];
+  for (int i : {BLACK, WHITE}) {
+    total[i] = points[i] | stone[i] | enclosed[i];
+  }
+  assert((total[BLACK] & total[WHITE]) == 0);
+  return size(total[C]) - size(total[1-C]);
+}
+
+template<int C> ScoreBounds Node::score() const {
+  if (nPass < 3) {
+    return {(signed char) (-N + 2 * size(points[C])), (signed char) (N - 2 * size(points[1-C]))};
+  } else {
+    signed char score = finalScore<C>();
+    return {score, score};
+  }
+}
+
+#define TEMPLATES(C) \
+template void Node::playInt<C>(int);\
+template uint64_t Node::bensonAlive<C>() const;\
+template ScoreBounds Node::score<C>() const;\
+template int Node::finalScore<C>() const;\
+template void Node::genMoves<C>(Vect<byte, N> &) const;\
+template int Node::valueOfMove<C>(int) const;
+
+TEMPLATES(BLACK)
+TEMPLATES(WHITE)
+
+
+
+/*
+template<typename T>
+uint128_t Node::transformedHash(T t) {
+  uint128_t hash = 0;
+  for (int p : Bits(stone[BLACK])) { hash ^= hashPos<BLACK>(t(p)); }
+  for (int p : Bits(stone[WHITE])) { hash ^= hashPos<WHITE>(t(p)); }
+  if (koPos) { hash ^= hashKo(t(koPos)); }
+  return hash;
+}
+
+uint128_t Node::fullHash() { return transformedHash([](int p) { return p; }); }
+
+void Node::changeSide() {
+  hash ^= hashSide();
+}
+
+template<int C> uint128_t Node::hashOnPlay(int pos) {
+  uint64_t capture = 0;
+  bool maybeKo = true;
+  for (int p : NEIB(pos)) {
+    if (isEmpty(p) || is<C>(p)) {
+      maybeKo = false;
+    } else if (is<1-C>(p)) {
+      int gid = gids[p];
+      uint64_t g = groups[gid];
+      if (libsOfGroup(g) == 1) {
+        capture |= g;
+      }
+    }
+  }
+  bool isKo = maybeKo && sizeOfGroup<1-C>(capture) == 1;
+  uint128_t newHash = hash;
+  assert(!isKo || koPos != pos);
+  if (koPos) { newHash ^= hashKo(koPos); }
+  if (isKo) { newHash ^= hashKo(pos); }
+  if (capture) { for (int p : Bits(capture & stone[1-C])) { newHash ^= hashPos<1-C>(p); } }
+  return newHash;
+}
+*/

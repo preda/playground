@@ -2,12 +2,20 @@
 
 #include "Node.hpp"
 #include "TransTable.hpp"
-#include <unordered_map>
+#include <unordered_set>
 #include <algorithm>
 
+struct HistoryHasher {
+  size_t operator()(uint128_t key) const { return (size_t) key; }
+};
+
+HistoryHasher historyHasher;
+
 class Driver {
- public:
-  // std::unordered_map<uint128_t> history;
+  std::unordered_set<uint128_t, HistoryHasher> history;
   TransTable tt;
-  template<int C> int AB(Node *n, int beta, int d);  
+  
+public:
+
+  template<int C> int AB(const Node &n, int beta, int d);  
 };

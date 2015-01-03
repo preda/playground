@@ -11,11 +11,11 @@ char *expand(char *line) {
   return line;
 }
 
-char Node::charForPos(int p) {
+char Node::charForPos(int p) const {
   return is<BLACK>(p) ? 'x' : is<WHITE>(p) ? 'o' : isEmpty(p) ? '.' : isBorder(p) ? '-' : '?';
 }
 
-int Node::groupColor(int gid) {
+int Node::groupColor(int gid) const {
   for (int p = 0; p < BIG_N; ++p) {
     if (gids[p] == gid && (is<BLACK>(p) || is<WHITE>(p))) {
       return is<BLACK>(p) ? BLACK : WHITE;
@@ -25,7 +25,7 @@ int Node::groupColor(int gid) {
   assert(false);
 }
 
-void Node::print() {
+void Node::print() const {
   char line1[256], line2[256], line3[256];
   for (int y = 0; y < SIZE_Y; ++y) {
     for (int x = 0; x < SIZE_X; ++x) {
