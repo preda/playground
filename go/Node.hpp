@@ -29,7 +29,7 @@ public:
   
   template<int C> Node play(int p) const {
     Node node(*this);
-    node.playInt<C>(p);
+    node.playAndHash<C>(p);
     return node;
   }
 
@@ -46,7 +46,9 @@ public:
   void print() const;
 
 private:
-  template<int C> void playInt(int p);
+  template<int C> void playAndHash(int p);
+  template<int C> uint64_t playInt(int p);
+  
   
   void updateEmpty() { empty = ~(stone[BLACK] | stone[WHITE]) & INSIDE; }
   int newGid();
@@ -70,7 +72,4 @@ private:
   
   int groupColor(int gid) const;
   char charForPos(int p) const;
-
-  void setKoPos(int p);
-  void setNPass(int n);
 };

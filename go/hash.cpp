@@ -1,4 +1,5 @@
-#pragma once
+#include "hash.hpp"
+#include "data.hpp"
 
 #define C(a, b) ((uint128_t)a << 64) + b
 
@@ -78,6 +79,25 @@ template<int C> uint128_t hashPos(int p);
 template<> uint128_t hashPos<BLACK>(int p) { return zob0[p]; }
 template<> uint128_t hashPos<WHITE>(int p) { return zob1[p]; }
 
-inline uint128_t hashKo(int p)       { return hashPos<BLACK>(p) ^ hashPos<WHITE>(p); }
-inline uint128_t hashSide()          { return hashPos<BLACK>(0); }
-inline uint128_t hashPass(int nPass) { return hashPos<BLACK>(nPass); }
+uint128_t hashKo(int p)       { return hashPos<BLACK>(p) ^ hashPos<WHITE>(p); }
+uint128_t hashSide()          { return hashPos<BLACK>(0); }
+uint128_t hashPass(int nPass) { return hashPos<BLACK>(nPass); }
+
+template<int C>
+uint128_t hashUpdate(int pos, int oldKoPos, int koPos, int oldNPass, int nPass, uint64_t capture) {
+  uint128_t hash = hashSide();
+  if (oldKoPos)    { hash ^= hashKo(oldKoPos); }
+  if (koPos)       { hash ^= hashKo(koPos); }
+  if (oldNPass)    { hash ^= hashPass(oldNPass); }
+  if (nPass)       { hash ^= hashPass(nPass); }
+  if (pos != PASS) { hash ^= hashPos<C>(pos); }
+  if (capture) {
+    for (int p : Bits(capture)) {
+      hash ^= hashPos<1-C>(p);
+    }
+  }
+  return hash;
+}
+
+template uint128_t hashUpdate<BLACK>(int, int, int, int, int, uint64_t);
+template uint128_t hashUpdate<WHITE>(int, int, int, int, int, uint64_t);

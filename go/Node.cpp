@@ -1,6 +1,6 @@
 #include "Node.hpp"
 #include "data.hpp"
-#include "zobrist.hpp"
+#include "hash.hpp"
 #include "go.hpp"
 
 #include <initializer_list>
@@ -9,7 +9,7 @@
 #include <stdio.h>
 
 Node::Node() :
-  hash(hashPos<WHITE>(0)),
+  hash(-1),
   empty(INSIDE),
   stone{0},
   points{0},
@@ -83,72 +83,61 @@ template<int C> int Node::valueOfMove(int pos) const {
 }
 
 template<int C> uint128_t Node::hashOnPlay(int pos) const {
-  uint128_t newHash = hash ^ hashSide();
+  uint64_t capture = 0;
+  bool isKo = false;
+  int newNPass = 0;
   if (pos == PASS) {
     if (koPos) {
       assert(nPass == 0);
-      newHash ^= hashPass(1);
     } else {
-      assert(nPass < 3);
-      if (nPass) { newHash ^= hashPass(nPass); }
-      newHash ^= hashPass(nPass ? (nPass + 1) : 2);
+      assert(nPass < 2);
+      newNPass = nPass + 1;
     }
-  }
-  
-  uint64_t capture = 0;
-  bool maybeKo = true;
-  for (int p : NEIB(pos)) {
-    if (isEmpty(p) || is<C>(p)) {
-      maybeKo = false;
-    } else if (is<1-C>(p)) {
-      int gid = gids[p];
-      uint64_t g = groups[gid];
-      if (libsOfGroup(g) == 1) {
-        capture |= g;
+  } else {
+    assert(isEmpty(pos));
+    assert(pos != koPos);
+    newNPass = 0;
+    bool maybeKo = true;
+    for (int p : NEIB(pos)) {
+      if (isEmpty(p) || is<C>(p)) {
+        maybeKo = false;
+      } else if (is<1-C>(p)) {
+        int gid = gids[p];
+        uint64_t g = groups[gid];
+        if (libsOfGroup(g) == 1) {
+          capture |= g & stone[1-C];
+        }
       }
     }
+    isKo = maybeKo && size(capture) == 1;
   }
-  bool isKo = maybeKo && sizeOfGroup<1-C>(capture) == 1;
-
-  assert(!isKo || koPos != pos);
-  if (koPos) { newHash ^= hashKo(koPos); }
-  if (isKo) { newHash ^= hashKo(pos); }
-  if (capture) { for (int p : Bits(capture & stone[1-C])) { newHash ^= hashPos<1-C>(p); } }
-  return newHash;
+  return hash ^ hashUpdate<C>(pos, koPos, isKo ? pos : 0, nPass, newNPass, capture); 
 }
 
-void Node::setKoPos(int p) {
-  if (koPos)       { hash ^= hashKo(koPos); }
-  if ((koPos = p)) { hash ^= hashKo(koPos); }
+template<int C> void Node::playAndHash(int pos) {
+  int oldKoPos = koPos;
+  int oldNPass = nPass;
+  uint64_t capture = playInt<C>(pos);
+  hash ^= hashUpdate<C>(pos, oldKoPos, koPos, oldNPass, nPass, capture);
 }
 
-void Node::setNPass(int n) {
-  if (nPass)       { hash ^= hashPass(nPass); }
-  if ((nPass = n)) { hash ^= hashPass(nPass); }
-}
-
-template<int C> void Node::playInt(int pos) {
+template<int C> uint64_t Node::playInt(int pos) {
   static_assert(isBlackOrWhite(C), "color");
-  hash ^= hashSide();
-  
   if (pos == PASS) {
     if (koPos) {
       assert(nPass == 0);
-      setKoPos(0);
-      setNPass(1);
+      koPos = 0;
     } else {
-      assert(nPass < 3);
-      setNPass((nPass == 0) ? 2 : (nPass + 1));
+      assert(nPass < 2);
+      ++nPass;
     }
-    return;
+    return 0;
   }
   
   assert(isEmpty(pos));
-  if (nPass) {
-    assert(nPass < 3);
-    setNPass(0);
-  }
-  
+  assert(pos != koPos);
+  nPass = 0;
+    
   uint64_t group = shadow(pos);
   int newGid = -1;
   bool isSimple = true;
@@ -157,28 +146,28 @@ template<int C> void Node::playInt(int pos) {
   for (int p : NEIB(pos)) {
     if (isEmpty(p)) {
       maybeKo = false;
-      continue;
-    }    
-    int gid = gids[p];
-    if (is<C>(p)) {
-      maybeKo = false;
-      group |= groups[gid];
-      if (newGid == -1) {
-        newGid = gid;
-      } else if (newGid != gid) {
-        isSimple = false;
-        groups[gid] = 0;
-      }
-    } else if (is<1-C>(p)) {
-      uint64_t g = groups[gid];
-      if (libsOfGroup(g) == 1) {
-        capture |= g;
-        groups[gid] = 0;
+    } else {
+      int gid = gids[p];
+      if (is<C>(p)) {
+        maybeKo = false;
+        group |= groups[gid];
+        if (newGid == -1) {
+          newGid = gid;
+        } else if (newGid != gid) {
+          isSimple = false;
+          groups[gid] = 0;
+        }
+      } else if (is<1-C>(p)) {
+        uint64_t g = groups[gid];
+        if (libsOfGroup(g) == 1) {
+          capture |= g & stone[1-C];
+          groups[gid] = 0;
+        }
       }
     }
   }
-  bool isKo = maybeKo && sizeOfGroup<1-C>(capture) == 1;
-  if (koPos || isKo) { setKoPos(isKo ? pos : 0); }
+  bool isKo = maybeKo && size(capture) == 1;
+  koPos = isKo ? pos : 0;
   stone[1-C] &= ~capture;
   SET(pos, stone[C]);
   updateEmpty();
@@ -191,6 +180,7 @@ template<int C> void Node::playInt(int pos) {
   }
   assert(libsOfGroupAtPos(pos) > 0);
   points[C] = bensonAlive<C>();
+  return capture;
 }
 
 template<int C> unsigned Node::neibGroups(int p) const {
@@ -374,7 +364,7 @@ uint64_t Node::maybeMoves() const {
 }
 
 template<int C> void Node::genMoves(Vect<byte, N> &moves) const {
-  assert(nPass < 3);
+  assert(nPass < 2);
   int tmp[N];
   int n = 0;
   uint64_t area = maybeMoves();
@@ -387,14 +377,14 @@ template<int C> void Node::genMoves(Vect<byte, N> &moves) const {
   }
   std::sort(tmp, tmp + n);
   moves.clear();
-  if (nPass == 2) {
+  if (nPass == 1) {
     assert(!koPos);
     moves.push(PASS);
   }
   for (int *pt = tmp, *end = tmp + n; pt < end; ++pt) {
     moves.push(*pt & 0xff);
   }
-  if (nPass < 2) {
+  if (nPass == 0) {
     moves.push(PASS);
   }
 }
@@ -411,11 +401,11 @@ template<int C> int Node::finalScore() const {
 }
 
 template<int C> ScoreBounds Node::score() const {
-  if (nPass < 3) {
-    return {(signed char) (-N + 2 * size(points[C])), (signed char) (N - 2 * size(points[1-C]))};
-  } else {
+  if (nPass == 2) {
     signed char score = finalScore<C>();
     return {score, score};
+  } else {
+    return {(signed char) (-N + 2 * size(points[C])), (signed char) (N - 2 * size(points[1-C]))};
   }
 }
 
@@ -476,7 +466,7 @@ void Node::print() const {
 
 
 #define TEMPLATES(C) \
-  template void Node::playInt<C>(int);          \
+  template void Node::playAndHash<C>(int);          \
   template uint64_t Node::bensonAlive<C>() const;   \
   template ScoreBounds Node::score<C>() const;      \
   template int Node::finalScore<C>() const;             \
