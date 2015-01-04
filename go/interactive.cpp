@@ -22,6 +22,9 @@ int main() {
   node.print();  
 }
 
+
+
+
 /*
 static bool isValid(int y, int x) { return y >= 0 && y < SIZE_Y && x >= 0 && x < SIZE_X; }
 

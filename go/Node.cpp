@@ -196,7 +196,7 @@ struct Region {
   Vect<byte, 4> vital;
   uint64_t area;
 
-  Region(): border(0), vital() { }
+  Region(): border(0), vital(), area(0) { }
   Region(unsigned vitalBits, unsigned border, uint64_t area) :
     border(border), area(area) {
     int i = 0;
@@ -315,10 +315,12 @@ template<int C> uint64_t Node::bensonAlive() const {
     if (!changed) { break; }
   }
 
+  // printf("alive gids %x\n", aliveBits);  
   uint64_t points = 0;
   if (!aliveGids.isEmpty()) {
     for (Region &r : regions) {
-      if (r.isCoveredBy(aliveBits) && r.size() <= 8) {
+      if (r.isCoveredBy(aliveBits) && !hasEyeSpace<1-C>(r.area)) {
+        // printf("r area %lx\n", r.area);
         points |= r.area;
       }
     }
@@ -329,6 +331,23 @@ template<int C> uint64_t Node::bensonAlive() const {
     points |= (stonePoints & stone[C]);
   }
   return points;
+}
+
+template<int C> bool Node::hasEyeSpace(uint64_t area) const {
+  if (size(area) < 8) { return false; }
+  int nEyes = 0;
+  int firstEye = 0;
+  for (int p : Bits(area & empty)) {
+    if (!(shadow(p) & stone[1-C])) {
+      if (++nEyes >= 3) { return true; }
+      if (!firstEye) {
+        firstEye = p;
+      } else if (!(shadow(p) & (1 << firstEye))) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 template<typename T> static uint64_t transform(uint64_t points, T t) {

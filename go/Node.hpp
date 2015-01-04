@@ -73,4 +73,5 @@ private:
   
   int groupColor(int gid) const;
   char charForPos(int p) const;
+  template<int C> bool hasEyeSpace(uint64_t area) const;  
 };
