@@ -82,6 +82,41 @@ template<int C> int Node::valueOfMove(int pos) const {
   return (isSuicide || isSelfEye) ? -1 : (value + 2);
 }
 
+template<int C> uint128_t Node::hashOnPlay(int pos) const {
+  uint128_t newHash = hash ^ hashSide();
+  if (pos == PASS) {
+    if (koPos) {
+      assert(nPass == 0);
+      newHash ^= hashPass(1);
+    } else {
+      assert(nPass < 3);
+      if (nPass) { newHash ^= hashPass(nPass); }
+      newHash ^= hashPass(nPass ? (nPass + 1) : 2);
+    }
+  }
+  
+  uint64_t capture = 0;
+  bool maybeKo = true;
+  for (int p : NEIB(pos)) {
+    if (isEmpty(p) || is<C>(p)) {
+      maybeKo = false;
+    } else if (is<1-C>(p)) {
+      int gid = gids[p];
+      uint64_t g = groups[gid];
+      if (libsOfGroup(g) == 1) {
+        capture |= g;
+      }
+    }
+  }
+  bool isKo = maybeKo && sizeOfGroup<1-C>(capture) == 1;
+
+  assert(!isKo || koPos != pos);
+  if (koPos) { newHash ^= hashKo(koPos); }
+  if (isKo) { newHash ^= hashKo(pos); }
+  if (capture) { for (int p : Bits(capture & stone[1-C])) { newHash ^= hashPos<1-C>(p); } }
+  return newHash;
+}
+
 void Node::setKoPos(int p) {
   if (koPos)       { hash ^= hashKo(koPos); }
   if ((koPos = p)) { hash ^= hashKo(koPos); }
@@ -359,7 +394,7 @@ template<int C> void Node::genMoves(Vect<byte, N> &moves) const {
   for (int *pt = tmp, *end = tmp + n; pt < end; ++pt) {
     moves.push(*pt & 0xff);
   }
-  if (koPos) {
+  if (nPass < 2) {
     moves.push(PASS);
   }
 }
@@ -384,13 +419,70 @@ template<int C> ScoreBounds Node::score() const {
   }
 }
 
+
+
+static char *expand(char *line) {
+  for (int i = SIZE_X - 1; i >= 0; --i) {
+    line[2*i+1] = line[i];
+    line[2*i] = ' ';
+  }
+  line[SIZE_X * 2] = 0;
+  return line;
+}
+
+char Node::charForPos(int p) const {
+  return is<BLACK>(p) ? 'x' : is<WHITE>(p) ? 'o' : isEmpty(p) ? '.' : isBorder(p) ? '-' : '?';
+}
+
+int Node::groupColor(int gid) const {
+  for (int p = 0; p < BIG_N; ++p) {
+    if (gids[p] == gid && (is<BLACK>(p) || is<WHITE>(p))) {
+      return is<BLACK>(p) ? BLACK : WHITE;
+    }
+  }
+  printf("groupColor gid %d %lx %d\n", gid, groups[gid], gids[P(0, 0)]);
+  assert(false);
+}
+
+void Node::print() const {
+  char line1[256], line2[256], line3[256];
+  for (int y = 0; y < SIZE_Y; ++y) {
+    for (int x = 0; x < SIZE_X; ++x) {
+      int p = P(y, x);
+      line1[x] = charForPos(p);
+      line2[x] = '0' + gids[p];
+      bool isPointBlack = IS(p, points[BLACK]);
+      bool isPointWhite = IS(p, points[WHITE]);
+      assert(!(isPointBlack && isPointWhite));
+      line3[x] = isPointBlack ? 'x' : isPointWhite ? 'o' : '.';
+    }
+    line1[SIZE_X*2] = 0;
+    line2[SIZE_X*2] = 0;
+    printf("\n%s    %s    %s", expand(line1), expand(line2), expand(line3));
+  }
+  printf("\n\nGroups:\n");
+  for (int gid = 0; gid < MAX_GROUPS; ++gid) {
+    if (groups[gid]) {
+      int col = groupColor(gid);
+      int size = (col == BLACK) ? sizeOfGid<BLACK>(gid) : sizeOfGid<WHITE>(gid);
+      printf("%d size %d libs %d\n", gid, size, libsOfGid(gid));
+    }
+  }
+  if (koPos) {
+    printf("ko: (%d, %d)\n", Y(koPos), X(koPos));
+  }
+  printf("\n\n");
+}
+
+
 #define TEMPLATES(C) \
-template void Node::playInt<C>(int);\
-template uint64_t Node::bensonAlive<C>() const;\
-template ScoreBounds Node::score<C>() const;\
-template int Node::finalScore<C>() const;\
-template void Node::genMoves<C>(Vect<byte, N> &) const;\
-template int Node::valueOfMove<C>(int) const;
+  template void Node::playInt<C>(int);          \
+  template uint64_t Node::bensonAlive<C>() const;   \
+  template ScoreBounds Node::score<C>() const;      \
+  template int Node::finalScore<C>() const;             \
+  template void Node::genMoves<C>(Vect<byte, N> &) const;   \
+  template int Node::valueOfMove<C>(int) const;             \
+  template uint128_t Node::hashOnPlay<C>(int) const;
 
 TEMPLATES(BLACK)
 TEMPLATES(WHITE)

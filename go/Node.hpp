@@ -1,4 +1,5 @@
 #pragma once
+
 #include "data.hpp"
 #include "go.hpp"
 
@@ -33,6 +34,7 @@ public:
   }
 
   uint128_t getHash() const { return hash; }
+  template<int C> uint128_t hashOnPlay(int p) const;
   
   template<int C> void genMoves(Vect<byte, N> &outMoves) const;
   template<int C> ScoreBounds score() const;
