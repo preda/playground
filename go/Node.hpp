@@ -44,6 +44,7 @@ public:
   bool lastWasPass() const { return nPass > 0; }
   
   void print() const;
+  void setUp(const char *s);
 
 private:
   template<int C> void playAndHash(int p);

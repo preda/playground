@@ -12,9 +12,20 @@ template<int C> void doPlay(Node &node, int p) {
   node.print();
 }
 
+int main() {
+  Node node;
+  node.setUp("xxxx"
+             ".xoo"
+             "xoo."
+             ".o.o"
+             );
+  node.print();  
+}
+
+/*
 static bool isValid(int y, int x) { return y >= 0 && y < SIZE_Y && x >= 0 && x < SIZE_X; }
 
-int main() {  
+  int main() {  
   Node node;
   node.print();
   while (true) {
@@ -37,3 +48,4 @@ int main() {
     }
   }
 }
+*/

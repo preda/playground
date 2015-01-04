@@ -409,8 +409,6 @@ template<int C> ScoreBounds Node::score() const {
   }
 }
 
-
-
 static char *expand(char *line) {
   for (int i = SIZE_X - 1; i >= 0; --i) {
     line[2*i+1] = line[i];
@@ -462,6 +460,24 @@ void Node::print() const {
     printf("ko: (%d, %d)\n", Y(koPos), X(koPos));
   }
   printf("\n\n");
+}
+
+void Node::setUp(const char *s) {
+  for (int y = 0; y < SIZE_Y; ++y) {
+    for (int x = 0; x < SIZE_X; ++x, ++s) {
+      char c = *s;
+      assert(c);
+      int p = P(y, x);
+      if (c == 'x') {
+        playInt<BLACK>(p);
+      } else if (c == 'o') {
+        playInt<WHITE>(p);
+      }
+    }
+  }
+  assert(!*s);
+  points[BLACK] = bensonAlive<BLACK>();
+  points[WHITE] = bensonAlive<WHITE>();
 }
 
 
