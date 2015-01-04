@@ -30,19 +30,6 @@ int Driver::mtdf(int g, int d) {
   return g;
 }
 
-int main(int argc, char **argv) {
-  Driver driver;
-  int d = 8;
-  while (true) {
-    int g = driver.mtdf(0, d);
-    if (g != UNKNOWN) {
-      printf("Score %d\n", g);
-      break;
-    }
-    d += 2;
-  }
-}
-
 inline int negaUnknown(int g) { return (g == UNKNOWN) ? UNKNOWN : -g; }
 
 inline int maxUnknown(int a, int b) {
@@ -54,31 +41,42 @@ template<int C> int Driver::AB(const Node &n, int beta, int d) {
 
   ScoreBounds bounds = tt.lookup(hash);
   int min = bounds.min, max = bounds.max;
-  if (min >= beta) { return min; }
-  if (max  < beta) { return max; }
+  if (min >= beta || max < beta) {
+    // printf("Tt %d beta %d [%d %d]\n", d, beta, min, max);
+    return min >= beta ? min : max;
+  }
   bounds = n.score<C>();
   min = std::max<int>(min, bounds.min);
   max = std::min<int>(max, bounds.max);
   if (min >= beta || max < beta) {
+    printf("Sc %d beta %d [%d %d]\n", d, beta, min, max);
     tt.set(hash, min, max);
     return min >= beta ? min : max;
   }
   
   Vect<byte, N> moves;
   n.genMoves<C>(moves);
+  // printf("Moves %d %d %d\n", C, d, moves.size());
   int subBeta = -(beta - 1);
   for (int p : moves) {
     int s = -tt.lookup(n.hashOnPlay<C>(p)).max;
     if (s >= beta) {
-      tt.set(hash, s, max);
+      printf("ETC %d beta %d move %d: %d\n", d, beta, p, s);
+      tt.set(hash, s, max);      
       return s;
     }
   }
 
+  if (d <= 0) {
+    
+    return UNKNOWN;
+  }
+  
   int g = -N;
   for (int p : moves) {
     int s = negaUnknown(AB<1-C>(n.play<C>(p), subBeta, d - 1));
     if (s >= beta) {
+      printf("Bcut %d beta %d move %d: %d\n", d, beta, p, s); 
       tt.set(hash, s, max);
       return s;
     }
@@ -87,11 +85,26 @@ template<int C> int Driver::AB(const Node &n, int beta, int d) {
   if (g != UNKNOWN) {
     tt.set(hash, min, g);    
   }
+  // printf("A %d beta %d: %d\n", d, beta, g);
   return g;
 }
 
 template int Driver::AB<BLACK>(const Node&, int, int);
 template int Driver::AB<WHITE>(const Node&, int, int);
+
+int main(int argc, char **argv) {
+  Driver driver;
+  int d = 14;
+  while (true) {
+    int g = driver.mtdf(0, d);
+    if (g != UNKNOWN) {
+      printf("Score %d\n", g);
+      break;
+    }
+    d += 2;
+  }
+}
+
 
 /*
 inline int negaMax(int g, int score) {

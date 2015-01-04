@@ -22,18 +22,19 @@ public:
 template<typename T, int N>
 class Vect {
   T v[N];
-  int size = 0;
+  int _size = 0;
 
 public:
-  void push(T t) { v[size++] = t; }
-  T pop() { return v[--size]; }
-  bool isEmpty() { return size <= 0; }
+  void push(T t) { v[_size++] = t; }
+  T pop() { return v[--_size]; }
+  int size() { return _size; }
+  bool isEmpty() { return _size <= 0; }
   bool has(T t) {
     for (T e : *this) { if (e == t) { return true; } }
     return false;
   }
-  void clear() { size = 0; }
+  void clear() { _size = 0; }
   
   T *begin() { return v; }
-  T *end() { return v + size; }
+  T *end() { return v + _size; }
 };

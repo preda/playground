@@ -9,7 +9,7 @@
 #include <stdio.h>
 
 Node::Node() :
-  hash(0),
+  hash(hashPos<WHITE>(0)),
   empty(INSIDE),
   stone{0},
   points{0},
@@ -181,7 +181,7 @@ template<int C> void Node::playInt(int pos) {
   if (koPos || isKo) { setKoPos(isKo ? pos : 0); }
   stone[1-C] &= ~capture;
   SET(pos, stone[C]);
-  updateEmpty();  
+  updateEmpty();
   if (newGid == -1) { newGid = this->newGid(); }
   groups[newGid] = group;
   if (isSimple) {
@@ -364,7 +364,7 @@ template<typename T> bool Node::isSymmetry(T t) const {
 }
 
 uint64_t Node::maybeMoves() const {
-  uint64_t area = INSIDE;
+  uint64_t area = empty;
   if (!koPos && size(empty) > N - 12) {
     if (isSymmetry(reflectX))    { area &= HALF_X; }
     if (isSymmetry(reflectY))    { area &= HALF_Y; }

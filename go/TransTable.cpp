@@ -4,13 +4,13 @@
 
 #define SLOT_BITS 30
 #define RES_BITS 4
-#define N 8
+#define SEARCH 8
 
 constexpr uint64_t SIZE = (1ull << SLOT_BITS) - (1ull << (SLOT_BITS - RES_BITS));
 constexpr uint64_t MASK = (1ull << SLOT_BITS) - 1;
 
 TransTable::TransTable() :
-  slots(new Slot[SIZE + N - 1])
+  slots(new Slot[SIZE + SEARCH - 1])
 {
   printf("Size %.2f GB, slot size %ld, info %ld\n",
          SIZE * sizeof(Slot) / (1024 * 1024 * 1024.0f), sizeof(Slot), sizeof(ScoreBounds));
@@ -37,8 +37,9 @@ ScoreBounds TransTable::lookup(uint128_t hash) {
   uint64_t pos = getPos(hash);
   uint64_t lock = getLock(hash);
   
-  Slot buf[N];
-  for (Slot *begin = slots + pos, *s = begin, *end = begin + N, *p = buf + 1; s < end; ++s, ++p) {
+  Slot buf[SEARCH];
+  for (Slot *begin = slots + pos, *s = begin, *end = begin + SEARCH, *p = buf + 1;
+       s < end; ++s, ++p) {
     if (s->lock == lock) {
       if (s == begin) {
         return s->score();
@@ -60,10 +61,10 @@ void TransTable::set(uint128_t hash, int min, int max) {
   uint64_t pos = getPos(hash);
   uint64_t lock = getLock(hash);
 
-  Slot buf[N];
+  Slot buf[SEARCH];
   Slot *p = buf + 1;
   Slot *begin = slots + pos;
-  for (Slot *begin = slots + pos, *s = begin, *end = begin + N - 1; s < end; ++s, ++p) {
+  for (Slot *begin = slots + pos, *s = begin, *end = begin + SEARCH - 1; s < end; ++s, ++p) {
     if (s->isEmpty() || s->lock == lock) {
       break;
     } else {
