@@ -11,8 +11,8 @@ struct ScoreBounds {
 };
 
 enum {
-  SIZE_Y = 5,
-  SIZE_X = 5,
+  SIZE_Y = 4,
+  SIZE_X = 4,
 
   X_SHIFT = 3,
   BIG_X = (1 << X_SHIFT),
@@ -53,8 +53,17 @@ constexpr bool isBlackOrWhite(int color) { return color == BLACK || color == WHI
 */
 
 //5x5
+/*
 #define BORDER 0xff20a0a0a0a0ff
 #define INSIDE 0x1f1f1f1f1f00
 #define HALF_Y 0x1f1f1f00
 #define HALF_X 0x70707070700
 #define HALF_DIAG 0x10181c1e1f00
+*/
+
+//4x4
+#define BORDER 0xff10909090ff
+#define INSIDE 0xf0f0f0f00
+#define HALF_Y 0xf0f00
+#define HALF_X 0x303030300
+#define HALF_DIAG 0x80c0e0f00

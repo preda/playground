@@ -9,11 +9,13 @@ public:
   ~Post() { f(); }
 };
 
-int Driver::mtdf(int g, int d) {
+int Driver::mtdf(int f, int d) {
   Node root;
-  int min = -N, max = N, beta = g;
+  int min = -N, max = N;
+  int beta = f;
+  int g;
   while (min < max) {
-    int g = AB<BLACK>(root, beta, d);
+    g = AB<BLACK>(root, beta, d);
     printf("MTDF %d: [%d, %d] beta %d: %d\n", d, min, max, beta, g);
     if (g == UNKNOWN) {
       // printf("MTDF depth %d: [%d, %d] beta %d: %d\n", d, min, max, beta, g);
@@ -49,7 +51,8 @@ template<int C> int Driver::AB(const Node &n, int beta, int d) {
   min = std::max<int>(min, bounds.min);
   max = std::min<int>(max, bounds.max);
   if (min >= beta || max < beta) {
-    printf("Sc %d beta %d [%d %d]\n", d, beta, min, max);
+    n.print();
+    printf("%d Sc %d beta %d [%d %d]\n", C, d, beta, min, max);
     tt.set(hash, min, max);
     return min >= beta ? min : max;
   }
@@ -76,7 +79,7 @@ template<int C> int Driver::AB(const Node &n, int beta, int d) {
   for (int p : moves) {
     int s = negaUnknown(AB<1-C>(n.play<C>(p), subBeta, d - 1));
     if (s >= beta) {
-      printf("Bcut %d beta %d move %d: %d\n", d, beta, p, s); 
+      printf("%d Bcut %d beta %d move %d: %d\n", C, d, beta, p, s); 
       tt.set(hash, s, max);
       return s;
     }
@@ -105,16 +108,6 @@ int main(int argc, char **argv) {
   }
 }
 
-
-/*
-inline int negaMax(int g, int score) {
-  if (g == UNKNOWN || score == UNKNOWN) {
-    return UNKNOWN;
-  }
-  return std::max(g, -score);
-}
-*/
-
   /*
   bool added = history.insert(hash).second;
   if(!added && !n.lastWasPass()) { 
@@ -126,14 +119,4 @@ inline int negaMax(int g, int score) {
   /*
   auto f = [this, hash, added](){ if (added) { history.erase(hash); }};
   Post<decltype(f)> onReturn(f);
-  */
-
-
-  /*
-  if (!n.isKo()) {
-    int maxScore = n.finalScore<C>();
-    if ((g != UNKNOWN && maxScore > g) || maxScore >= beta) {
-      g = PLAY(PASS);
-    }
-  }
   */
