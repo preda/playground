@@ -1,3 +1,5 @@
+// Copyright (c) Mihai Preda 2013-2014
+
 #include "Node.hpp"
 #include <stdio.h>
 #include <assert.h>
