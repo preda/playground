@@ -49,7 +49,7 @@ template<int C> int Node::valueOfMove(int pos) const {
     if (isEmpty(p)) {
       isSuicide = false;
       isSelfEye = false;
-      ++value;
+      value += 10;
     } else if (isBorder(p)) {
       continue;
     } else {
@@ -57,31 +57,32 @@ template<int C> int Node::valueOfMove(int pos) const {
       uint64_t group = groups[gids[p]];
       int libs = libsOfGroup(group);      
       if (is<C>(p)) {
-        if (libs > 1) { isSuicide = false; }
         if (libs == 1) {
           isSelfEye = false;
-          value += 2;
-        } else if (libs == 2) {
-          ++value;
+          value += 20;
+        } else {
+          assert(libs >= 0);
+          isSuicide = false;
+          value += (libs == 2) ? 10 : 6;
         }
         if (gid != prevGid) {
           prevGid = gid;
         } else {
-          --value;
+          value -= 10;
         }
       } else if (is<1-C>(p)) {
         isSelfEye = false;
         if (libs == 1) {
           isSuicide = false;
-          value += sizeOfGroup<1-C>(group) + 1;
-        } else if (libs == 2) {
-          ++value;
+          value += (sizeOfGroup<1-C>(group) + 1) * 10;
+        } else {
+          value += (libs == 2) ? 10 : 6;
         }
       }
     }
   }
-  assert(value >= -2);
-  return (isSuicide || isSelfEye) ? -1 : (value + 2);
+  assert(value >= -20);
+  return (isSuicide || isSelfEye) ? -1 : (value + 20);
 }
 
 template<int C> uint128_t Node::hashOnPlay(int pos) const {
@@ -233,6 +234,28 @@ uint64_t walk(int p, T t) {
 #undef STEP
 }
 
+static char *expand(char *line) {
+  for (int i = SIZE_X - 1; i >= 0; --i) {
+    line[2*i+1] = line[i];
+    line[2*i] = ' ';
+  }
+  line[SIZE_X * 2] = 0;
+  return line;
+}
+
+void printArea(uint64_t area) {
+  char line[256];
+  for (int y = 0; y < SIZE_Y; ++y) {
+    for (int x = 0; x < SIZE_X; ++x) {
+      int p = P(y, x);
+      line[x] = IS(p, area) ? '+' : '.';
+    }
+    line[SIZE_X * 2] = 0;
+    printf("\n%s", expand(line));
+  }
+  printf("\n");
+}
+
 void Node::enclosedRegions(uint64_t *outEnclosed) const {
   uint64_t emptyNotSeen = empty;
   uint64_t enclosedBlack = 0;
@@ -254,6 +277,10 @@ void Node::enclosedRegions(uint64_t *outEnclosed) const {
         return false;
       });
     emptyNotSeen &= ~seen;
+    if (!(touchesBlack || touchesWhite)) {
+      print();
+      printArea(area);
+    }
     assert(touchesBlack || touchesWhite);
     if (touchesBlack && ~touchesWhite) {
       enclosedBlack |= area;
@@ -411,12 +438,15 @@ template<int C> void Node::genMoves(Vect<byte, N> &moves) const {
 }
 
 template<int C> int Node::finalScore() const {
+  assert(!(points[BLACK] & points[WHITE]));
+  if (!stone[BLACK] && !stone[WHITE]) { return 0; }
   uint64_t enclosed[2] = {0};
   enclosedRegions(enclosed);
   uint64_t total[2];
   for (int i : {BLACK, WHITE}) {
-    total[i] = points[i] | stone[i] | enclosed[i];
+    total[i] = points[i] | ((stone[i] | enclosed[i]) & ~points[1-i]);
   }
+  if (total[BLACK] & total[WHITE]) { print(); }
   assert((total[BLACK] & total[WHITE]) == 0);
   return size(total[C]) - size(total[1-C]);
 }
@@ -428,15 +458,6 @@ template<int C> ScoreBounds Node::score() const {
   } else {
     return {(signed char) (-N + 2 * size(points[C])), (signed char) (N - 2 * size(points[1-C]))};
   }
-}
-
-static char *expand(char *line) {
-  for (int i = SIZE_X - 1; i >= 0; --i) {
-    line[2*i+1] = line[i];
-    line[2*i] = ' ';
-  }
-  line[SIZE_X * 2] = 0;
-  return line;
 }
 
 char Node::charForPos(int p) const {

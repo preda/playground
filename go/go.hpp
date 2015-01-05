@@ -29,7 +29,7 @@ enum {
   EMPTY = 2,
   BROWN = 3,
 
-  MAX_GROUPS = N / 2,
+  MAX_GROUPS = N/2 + 2,
 
   PASS = 1,
 

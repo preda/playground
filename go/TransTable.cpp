@@ -3,6 +3,7 @@
 #include "TransTable.hpp"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #define SLOT_BITS 30
 #define RES_BITS 4
@@ -12,14 +13,14 @@ constexpr uint64_t SIZE = (1ull << SLOT_BITS) - (1ull << (SLOT_BITS - RES_BITS))
 constexpr uint64_t MASK = (1ull << SLOT_BITS) - 1;
 
 TransTable::TransTable() :
-  slots(new Slot[SIZE + SEARCH - 1])
+  slots((Slot *) calloc(SIZE + SEARCH - 1, sizeof(Slot)))
 {
   printf("Size %.2f GB, slot size %ld, info %ld\n",
          SIZE * sizeof(Slot) / (1024 * 1024 * 1024.0f), sizeof(Slot), sizeof(ScoreBounds));
 }
 
 TransTable::~TransTable() {
-  delete[] slots;
+  free(slots);
   slots = 0;
 }
 

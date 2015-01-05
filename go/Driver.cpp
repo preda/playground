@@ -2,6 +2,7 @@
 
 #include "Driver.hpp"
 #include <stdio.h>
+#include <assert.h>
 
 template<typename T> class Post {
 private:
@@ -41,32 +42,35 @@ inline int maxUnknown(int a, int b) {
 }
 
 template<int C> int Driver::AB(const Node &n, int beta, int d) {
+  assert(C == (d & 1));
+  // n.print();
   uint128_t hash = n.getHash();
 
   ScoreBounds bounds = tt.lookup(hash);
   int min = bounds.min, max = bounds.max;
   if (min >= beta || max < beta) {
-    // printf("Tt %d beta %d [%d %d]\n", d, beta, min, max);
+    // printf("%d beta %d Transposition [%d %d]\n", d, beta, min, max);
     return min >= beta ? min : max;
   }
   bounds = n.score<C>();
   min = std::max<int>(min, bounds.min);
   max = std::min<int>(max, bounds.max);
+  // printf("%d %d score [%d %d]\n", d, beta, min, max);
   if (min >= beta || max < beta) {
-    n.print();
-    printf("%d Sc %d beta %d [%d %d]\n", C, d, beta, min, max);
+    // n.print();
+    // printf("%d beta %d Score [%d %d]\n", d, beta, min, max);
     tt.set(hash, min, max);
     return min >= beta ? min : max;
   }
   
   Vect<byte, N> moves;
   n.genMoves<C>(moves);
-  // printf("Moves %d %d %d\n", C, d, moves.size());
+  // printf("%d beta %d Moves %d\n", d, beta, moves.size());
   int subBeta = -(beta - 1);
   for (int p : moves) {
     int s = -tt.lookup(n.hashOnPlay<C>(p)).max;
     if (s >= beta) {
-      printf("ETC %d beta %d move %d: %d\n", d, beta, p, s);
+      // printf("%d beta %d ETC: %d\n", d, beta, s);
       tt.set(hash, s, max);      
       return s;
     }
@@ -81,7 +85,7 @@ template<int C> int Driver::AB(const Node &n, int beta, int d) {
   for (int p : moves) {
     int s = negaUnknown(AB<1-C>(n.play<C>(p), subBeta, d - 1));
     if (s >= beta) {
-      printf("%d Bcut %d beta %d move %d: %d\n", C, d, beta, p, s); 
+      // printf("%d beta %d Beta cut: %d\n", d, beta, s); 
       tt.set(hash, s, max);
       return s;
     }
@@ -99,13 +103,11 @@ template int Driver::AB<WHITE>(const Node&, int, int);
 
 int main(int argc, char **argv) {
   Driver driver;
-  int d = 14;
+  int d = 6;
   while (true) {
     int g = driver.mtdf(0, d);
-    if (g != UNKNOWN) {
-      printf("Score %d\n", g);
-      break;
-    }
+    printf("At depth %d: %d\n", d, g);
+    break;
     d += 2;
   }
 }
