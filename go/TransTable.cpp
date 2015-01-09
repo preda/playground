@@ -5,18 +5,19 @@
 #include <string.h>
 #include <stdlib.h>
 
+#define LOCK_BITS 48
 #define SLOT_BITS 30
-#define RES_BITS 4
+#define RES_BITS 2
 #define SEARCH 8
 
 constexpr uint64_t SIZE = (1ull << SLOT_BITS) - (1ull << (SLOT_BITS - RES_BITS));
 constexpr uint64_t MASK = (1ull << SLOT_BITS) - 1;
+constexpr uint64_t LOCK_MASK = (1ul << LOCK_BITS) - 1;
 
 TransTable::TransTable() :
-  slots((Slot *) calloc(SIZE + SEARCH - 1, sizeof(Slot)))
+  slots((uint64_t *) calloc(SIZE + SEARCH - 1, 8))
 {
-  printf("Size %.2f GB, slot size %ld, info %ld\n",
-         SIZE * sizeof(Slot) / (1024 * 1024 * 1024.0f), sizeof(Slot), sizeof(ScoreBounds));
+  printf("Size %.2f GB\n", SIZE * 8 / (1024 * 1024 * 1024.0f));
 }
 
 TransTable::~TransTable() {
@@ -33,47 +34,64 @@ inline uint64_t getPos(uint128_t hash) {
 }
 
 inline uint64_t getLock(uint128_t hash) {
-  return ((uint64_t) (hash >> 64)) & ((1ull << LOCK_BITS) - 1);
+  return ((uint64_t) (hash >> 64)) & LOCK_MASK;
 }
 
-ScoreBounds TransTable::lookup(uint128_t hash) {
+std::tuple<int, bool> TransTable::get(uint128_t hash, int depth) {
   uint64_t pos = getPos(hash);
   uint64_t lock = getLock(hash);
   
-  Slot buf[SEARCH];
-  for (Slot *begin = slots + pos, *s = begin, *end = begin + SEARCH, *p = buf + 1;
-       s < end; ++s, ++p) {
-    if (s->lock == lock) {
-      if (s == begin) {
-        return s->score();
-      } else {
-        *buf = *s;
-        memmove(begin, buf, (p - buf) * sizeof(Slot));
-        return buf->score();
+  uint64_t buf[SEARCH];
+  for (uint64_t *begin = slots + pos, *s = begin, *end = begin + SEARCH, *p = buf;
+       s < end; ++s) {
+    uint64_t v = *s;
+    if (v == 0) {
+      break;
+    } else if ((v & LOCK_BITS) == lock) {
+      if (s > begin) {
+        *begin = v;
+        memmove(begin + 1, buf, (p - buf) * 8);
       }
-    } else if (s->isEmpty()) {
+      int bound = (signed char) (v >> LOCK_BITS);
+      bool exact = bound & 1;
+      bound >>= 1;
+      if (bound != UNKNOWN) {
+        return std::make_tuple(bound, exact);
+      }
+      int d = (signed char) (v >> (LOCK_BITS + 8));      
+      if (depth <= d) {
+        return std::make_tuple(UNKNOWN, false);
+      } else {
         break;
+      }
     } else {
-      *p = *s;
+      *p++ = v;
     }
   }
-  return {-N, N};
+  return std::make_tuple(TT_NOT_FOUND, false);
 } 
 
-void TransTable::set(uint128_t hash, int min, int max) {
+void TransTable::set(uint128_t hash, int depth, int bound, bool exact) {
   uint64_t pos = getPos(hash);
   uint64_t lock = getLock(hash);
 
-  Slot buf[SEARCH];
-  Slot *p = buf + 1;
-  Slot *begin = slots + pos;
-  for (Slot *begin = slots + pos, *s = begin, *end = begin + SEARCH - 1; s < end; ++s, ++p) {
-    if (s->isEmpty() || s->lock == lock) {
+  uint64_t buf[SEARCH];
+  uint64_t *p = buf;
+  uint64_t *begin = slots + pos;
+  for (uint64_t *s = begin, *end = begin + SEARCH - 1;
+       s < end; ++s) {
+    uint64_t v = *s;
+    if (v == 0 || ((v & LOCK_BITS) == lock)) {
       break;
     } else {
-      *p = *s;
+      *p++ = v;
     }
   }
-  buf[0] = {lock, (signed char) min, (signed char) max};
-  memmove(begin, buf, (p - buf) * sizeof(Slot));
+  bound = (bound << 1) | (exact ? 1 : 0);
+  *begin = (((uint64_t) (unsigned char) depth) << (LOCK_BITS + 8))
+        | (((uint64_t) (unsigned char) bound) << LOCK_BITS)
+        | lock;
+  if (p > buf) {
+    memmove(begin + 1, buf, (p - buf) * 8);
+  }
 }

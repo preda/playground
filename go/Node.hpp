@@ -4,6 +4,7 @@
 
 #include "data.hpp"
 #include "go.hpp"
+#include <tuple>
 
 static inline int size(uint64_t bits) { return __builtin_popcountll(bits); }
 static inline bool IS(int p, uint64_t bits) { return (bits >> p) & 1; }
@@ -19,7 +20,7 @@ private:
   int nPass;
   byte gids[BIG_N];
 
-public:  
+public:
   Node();
   // Node(const Node &other) { memcpy(this, &other, sizeof(Node)); }
      
@@ -39,8 +40,8 @@ public:
   template<int C> uint128_t hashOnPlay(int p) const;
   
   template<int C> void genMoves(Vect<byte, N> &outMoves) const;
-  template<int C> ScoreBounds score() const;
-  template<int C> int finalScore() const;
+  std::tuple<int, int> score() const;
+  int finalScore() const;
   
   bool isKo() const { return koPos != 0; }
   bool lastWasPass() const { return nPass > 0; }

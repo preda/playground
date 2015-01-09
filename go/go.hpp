@@ -7,10 +7,12 @@
 typedef unsigned char byte;
 typedef unsigned __int128 uint128_t;
 
+/*
 struct ScoreBounds {
   signed char min;
   signed char max;
 };
+*/
 
 enum {
   SIZE_Y = 4,
@@ -33,7 +35,8 @@ enum {
 
   PASS = 1,
 
-  UNKNOWN = - (N + 1),
+  UNKNOWN = -N - 1,
+  TT_NOT_FOUND = -N - 2
 };
 
 static inline int P(int y, int x) { return ((y + 1) << X_SHIFT) + x; }

@@ -437,7 +437,7 @@ template<int C> void Node::genMoves(Vect<byte, N> &moves) const {
   }
 }
 
-template<int C> int Node::finalScore() const {
+int Node::finalScore() const {
   assert(!(points[BLACK] & points[WHITE]));
   if (!stone[BLACK] && !stone[WHITE]) { return 0; }
   uint64_t enclosed[2] = {0};
@@ -446,17 +446,20 @@ template<int C> int Node::finalScore() const {
   for (int i : {BLACK, WHITE}) {
     total[i] = points[i] | ((stone[i] | enclosed[i]) & ~points[1-i]);
   }
-  if (total[BLACK] & total[WHITE]) { print(); }
+  // if (total[BLACK] & total[WHITE]) { print(); }
   assert((total[BLACK] & total[WHITE]) == 0);
-  return size(total[C]) - size(total[1-C]);
+  return size(total[BLACK]) - size(total[WHITE]);
 }
 
-template<int C> ScoreBounds Node::score() const {
+std::tuple<int, int> Node::score() const {
   if (nPass == 2) {
-    signed char score = finalScore<C>();
-    return {score, score};
+    int score = finalScore();
+    return std::make_tuple(score, score);
   } else {
-    return {(signed char) (-N + 2 * size(points[C])), (signed char) (N - 2 * size(points[1-C]))};
+    int min = -N + 2 * size(points[BLACK]);
+    int max =  N - 2 * size(points[WHITE]);
+    assert(min <= max);
+    return std::make_tuple(min, max);
   }
 }
 
@@ -526,8 +529,6 @@ void Node::setUp(const char *s) {
 #define TEMPLATES(C) \
   template void Node::playAndHash<C>(int);          \
   template uint64_t Node::bensonAlive<C>() const;   \
-  template ScoreBounds Node::score<C>() const;      \
-  template int Node::finalScore<C>() const;             \
   template void Node::genMoves<C>(Vect<byte, N> &) const;   \
   template int Node::valueOfMove<C>(int) const;             \
   template uint128_t Node::hashOnPlay<C>(int) const;
