@@ -1,4 +1,4 @@
-// Copyright (c) Mihai Preda 2013-2014
+// (c) Copyright 2014 Mihai Preda. All rights reserved.
 
 #include "go.hpp"
 #include <stdio.h>
