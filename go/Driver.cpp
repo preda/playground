@@ -16,7 +16,7 @@ void Driver::mtd() {
   Node root;
   int min = -N, max = N;
   int beta = N;
-  int d = 8;
+  int d = 4;
   while (min < max) {
     int g = MAX(root, beta, d);
     printf("MTDF %d: [%d, %d] beta %d: %d\n", d, min, max, beta, g);
@@ -34,6 +34,7 @@ void Driver::mtd() {
 }
 
 int Driver::MAX(const Node &n, const int beta, int d) {
+  // printf("MAX %d\n", d); n.print();
   uint128_t hash = n.getHash();
   int bound;
   bool exact;

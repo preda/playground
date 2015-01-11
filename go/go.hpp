@@ -7,13 +7,6 @@
 typedef unsigned char byte;
 typedef unsigned __int128 uint128_t;
 
-/*
-struct ScoreBounds {
-  signed char min;
-  signed char max;
-};
-*/
-
 enum {
   SIZE_Y = 4,
   SIZE_X = 4,
