@@ -6,12 +6,14 @@
 #include "go.hpp"
 #include <tuple>
 
+class Hash;
+class Value;
+
 static inline int size(uint64_t bits) { return __builtin_popcountll(bits); }
 static inline bool IS(int p, uint64_t bits) { return (bits >> p) & 1; }
 
 class Node {
 private:
-  uint128_t hash;
   uint64_t empty;
   uint64_t stone[2];
   uint64_t points[2];
@@ -31,16 +33,16 @@ public:
   template<int C> bool isSuicide(int p) const { return valueOfMove<C>(p) < 0; }
   
   template<int C> Node play(int p) const {
-    Node node(*this);
-    node.playAndHash<C>(p);
-    return node;
+    Node n(*this);
+    n.playInt<C>(p);
+    return n;
   }
 
-  uint128_t getHash() const { return hash; }
-  template<int C> uint128_t hashOnPlay(int p) const;
+  template<int C> Hash hashOnPlay(const Hash &h, int p) const;
   
   template<int C> void genMoves(Vect<byte, N> &outMoves) const;
   std::tuple<int, int> score() const;
+  Value score(int beta) const;
   int finalScore() const;
   
   bool isKo() const { return koPos != 0; }
@@ -50,8 +52,7 @@ public:
   void setUp(const char *s);
 
 private:
-  template<int C> void playAndHash(int p);
-  template<int C> uint64_t playInt(int p);
+  template<int C> void playInt(int p);
   
   
   void updateEmpty() { empty = ~(stone[BLACK] | stone[WHITE]) & INSIDE; }

@@ -2,7 +2,8 @@
 
 #include "Node.hpp"
 #include "data.hpp"
-#include "hash.hpp"
+#include "Hash.hpp"
+#include "Value.hpp"
 #include "go.hpp"
 
 #include <initializer_list>
@@ -11,7 +12,6 @@
 #include <stdio.h>
 
 Node::Node() :
-  hash(-1),
   empty(INSIDE),
   stone{0},
   points{0},
@@ -85,7 +85,7 @@ template<int C> int Node::valueOfMove(int pos) const {
   return (isSuicide || isSelfEye) ? -1 : (value + 20);
 }
 
-template<int C> uint128_t Node::hashOnPlay(int pos) const {
+template<int C> Hash Node::hashOnPlay(const Hash &hash, int pos) const {
   uint64_t capture = 0;
   bool isKo = false;
   int newNPass = 0;
@@ -114,17 +114,10 @@ template<int C> uint128_t Node::hashOnPlay(int pos) const {
     }
     isKo = maybeKo && size(capture) == 1;
   }
-  return hash ^ hashUpdate<C>(pos, koPos, isKo ? pos : 0, nPass, newNPass, capture); 
+  return hash.update<C>(pos, koPos, isKo ? pos : 0, nPass, newNPass, capture); 
 }
 
-template<int C> void Node::playAndHash(int pos) {
-  int oldKoPos = koPos;
-  int oldNPass = nPass;
-  uint64_t capture = playInt<C>(pos);
-  hash ^= hashUpdate<C>(pos, oldKoPos, koPos, oldNPass, nPass, capture);
-}
-
-template<int C> uint64_t Node::playInt(int pos) {
+template<int C> void Node::playInt(int pos) {
   static_assert(isBlackOrWhite(C), "color");
   if (pos == PASS) {
     if (koPos) {
@@ -134,7 +127,7 @@ template<int C> uint64_t Node::playInt(int pos) {
       assert(nPass < 2);
       ++nPass;
     }
-    return 0;
+    return;
   }
   
   assert(isEmpty(pos));
@@ -183,7 +176,6 @@ template<int C> uint64_t Node::playInt(int pos) {
   }
   assert(libsOfGroupAtPos(pos) > 0);
   points[C] = bensonAlive<C>();
-  return capture;
 }
 
 template<int C> unsigned Node::neibGroups(int p) const {
@@ -451,6 +443,15 @@ int Node::finalScore() const {
   return size(total[BLACK]) - size(total[WHITE]);
 }
 
+Value Node::score(int beta) const {
+  if (nPass == 2) {
+    return Value::makeExact(finalScore());
+  }
+  int max =  N - 2 * size(points[WHITE]);
+  return (max < beta) ? Value::makeUpperBound(max) :
+    Value::makeLowerBound(-N + 2 * size(points[BLACK]));
+}
+
 std::tuple<int, int> Node::score() const {
   if (nPass == 2) {
     int score = finalScore();
@@ -527,11 +528,10 @@ void Node::setUp(const char *s) {
 
 
 #define TEMPLATES(C) \
-  template void Node::playAndHash<C>(int);          \
   template uint64_t Node::bensonAlive<C>() const;   \
   template void Node::genMoves<C>(Vect<byte, N> &) const;   \
   template int Node::valueOfMove<C>(int) const;             \
-  template uint128_t Node::hashOnPlay<C>(int) const;
+  template Hash Node::hashOnPlay<C>(const Hash &, int) const;
 
 TEMPLATES(BLACK)
 TEMPLATES(WHITE)

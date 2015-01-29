@@ -39,4 +39,5 @@ public:
   
   T *begin() { return v; }
   T *end() { return v + _size; }
+  T operator[](int i) { return v[i]; }
 };

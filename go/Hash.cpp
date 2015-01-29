@@ -1,6 +1,7 @@
 // (c) Copyright 2014 Mihai Preda. All rights reserved.
 
-#include "hash.hpp"
+#include "Hash.hpp"
+#include "transtable.hpp"
 #include "data.hpp"
 
 #define C(a, b) ((uint128_t)a << 64) + b
@@ -85,21 +86,28 @@ uint128_t hashKo(int p)       { return hashPos<BLACK>(p) ^ hashPos<WHITE>(p); }
 uint128_t hashSide()          { return hashPos<BLACK>(0); }
 uint128_t hashPass(int nPass) { return hashPos<BLACK>(nPass); }
 
-template<int C>
-uint128_t hashUpdate(int pos, int oldKoPos, int koPos, int oldNPass, int nPass, uint64_t capture) {
-  uint128_t hash = hashSide();
-  if (oldKoPos)    { hash ^= hashKo(oldKoPos); }
-  if (koPos)       { hash ^= hashKo(koPos); }
-  if (oldNPass)    { hash ^= hashPass(oldNPass); }
-  if (nPass)       { hash ^= hashPass(nPass); }
-  if (pos != PASS) { hash ^= hashPos<C>(pos); }
-  if (capture) {
-    for (int p : Bits(capture)) {
-      hash ^= hashPos<1-C>(p);
-    }
-  }
-  return hash;
+Hash::Hash(uint128_t hash) :
+  hash(hash),
+  pos(hash & MASK),
+  lock(((uint64_t) (hash >> 64)) & LOCK_MASK) {
+  while (pos >= SIZE) { pos >>= RES_BITS; }
 }
 
-template uint128_t hashUpdate<BLACK>(int, int, int, int, int, uint64_t);
-template uint128_t hashUpdate<WHITE>(int, int, int, int, int, uint64_t);
+template<int C>
+Hash Hash::update(int pos, int oldKoPos, int koPos, int oldNPass, int nPass, uint64_t capture) const {
+  uint128_t h = hashSide();
+  if (oldKoPos)    { h ^= hashKo(oldKoPos); }
+  if (koPos)       { h ^= hashKo(koPos); }
+  if (oldNPass)    { h ^= hashPass(oldNPass); }
+  if (nPass)       { h ^= hashPass(nPass); }
+  if (pos != PASS) { h ^= hashPos<C>(pos); }
+  if (capture) {
+    for (int p : Bits(capture)) {
+      h ^= hashPos<1-C>(p);
+    }
+  }
+  return Hash(hash ^ h);
+}
+
+template Hash Hash::update<BLACK>(int, int, int, int, int, uint64_t) const;
+template Hash Hash::update<WHITE>(int, int, int, int, int, uint64_t) const;

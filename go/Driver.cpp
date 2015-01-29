@@ -1,8 +1,36 @@
 // (c) Copyright 2014 Mihai Preda. All rights reserved.
 
 #include "Driver.hpp"
+#include "Hash.hpp"
+#include "Value.hpp"
+
 #include <stdio.h>
 #include <assert.h>
+#include <unordered_map>
+
+struct HistHash {
+  inline size_t operator()(uint128_t key) const { return (size_t) key; }
+};
+
+class History {
+  std::unordered_map<uint128_t, int, HistHash> map;
+
+public:
+  int depthOf(const Hash &hash) {
+    auto it = map.find(hash.hash);
+    return it == map.end() ? 0 : it->second;
+  }
+  
+  void push(const Hash &hash, int d) {
+    bool added = map.emplace(hash.hash, d).second;
+    assert(added);
+  }
+
+  void pop(const Hash &hash) {
+    map.erase(hash.hash);
+    // assert(n == 1);
+  }
+};
 
 template<typename T> class Post {
 private:
@@ -14,63 +42,139 @@ public:
 
 void Driver::mtd() {
   Node root;
-  int min = -N, max = N;
+  Hash hash;
+  History history;
   int beta = N;
-  int d = 4;
-  while (min < max) {
-    int g = MAX(root, beta, d);
-    printf("MTDF %d: [%d, %d] beta %d: %d\n", d, min, max, beta, g);
-    if (g == UNKNOWN) {
-      // printf("MTDF depth %d: [%d, %d] beta %d: %d\n", d, min, max, beta, g);
-      d += 2;
-    } else if (g >= beta) {
-      min = g;
-      beta = g + 1;
+  int d = 10;
+  while (true) {
+    Value v = miniMax<true>(root, hash, &history, beta, d);
+    printf("MTDF %d, beta %d: ", d, beta);
+    v.print();
+    int value = v.getValue();
+    if (v.unknownAt(beta, d)) {
+      assert(v.getDepth() == d + 1);
+      assert(value < beta);
+      if (value > -N) {
+        beta = value;
+      } else {
+        d += 2;
+      }
     } else {
-      max = g;
-      beta = g;
+      int kind = v.getKind();
+      if (kind == EXACT) {
+        break;
+      } else if (kind == LOWER_BOUND) {
+        assert(value == beta);
+        break;
+      } else {
+        assert(kind == UPPER_BOUND);
+        assert(value < beta);
+        beta = value;
+      }
     }
   }
 }
 
-int Driver::MAX(const Node &n, const int beta, int d) {
-  // printf("MAX %d\n", d); n.print();
-  uint128_t hash = n.getHash();
-  int bound;
-  bool exact;
-  std::tie(bound, exact) = tt.get(hash, d);
-  if (bound == TT_NOT_FOUND) {
-    assert(!exact);
-    int min;
-    std::tie(min, bound) = n.score();
-    exact = min == bound;
-    tt.set(hash, d, bound, exact);
+template<bool MAX>
+Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const int beta, int d) {
+  Value v = tt.get(hash);
+  if (v.isEnough(beta, d)) {
+    return v;
   }
-  if (exact || bound == UNKNOWN || bound < beta) {
-    return bound;
+  if (v.noInfoAt(beta, d)) {
+    v = n.score(beta);
+    if (v.isEnough(beta, d)) {
+      return v;
+    }
   }
-  if (d <= 0) {
-    tt.set(hash, d, UNKNOWN, false);
-    return UNKNOWN;
-  }
+  assert(v.getKind() == LOWER_BOUND);
+  int value = MAX ? v.getValue() : N;
+  // printf("d %d v %d\n", d, value);
+  Value acc = Value::makeExact(value);
+  
   Vect<byte, N> moves;
-  n.genMoves<BLACK>(moves);
-  int max = -N;
-  for (int p : moves) {
-    int s = MIN(n.play<BLACK>(p), beta, d - 1);
-    if (s == UNKNOWN) {
-      max = UNKNOWN;
-    } else if (s >= beta) {
-      tt.set(hash, d, s, true);
-      return s;
-    } else if (max != UNKNOWN && s > max) {
-      max = s;
+  n.genMoves<MAX ? BLACK : WHITE>(moves);
+  int nMoves = moves.size();
+  Hash hashes[nMoves];
+  uint64_t done = 0;
+  int historyDepth = 0;
+  
+  for (int i = 0; i < nMoves; ++i) {
+    int p = moves[i];
+    Hash h = n.hashOnPlay<MAX ? BLACK : WHITE>(hash, p);
+    hashes[i] = h;
+    int hd = history->depthOf(h);
+    if (hd) {
+      assert(hd > d);
+      historyDepth = std::max(historyDepth, hd);
+      SET(p, done);
+    } else {    
+      Value v = tt.get(h);
+      if (v.isCut<MAX>(beta)) {
+        return v.relaxBound<MAX>();
+      }
+      if (v.isEnough(beta, d - 1)) {
+        acc = acc.accumulate<MAX>(v);
+        SET(p, done);
+      }
     }
   }
-  tt.set(hash, d, max, false);
-  return max;
+
+  if (d == 0) {
+    acc = Value::makeUnknown(acc.getValue()); //, historyDepth);
+  } else {
+    history->push(hash, d);  
+    // Post onReturn([const& hash]() { history->pop(hash); }
+    for (int i = 0; i < nMoves; ++i) {
+      int p = moves[i];
+      if (!IS(p, done)) {
+        Hash h = hashes[i];
+        Node sub = n.play<MAX ? BLACK : WHITE>(p);
+        Value v = miniMax<!MAX>(sub, h, history, beta, d - 1);
+        history->pop(h);
+        tt.set(h, v, d - 1);
+        // sub.print(); v.print();
+        if (v.isCut<MAX>(beta)) {
+          return v.relaxBound<MAX>();
+        }
+        acc = acc.accumulate<MAX>(v);
+      }
+    }
+  }
+  acc.updateHistoryPos(historyDepth);
+  return acc;
 }
 
+int main(int argc, char **argv) {
+  Driver driver;
+  driver.mtd();
+}
+
+    /*
+    if (v.kind == UNKNOWN) {
+      hasUnknown = true;
+      unknownBound = std::max(unknownBound, v.value);
+    } else if (v.isMaxCut(beta)) {
+      Value vv = Value.makeLowerBound(v);
+      tt.set(hash, vv);
+      return vv;
+    } else {
+      assert(v.kind != LOW);
+      max = std::max(max, v.value);
+    }
+
+    
+  if (hasUnknown) {
+    Value v = Value.makeUnknown(std::max(unknownBound, max), d);
+    tt.set(hash, v);
+    return v;
+  } else {
+    Value v = Value.makeUpperBound(max);
+    tt.set(hash, d, max, false);
+    return max;
+  }
+    */
+/*
 int Driver::MIN(const Node &n, int beta, int d) {
   uint128_t hash = n.getHash();
   int bound;
@@ -117,11 +221,7 @@ int Driver::MIN(const Node &n, int beta, int d) {
   tt.set(hash, d, min, min != UNKNOWN && min >= beta);
   return min;
 }
-
-int main(int argc, char **argv) {
-  Driver driver;
-  driver.mtd();
-}
+*/
 
 /*
 inline int negaUnknown(int g) { return (g == UNKNOWN) ? UNKNOWN : -g; }

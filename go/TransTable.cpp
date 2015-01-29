@@ -1,18 +1,13 @@
 // (c) Copyright 2014 Mihai Preda. All rights reserved.
 
 #include "TransTable.hpp"
+#include "transtable.hpp"
+#include "Hash.hpp"
+#include "Value.hpp"
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-
-#define LOCK_BITS 48
-#define SLOT_BITS 30
-#define RES_BITS 2
-#define SEARCH 8
-
-constexpr uint64_t SIZE = (1ull << SLOT_BITS) - (1ull << (SLOT_BITS - RES_BITS));
-constexpr uint64_t MASK = (1ull << SLOT_BITS) - 1;
-constexpr uint64_t LOCK_MASK = (1ul << LOCK_BITS) - 1;
 
 TransTable::TransTable() :
   slots((uint64_t *) calloc(SIZE + SEARCH - 1, 8))
@@ -25,29 +20,22 @@ TransTable::~TransTable() {
   slots = 0;
 }
 
-inline uint64_t getPos(uint128_t hash) {
-  uint64_t pos = hash & MASK;
-  while (pos >= SIZE) {
-    pos >>= RES_BITS;
-  }
-  return pos;
+Value TransTable::get(const Hash &hash) {
+  uint64_t pos  = hash.pos;
+  uint64_t lock = hash.lock;
+  uint64_t v = slots[pos];
+  return ((v & LOCK_MASK) == lock) ? Value::unpack(v >> LOCK_BITS) :
+    Value::makeUnknown(0);
 }
 
-inline uint64_t getLock(uint128_t hash) {
-  return ((uint64_t) (hash >> 64)) & LOCK_MASK;
-}
-
-std::tuple<int, bool> TransTable::get(uint128_t hash, int depth) {
-  uint64_t pos = getPos(hash);
-  uint64_t lock = getLock(hash);
-  
+/* 
   uint64_t buf[SEARCH];
   for (uint64_t *begin = slots + pos, *s = begin, *end = begin + SEARCH, *p = buf;
        s < end; ++s) {
     uint64_t v = *s;
     if (v == 0) {
       break;
-    } else if ((v & LOCK_BITS) == lock) {
+    } else if ((v & LOCK_MASK) == lock) {
       if (s > begin) {
         *begin = v;
         memmove(begin + 1, buf, (p - buf) * 8);
@@ -69,12 +57,18 @@ std::tuple<int, bool> TransTable::get(uint128_t hash, int depth) {
     }
   }
   return std::make_tuple(TT_NOT_FOUND, false);
-} 
+}
+*/
 
-void TransTable::set(uint128_t hash, int depth, int bound, bool exact) {
-  uint64_t pos = getPos(hash);
-  uint64_t lock = getLock(hash);
+void TransTable::set(const Hash &hash, Value value, int depth) {
+  if (depth >= value.getHistoryPos()) {
+    uint64_t pos  = hash.pos;
+    uint64_t lock = hash.lock;
+    slots[pos] = (((uint64_t) value.pack(depth)) << LOCK_BITS) | lock;
+  }
+}
 
+/*
   uint64_t buf[SEARCH];
   uint64_t *p = buf;
   uint64_t *begin = slots + pos;
@@ -95,3 +89,4 @@ void TransTable::set(uint128_t hash, int depth, int bound, bool exact) {
     memmove(begin + 1, buf, (p - buf) * 8);
   }
 }
+*/

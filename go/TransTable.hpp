@@ -3,7 +3,9 @@
 #pragma once
 
 #include "go.hpp"
-#include <tuple>
+
+class Hash;
+class Value;
 
 class TransTable {
 private:
@@ -13,6 +15,6 @@ public:
   TransTable();
   ~TransTable();
 
-  std::tuple<int, bool> get(uint128_t hash, int depth);
-  void set(uint128_t hash, int depth, int bound, bool exact);
+  Value get(const Hash &hash);
+  void set(const Hash &hash, Value value, int depth);
 };
