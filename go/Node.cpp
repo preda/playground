@@ -114,7 +114,8 @@ template<int C> Hash Node::hashOnPlay(const Hash &hash, int pos) const {
     }
     isKo = maybeKo && size(capture) == 1;
   }
-  return hash.update<C>(pos, koPos, isKo ? pos : 0, nPass, newNPass, capture); 
+  int newKoPos = isKo ? firstOf(capture) : 0;
+  return hash.update<C>(pos, koPos, newKoPos, nPass, newNPass, capture); 
 }
 
 template<int C> void Node::playInt(int pos) {
@@ -163,7 +164,7 @@ template<int C> void Node::playInt(int pos) {
     }
   }
   bool isKo = maybeKo && size(capture) == 1;
-  koPos = isKo ? pos : 0;
+  koPos = isKo ? firstOf(capture) : 0;
   stone[1-C] &= ~capture;
   SET(pos, stone[C]);
   updateEmpty();
@@ -448,20 +449,9 @@ Value Node::score(int beta) const {
     return Value::makeExact(finalScore());
   }
   int max =  N - 2 * size(points[WHITE]);
-  return (max < beta) ? Value::makeUpperBound(max) :
-    Value::makeLowerBound(-N + 2 * size(points[BLACK]));
-}
-
-std::tuple<int, int> Node::score() const {
-  if (nPass == 2) {
-    int score = finalScore();
-    return std::make_tuple(score, score);
-  } else {
-    int min = -N + 2 * size(points[BLACK]);
-    int max =  N - 2 * size(points[WHITE]);
-    assert(min <= max);
-    return std::make_tuple(min, max);
-  }
+  if (max < beta) { return Value::makeUpperBound(max); }
+  int min = -N + 2 * size(points[BLACK]);
+  return Value::makeLowerBound(min);
 }
 
 char Node::charForPos(int p) const {
@@ -494,6 +484,7 @@ void Node::print() const {
     line2[SIZE_X*2] = 0;
     printf("\n%s    %s    %s", expand(line1), expand(line2), expand(line3));
   }
+  /*
   printf("\n\nGroups:\n");
   for (int gid = 0; gid < MAX_GROUPS; ++gid) {
     if (groups[gid]) {
@@ -502,6 +493,7 @@ void Node::print() const {
       printf("%d size %d libs %d\n", gid, size, libsOfGid(gid));
     }
   }
+  */
   if (koPos) {
     printf("ko: (%d, %d)\n", Y(koPos), X(koPos));
   }

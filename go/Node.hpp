@@ -41,7 +41,6 @@ public:
   template<int C> Hash hashOnPlay(const Hash &h, int p) const;
   
   template<int C> void genMoves(Vect<byte, N> &outMoves) const;
-  std::tuple<int, int> score() const;
   Value score(int beta) const;
   int finalScore() const;
   

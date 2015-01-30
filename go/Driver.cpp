@@ -32,6 +32,7 @@ public:
   }
 };
 
+/*
 template<typename T> class Post {
 private:
   T f;
@@ -39,26 +40,27 @@ public:
   Post(T f) : f(f) {}
   ~Post() { f(); }
 };
+*/
 
 void Driver::mtd() {
   Node root;
   Hash hash;
   History history;
   int beta = N;
-  int d = 10;
+  int d = 8;
+  minD = 200;
+  
   while (true) {
     Value v = miniMax<true>(root, hash, &history, beta, d);
-    printf("MTDF %d, beta %d: ", d, beta);
+    history.pop(hash);
+    tt.set(hash, v, d);
+    printf("MTD %d, beta %d minD %d : ", d, beta, minD);
     v.print();
     int value = v.getValue();
-    if (v.unknownAt(beta, d)) {
-      assert(v.getDepth() == d + 1);
+    if (v.unknownAt(beta)) {
       assert(value < beta);
-      if (value > -N) {
-        beta = value;
-      } else {
-        d += 2;
-      }
+      ++d;
+      // break;
     } else {
       int kind = v.getKind();
       if (kind == EXACT) {
@@ -77,24 +79,22 @@ void Driver::mtd() {
 
 template<bool MAX>
 Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const int beta, int d) {
-  Value v = tt.get(hash);
-  if (v.isEnough(beta, d)) {
-    return v;
-  }
-  if (v.noInfoAt(beta, d)) {
+  Value v = tt.get(hash, d);
+  if (v.noInfoAt(beta)) {
     v = n.score(beta);
-    if (v.isEnough(beta, d)) {
-      return v;
-    }
+    // printf("d %d ", d); v.print();
   }
-  assert(v.getKind() == LOWER_BOUND);
-  int value = MAX ? v.getValue() : N;
-  // printf("d %d v %d\n", d, value);
+  if (v.isEnough(beta)) { return v; }
+  assert((v.kind == LOWER_BOUND && v.value < beta) ||
+         (v.kind == UPPER_BOUND && v.value >= beta));
+  int value = MAX ? (v.kind == LOWER_BOUND ? v.value : -N) :
+    (v.kind == UPPER_BOUND ? v.value : N);
   Value acc = Value::makeExact(value);
-  
+
   Vect<byte, N> moves;
   n.genMoves<MAX ? BLACK : WHITE>(moves);
   int nMoves = moves.size();
+  assert(nMoves > 0);
   Hash hashes[nMoves];
   uint64_t done = 0;
   int historyDepth = 0;
@@ -103,28 +103,33 @@ Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const i
     int p = moves[i];
     Hash h = n.hashOnPlay<MAX ? BLACK : WHITE>(hash, p);
     hashes[i] = h;
-    int hd = history->depthOf(h);
+    int hd = (p == PASS) ? 0 : history->depthOf(h);
     if (hd) {
       assert(hd > d);
       historyDepth = std::max(historyDepth, hd);
       SET(p, done);
     } else {    
-      Value v = tt.get(h);
-      if (v.isCut<MAX>(beta)) {
-        return v.relaxBound<MAX>();
-      }
-      if (v.isEnough(beta, d - 1)) {
+      Value v = tt.get(h, d - 1);
+      if (v.isCut<MAX>(beta)) { return v.relaxBound<MAX>(); }
+      if (v.isEnough(beta)) {
         acc = acc.accumulate<MAX>(v);
         SET(p, done);
       }
     }
   }
-
+  
+  if (d < minD) { minD = d; }
+  stack[d] = n;
   if (d == 0) {
-    acc = Value::makeUnknown(acc.getValue()); //, historyDepth);
+    /*
+    for (int i = 20; i >= 0; --i) {
+      stack[i].print();
+    }
+    assert(false);
+    */
+    acc = Value::makeUnknown(acc.getValue());
   } else {
     history->push(hash, d);  
-    // Post onReturn([const& hash]() { history->pop(hash); }
     for (int i = 0; i < nMoves; ++i) {
       int p = moves[i];
       if (!IS(p, done)) {
@@ -134,14 +139,19 @@ Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const i
         history->pop(h);
         tt.set(h, v, d - 1);
         // sub.print(); v.print();
-        if (v.isCut<MAX>(beta)) {
-          return v.relaxBound<MAX>();
-        }
+        if (v.isCut<MAX>(beta)) { return v.relaxBound<MAX>(); }
         acc = acc.accumulate<MAX>(v);
       }
     }
   }
   acc.updateHistoryPos(historyDepth);
+  /*
+  if (d >= 10) {
+    printf("D %d ", d);
+    acc.print();
+    n.print();
+  }
+  */
   return acc;
 }
 

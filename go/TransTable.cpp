@@ -20,12 +20,28 @@ TransTable::~TransTable() {
   slots = 0;
 }
 
-Value TransTable::get(const Hash &hash) {
+Value TransTable::get(const Hash &hash, int d) {
   uint64_t pos  = hash.pos;
   uint64_t lock = hash.lock;
   uint64_t v = slots[pos];
-  return ((v & LOCK_MASK) == lock) ? Value::unpack(v >> LOCK_BITS) :
-    Value::makeUnknown(0);
+  if ((v & LOCK_MASK) != lock) { return Value::makeNoInfo(); }
+  unsigned packed = v >> LOCK_BITS;
+  int depth = packed & 0x3f;
+  if (depth < d) { return Value::makeNoInfo(); }  
+  int kind = ((packed >> 6) & 0x3) + 1;
+  int value = (sbyte) ((packed >> 8) & 0xff);
+  return Value(kind, value);
+}
+
+void TransTable::set(const Hash &hash, Value v, int depth) {
+  if (depth >= v.getHistoryPos()) {
+    assert(v.kind > 0 && v.kind <= 4);
+    assert(depth >= 0 && depth < 64);
+    unsigned packed = (((unsigned)(byte) v.value) << 8) | ((v.kind - 1) << 6) | depth;    
+    uint64_t pos  = hash.pos;
+    uint64_t lock = hash.lock;
+    slots[pos] = (((uint64_t) packed) << LOCK_BITS) | lock;
+  }
 }
 
 /* 
@@ -59,14 +75,6 @@ Value TransTable::get(const Hash &hash) {
   return std::make_tuple(TT_NOT_FOUND, false);
 }
 */
-
-void TransTable::set(const Hash &hash, Value value, int depth) {
-  if (depth >= value.getHistoryPos()) {
-    uint64_t pos  = hash.pos;
-    uint64_t lock = hash.lock;
-    slots[pos] = (((uint64_t) value.pack(depth)) << LOCK_BITS) | lock;
-  }
-}
 
 /*
   uint64_t buf[SEARCH];
