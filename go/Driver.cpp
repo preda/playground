@@ -52,7 +52,6 @@ void Driver::mtd() {
   
   while (true) {
     Value v = miniMax<true>(root, hash, &history, beta, d);
-    history.pop(hash);
     tt.set(hash, v, d);
     printf("MTD %d, beta %d minD %d : ", d, beta, minD);
     v.print();
@@ -127,8 +126,12 @@ Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const i
     }
     assert(false);
     */
-    acc = Value::makeUnknown(acc.getValue());
-  } else {
+    int value = acc.getValue();
+    assert(!MAX || value < beta);
+    acc = Value::makeUnknown(MAX ? value : -N); 
+  }
+  acc.updateHistoryPos(historyDepth);  
+  if (d) {
     history->push(hash, d);  
     for (int i = 0; i < nMoves; ++i) {
       int p = moves[i];
@@ -139,12 +142,16 @@ Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const i
         history->pop(h);
         tt.set(h, v, d - 1);
         // sub.print(); v.print();
-        if (v.isCut<MAX>(beta)) { return v.relaxBound<MAX>(); }
+        if (v.isCut<MAX>(beta)) {
+          acc = v.relaxBound<MAX>();
+          break;
+        }
         acc = acc.accumulate<MAX>(v);
       }
     }
+    history->pop(hash);
   }
-  acc.updateHistoryPos(historyDepth);
+
   /*
   if (d >= 10) {
     printf("D %d ", d);
