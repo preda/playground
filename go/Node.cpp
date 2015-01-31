@@ -404,7 +404,7 @@ uint64_t Node::maybeMoves() const {
   return area;
 }
 
-template<int C> void Node::genMoves(Vect<byte, N> &moves) const {
+template<int C> void Node::genMoves(Vect<byte, N+1> &moves) const {
   assert(nPass < 2);
   int tmp[N];
   int n = 0;
@@ -445,9 +445,7 @@ int Node::finalScore() const {
 }
 
 Value Node::score(int beta) const {
-  if (nPass == 2) {
-    return Value::makeExact(finalScore());
-  }
+  if (isEnded()) { return Value::makeExact(finalScore()); }
   int max =  N - 2 * size(points[WHITE]);
   if (max < beta) { return Value::makeUpperBound(max); }
   int min = -N + 2 * size(points[BLACK]);
@@ -521,7 +519,7 @@ void Node::setUp(const char *s) {
 
 #define TEMPLATES(C) \
   template uint64_t Node::bensonAlive<C>() const;   \
-  template void Node::genMoves<C>(Vect<byte, N> &) const;   \
+  template void Node::genMoves<C>(Vect<byte, N+1> &) const;   \
   template int Node::valueOfMove<C>(int) const;             \
   template Hash Node::hashOnPlay<C>(const Hash &, int) const;
 

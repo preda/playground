@@ -40,7 +40,7 @@ public:
 
   template<int C> Hash hashOnPlay(const Hash &h, int p) const;
   
-  template<int C> void genMoves(Vect<byte, N> &outMoves) const;
+  template<int C> void genMoves(Vect<byte, N+1> &outMoves) const;
   Value score(int beta) const;
   int finalScore() const;
   
@@ -49,6 +49,7 @@ public:
   
   void print() const;
   void setUp(const char *s);
+  bool isEnded() const { return nPass == 2; }
 
 private:
   template<int C> void playInt(int p);

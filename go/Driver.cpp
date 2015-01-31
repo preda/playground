@@ -32,16 +32,6 @@ public:
   }
 };
 
-/*
-template<typename T> class Post {
-private:
-  T f;
-public:
-  Post(T f) : f(f) {}
-  ~Post() { f(); }
-};
-*/
-
 void Driver::mtd() {
   Node root;
   Hash hash;
@@ -49,7 +39,7 @@ void Driver::mtd() {
   int beta = N;
   int d = 8;
   minD = 200;
-  
+
   while (true) {
     Value v = miniMax<true>(root, hash, &history, beta, d);
     tt.set(hash, v, d);
@@ -74,6 +64,63 @@ void Driver::mtd() {
       }
     }
   }
+
+  minMoves.clear();
+  std::vector<int> work;
+  int l = extract<true>(root, hash, &history, beta, d, d + 1, work);
+  assert(l <= d);
+  assert((int)minMoves.size() == l);
+  for (int i = 0; i < l; ++i) {
+    printf("%d \n", minMoves[i]);
+  }
+}
+
+template<bool MAX>
+int Driver::extract(const Node &n, const Hash &hash, History *history, const int beta, int d, int limit, std::vector<int> &moves) {
+  assert(limit > 0);
+  --limit;
+  if (n.isEnded()) {
+    Value v = n.score(beta);
+    assert(v.kind == EXACT && v.value == beta);
+    minMoves = moves;
+    return 0;
+  }
+  if (limit == 0 || d == 0) {
+    return 1;
+  }
+  Vect<byte, N+1> subMoves;
+  n.genMoves<MAX ? BLACK : WHITE>(subMoves);
+  int nMoves = subMoves.size();
+  assert(nMoves > 0);
+  history->push(hash, 1);
+  // int minP = 0;
+  for (int i = 0; i < nMoves; ++i) {
+    int p = subMoves[i];
+    Hash h = n.hashOnPlay<MAX ? BLACK : WHITE>(hash, p);
+    if (!history->depthOf(h)) {
+      Node sub = n.play<MAX ? BLACK : WHITE>(p);
+      Value v = miniMax<!MAX>(sub, h, history, beta, d - 1);
+      assert(v.isEnough(beta));
+      if (MAX) {
+        assert(v.value <= beta);
+      } else {
+        assert(v.value >= beta);
+      }
+      if (v.value == beta) {
+        moves.push_back(p);
+        int subLimit = extract<!MAX>(sub, h, history, beta, d - 1, limit, moves);
+        moves.pop_back();
+        if (subLimit < limit) {
+          limit = subLimit;
+          if (limit == 0) { break; }
+          // minP = p;
+        }
+      }
+    }
+  }
+  history->pop(hash);
+  // moves.push(minP);
+  return limit + 1;  
 }
 
 template<bool MAX>
@@ -90,7 +137,7 @@ Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const i
     (v.kind == UPPER_BOUND ? v.value : N);
   Value acc = Value::makeExact(value);
 
-  Vect<byte, N> moves;
+  Vect<byte, N+1> moves;
   n.genMoves<MAX ? BLACK : WHITE>(moves);
   int nMoves = moves.size();
   assert(nMoves > 0);
@@ -139,7 +186,6 @@ Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const i
         Hash h = hashes[i];
         Node sub = n.play<MAX ? BLACK : WHITE>(p);
         Value v = miniMax<!MAX>(sub, h, history, beta, d - 1);
-        history->pop(h);
         tt.set(h, v, d - 1);
         // sub.print(); v.print();
         if (v.isCut<MAX>(beta)) {
