@@ -9,8 +9,8 @@ typedef signed char sbyte;
 typedef unsigned __int128 uint128_t;
 
 enum {
-  SIZE_Y = 3,
-  SIZE_X = 3,
+  SIZE_Y = 4,
+  SIZE_X = 4,
 
   X_SHIFT = 3,
   BIG_X = (1 << X_SHIFT),
@@ -25,7 +25,7 @@ enum {
   EMPTY = 2,
   BROWN = 3,
 
-  MAX_GROUPS = N/2 + 2,
+  MAX_GROUPS = N,
 
   PASS = 1,
 };

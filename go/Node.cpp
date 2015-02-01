@@ -409,7 +409,7 @@ template<int C> void Node::genMoves(Vect<byte, N+1> &moves) const {
   int tmp[N];
   int n = 0;
   uint64_t area = maybeMoves();
-  if (koPos) { area &= ~(1 << koPos); }
+  if (koPos) { area &= ~(1ull << koPos); }
   for (int p : Bits(area)) {
     int v = valueOfMove<C>(p);
     if (v >= 0) {
