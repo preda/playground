@@ -24,7 +24,8 @@ public:
   Value(int kind, int value, int historyPos = 0) :
     kind((byte) kind),
     value((sbyte) value),
-    historyPos((byte) historyPos) { }
+    historyPos((byte) historyPos)
+  { }
 
   void print() {
     const char *labels[] = {"RESERVED", "UPPER_BOUND", "LOWER_BOUND", "EXACT", "UNKNOWN"};
@@ -73,12 +74,13 @@ public:
 
   template<bool MAX> bool isCut(int beta) {
     return MAX ? value >= beta && (kind == LOWER_BOUND || kind == EXACT) :
-      value < beta && (kind == UPPER_BOUND || kind == EXACT);
+      (value < beta && (kind == UPPER_BOUND || kind == EXACT));
   }
 
   template<bool MAX> Value relaxBound() const {
     assert(kind != UNKNOWN);
-    int k = (kind == EXACT) ? (MAX ? LOWER_BOUND : UPPER_BOUND) : kind;
-    return Value(k, value, historyPos);
+    if (kind != EXACT) { return *this; }
+    assert(kind == EXACT);
+    return Value(MAX ? LOWER_BOUND : UPPER_BOUND, value, historyPos);
   }  
 };

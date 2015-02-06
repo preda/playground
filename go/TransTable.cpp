@@ -21,20 +21,27 @@ TransTable::~TransTable() {
 }
 
 Value TransTable::get(const Hash &hash, int d) {
+  static const Value NO_INFO = Value::makeNoInfo();
   uint64_t pos  = hash.pos;
   uint64_t lock = hash.lock;
   uint64_t v = slots[pos];
-  if ((v & LOCK_MASK) != lock) { return Value::makeNoInfo(); }
+  if ((v & LOCK_MASK) != lock) { return NO_INFO; }
+
   unsigned packed = v >> LOCK_BITS;
-  int depth = packed & 0x3f;
-  if (depth < d) { return Value::makeNoInfo(); }  
   int kind = ((packed >> 6) & 0x3) + 1;
+  if (kind == UNKNOWN && (int)(packed & 0x3f) < d) {
+    return NO_INFO;
+  }  
   int value = (sbyte) ((packed >> 8) & 0xff);
   return Value(kind, value);
 }
 
 void TransTable::set(const Hash &hash, Value v, int depth) {
   if (depth >= v.getHistoryPos()) {
+    if (hash.pos == 0x61b4475) {
+      printf("hash write %lx ", hash.lock);
+      v.print();
+    }
     assert(v.kind > 0 && v.kind <= 4);
     assert(depth >= 0 && depth < 64);
     unsigned packed = (((unsigned)(byte) v.value) << 8) | ((v.kind - 1) << 6) | depth;    

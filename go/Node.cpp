@@ -21,6 +21,23 @@ Node::Node() :
   gids{0}
 { }
 
+void Node::setup(const char *board, int nPass) {
+  for (int y = 0; y < SIZE_Y; ++y) {
+    for (int x = 0; x < SIZE_X; ++x) {
+      char c = *board++;
+      assert(c == 'x' || c == 'o' || c == '.');
+      int p = P(y, x);
+      if (c == 'x') {
+        playInt<BLACK>(p);
+      } else if (c == 'o') {
+        playInt<WHITE>(p);
+      }
+    }
+  }
+  assert(!*board);
+  this->nPass = nPass;
+}
+
 template <int C> void Node::updateGroupGids(uint64_t group, int gid) {
   for (int p : Bits(group & stone[C])) { gids[p] = gid; }
 }
@@ -41,27 +58,50 @@ inline uint64_t shadow(int p) {
 
 template<int C> int Node::valueOfMove(int pos) const {
   assert(isEmpty(pos) && koPos != pos);
-  bool isSuicide = true;
   bool isSelfEye = true;
   int value = 0;
-  int prevGid = -1;
+  uint64_t mergeGroup = shadow(pos);
+  uint64_t capture = 0;
   for (int p : NEIB(pos)) {
     if (isEmpty(p)) {
-      isSuicide = false;
       isSelfEye = false;
-      value += 10;
     } else if (isBorder(p)) {
       continue;
     } else {
-      int gid = gids[p];
       uint64_t group = groups[gids[p]];
-      int libs = libsOfGroup(group);      
       if (is<C>(p)) {
+        mergeGroup |= group;
+        if (isSelfEye && libsOfGroup(group) == 1) {
+          isSelfEye = false;
+        }
+      } else {
+        assert(is<1-C>(p));
+        isSelfEye = false;
+        int libs = libsOfGroup(group);        
+        if (libs == 1) {
+          capture |= group;
+        } else if (libs == 2) {
+          value += 10;
+        } else {
+          value += 3;
+        }
+      }
+    }
+  }
+  if (isSelfEye) { return -1; }
+  capture &= stone[1-C];
+  uint64_t newEmpty = (empty & ~(1ull << pos)) | capture;
+  int mergeLibs = size(mergeGroup & newEmpty);
+  if (mergeLibs == 0) { return -1; } // suicide
+  return value + (size(capture) + mergeLibs - 1) * 10;
+}
+          
+/*        
         if (libs == 1) {
           isSelfEye = false;
           value += 20;
         } else {
-          assert(libs >= 0);
+          assert(libs >= 2);
           isSuicide = false;
           value += (libs == 2) ? 10 : 6;
         }
@@ -70,20 +110,7 @@ template<int C> int Node::valueOfMove(int pos) const {
         } else {
           value -= 10;
         }
-      } else if (is<1-C>(p)) {
-        isSelfEye = false;
-        if (libs == 1) {
-          isSuicide = false;
-          value += (sizeOfGroup<1-C>(group) + 1) * 10;
-        } else {
-          value += (libs == 2) ? 10 : 6;
-        }
-      }
-    }
-  }
-  assert(value >= -20);
-  return (isSuicide || isSelfEye) ? -1 : (value + 20);
-}
+*/
 
 template<int C> Hash Node::hashOnPlay(const Hash &hash, int pos) const {
   uint64_t capture = 0;
@@ -270,12 +297,8 @@ void Node::enclosedRegions(uint64_t *outEnclosed) const {
         return false;
       });
     emptyNotSeen &= ~seen;
-    if (!(touchesBlack || touchesWhite)) {
-      print();
-      printArea(area);
-    }
     assert(touchesBlack || touchesWhite);
-    if (touchesBlack && ~touchesWhite) {
+    if (touchesBlack && !touchesWhite) {
       enclosedBlack |= area;
     } else if (touchesWhite && !touchesBlack) {
       enclosedWhite |= area;
@@ -439,7 +462,6 @@ int Node::finalScore() const {
   for (int i : {BLACK, WHITE}) {
     total[i] = points[i] | ((stone[i] | enclosed[i]) & ~points[1-i]);
   }
-  // if (total[BLACK] & total[WHITE]) { print(); }
   assert((total[BLACK] & total[WHITE]) == 0);
   return size(total[BLACK]) - size(total[WHITE]);
 }
@@ -462,8 +484,9 @@ int Node::groupColor(int gid) const {
       return is<BLACK>(p) ? BLACK : WHITE;
     }
   }
-  printf("groupColor gid %d %lx %d\n", gid, groups[gid], gids[P(0, 0)]);
+  // printf("groupColor gid %d %lx %d\n", gid, groups[gid], gids[P(0, 0)]);
   assert(false);
+  return 0;
 }
 
 void Node::print() const {
@@ -492,30 +515,10 @@ void Node::print() const {
     }
   }
   */
-  if (koPos) {
-    printf("ko: (%d, %d)\n", Y(koPos), X(koPos));
-  }
+  if (koPos) { printf("ko: (%d, %d) ", Y(koPos), X(koPos)); }
+  if (nPass) { printf("nPass %d ", nPass); }
   printf("\n\n");
 }
-
-void Node::setUp(const char *s) {
-  for (int y = 0; y < SIZE_Y; ++y) {
-    for (int x = 0; x < SIZE_X; ++x, ++s) {
-      char c = *s;
-      assert(c);
-      int p = P(y, x);
-      if (c == 'x') {
-        playInt<BLACK>(p);
-      } else if (c == 'o') {
-        playInt<WHITE>(p);
-      }
-    }
-  }
-  assert(!*s);
-  points[BLACK] = bensonAlive<BLACK>();
-  points[WHITE] = bensonAlive<WHITE>();
-}
-
 
 #define TEMPLATES(C) \
   template uint64_t Node::bensonAlive<C>() const;   \

@@ -24,6 +24,8 @@ private:
 
 public:
   Node();
+
+  void setup(const char *board, int nPass);
   // Node(const Node &other) { memcpy(this, &other, sizeof(Node)); }
      
   template<int C> bool is(int p) const { return IS(p, stone[C]); }
@@ -48,9 +50,9 @@ public:
   bool lastWasPass() const { return nPass > 0; }
   
   void print() const;
-  void setUp(const char *s);
   bool isEnded() const { return nPass == 2; }
-
+  bool operator==(const Node &n) const { return stone[0] == n.stone[0] && stone[1] == n.stone[1] && nPass == n.nPass; }
+  
 private:
   template<int C> void playInt(int p);
   

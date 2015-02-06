@@ -24,26 +24,32 @@ public:
   void push(const Hash &hash, int d) {
     bool added = map.emplace(hash.hash, d).second;
     assert(added);
+    (void) added;
   }
 
-  void pop(const Hash &hash) {
-    map.erase(hash.hash);
-    // assert(n == 1);
+  void pop(const Hash &hash, int d) {
+    auto n = map.erase(hash.hash);    
+    assert(n == 1);
+    (void) n;
   }
 };
 
-void Driver::mtd() {
-  Node root;
+static const int LIMIT = 23;
+
+void Driver::mtd(const Node &root) {
   Hash hash;
   History history;
   int beta = N;
-  int d = 8;
-  minD = 200;
-
+  int d = 14;
+  interest.setup("xxx..xxoxooo.xx.", 1);
+  
   while (true) {
+    if (d >= LIMIT) {
+      limitPrint = true;
+    }
     Value v = miniMax<true>(root, hash, &history, beta, d);
     tt.set(hash, v, d);
-    printf("MTD %d, beta %d minD %d : ", d, beta, minD);
+    printf("MTD %d, beta %d ", d, beta);
     v.print();
     int value = v.getValue();
     if (v.unknownAt(beta)) {
@@ -70,9 +76,104 @@ void Driver::mtd() {
   int l = extract<true>(root, hash, &history, beta, d, d + 1, work);
   assert(l <= d);
   assert((int)minMoves.size() == l);
+  Node n = root;
   for (int i = 0; i < l; ++i) {
-    printf("%d \n", minMoves[i]);
+    int p = minMoves[i];
+    n = ((i&1) == 0) ? n.play<BLACK>(p) : n.play<WHITE>(p);
+    n.print();
   }
+}
+
+template<bool MAX>
+Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const int beta, int d) {
+  bool interestPrint = false;
+  if (n == interest) { interestPrint = true; printf("found interest %d\n", d); }
+  Value v = tt.get(hash, d);
+  if (v.noInfoAt(beta)) {
+    v = n.score(beta);
+  }
+  if (v.isEnough(beta)) { return v; }
+  assert((v.kind == LOWER_BOUND && v.value < beta) ||
+         (v.kind == UPPER_BOUND && v.value >= beta));
+  int value = MAX ? (v.kind == LOWER_BOUND ? v.value : -N) :
+    (v.kind == UPPER_BOUND ? v.value : N);
+  Value acc = Value::makeExact(value);
+
+  Vect<byte, N+1> moves;
+  n.genMoves<MAX ? BLACK : WHITE>(moves);
+  int nMoves = moves.size();
+  assert(nMoves > 0);
+  Hash hashes[nMoves];
+  uint64_t done = 0;
+  int historyDepth = 0;
+  
+  for (int i = 0; i < nMoves; ++i) {
+    int p = moves[i];
+    Hash h = n.hashOnPlay<MAX ? BLACK : WHITE>(hash, p);
+    hashes[i] = h;
+    int hd = history->depthOf(h);
+    if (hd) {
+      assert(hd > d);
+      historyDepth = std::max(historyDepth, hd);
+      SET(p, done);
+    } else {
+      Value v = tt.get(h, d - 1);
+      // if (print) { h.print(); v.print(); }
+      if (v.isCut<MAX>(beta)) { return v.relaxBound<MAX>(); }
+      if (v.isEnough(beta)) {
+        acc = acc.accumulate<MAX>(v);
+        SET(p, done);
+      }
+    }
+  }
+  
+  stack[d] = n;
+  if (d == 0) {
+    if (limitPrint) {
+      for (int i = LIMIT; i >= 0; --i) {
+        stack[i].print();
+      }
+      assert(false);
+    }        
+    int value = acc.getValue();
+    assert(!MAX || value < beta);
+    acc = Value::makeUnknown(MAX ? value : -N); 
+  }
+  acc.updateHistoryPos(historyDepth);  
+  if (d) {
+    history->push(hash, d);  
+    for (int i = 0; i < nMoves; ++i) {
+      int p = moves[i];
+      if (!IS(p, done)) {
+        Hash h = hashes[i];
+        Node sub = n.play<MAX ? BLACK : WHITE>(p);
+        Value v = miniMax<!MAX>(sub, h, history, beta, d - 1);
+        if (interestPrint) {
+          sub.print();
+          h.print();
+          printf("%s ", MAX ? "MAX" : "MIN");
+          v.print();
+        }
+        tt.set(h, v, d - 1);
+        if (v.isCut<MAX>(beta)) {
+          if (interestPrint) { printf("cut %d\n", d); }
+          acc = v.relaxBound<MAX>();
+          break;
+        }
+        acc = acc.accumulate<MAX>(v);
+      }
+    }
+    history->pop(hash, d);
+  }
+  return acc;
+}
+
+int main(int argc, char **argv) {
+  Node n;
+  // n.setup(".xx.xx.oxx.oxx.x");
+  // n.setup(".xxo.xooxxoox.o.");
+  Driver driver;
+  driver.mtd(n);
 }
 
 template<bool MAX>
@@ -80,8 +181,7 @@ int Driver::extract(const Node &n, const Hash &hash, History *history, const int
   assert(limit > 0);
   --limit;
   if (n.isEnded()) {
-    Value v = n.score(beta);
-    assert(v.kind == EXACT && v.value == beta);
+    assert(n.score(beta).value == beta);
     minMoves = moves;
     return 0;
   }
@@ -92,7 +192,7 @@ int Driver::extract(const Node &n, const Hash &hash, History *history, const int
   n.genMoves<MAX ? BLACK : WHITE>(subMoves);
   int nMoves = subMoves.size();
   assert(nMoves > 0);
-  history->push(hash, 1);
+  history->push(hash, d);
   // int minP = 0;
   for (int i = 0; i < nMoves; ++i) {
     int p = subMoves[i];
@@ -118,100 +218,11 @@ int Driver::extract(const Node &n, const Hash &hash, History *history, const int
       }
     }
   }
-  history->pop(hash);
+  history->pop(hash, d);
   // moves.push(minP);
   return limit + 1;  
 }
 
-template<bool MAX>
-Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const int beta, int d) {
-  Value v = tt.get(hash, d);
-  if (v.noInfoAt(beta)) {
-    v = n.score(beta);
-    // printf("d %d ", d); v.print();
-  }
-  if (v.isEnough(beta)) { return v; }
-  assert((v.kind == LOWER_BOUND && v.value < beta) ||
-         (v.kind == UPPER_BOUND && v.value >= beta));
-  int value = MAX ? (v.kind == LOWER_BOUND ? v.value : -N) :
-    (v.kind == UPPER_BOUND ? v.value : N);
-  Value acc = Value::makeExact(value);
-
-  Vect<byte, N+1> moves;
-  n.genMoves<MAX ? BLACK : WHITE>(moves);
-  int nMoves = moves.size();
-  assert(nMoves > 0);
-  Hash hashes[nMoves];
-  uint64_t done = 0;
-  int historyDepth = 0;
-  
-  for (int i = 0; i < nMoves; ++i) {
-    int p = moves[i];
-    Hash h = n.hashOnPlay<MAX ? BLACK : WHITE>(hash, p);
-    hashes[i] = h;
-    int hd = (p == PASS) ? 0 : history->depthOf(h);
-    if (hd) {
-      assert(hd > d);
-      historyDepth = std::max(historyDepth, hd);
-      SET(p, done);
-    } else {    
-      Value v = tt.get(h, d - 1);
-      if (v.isCut<MAX>(beta)) { return v.relaxBound<MAX>(); }
-      if (v.isEnough(beta)) {
-        acc = acc.accumulate<MAX>(v);
-        SET(p, done);
-      }
-    }
-  }
-  
-  if (d < minD) { minD = d; }
-  stack[d] = n;
-  if (d == 0) {
-    /*
-    for (int i = 20; i >= 0; --i) {
-      stack[i].print();
-    }
-    assert(false);
-    */
-    int value = acc.getValue();
-    assert(!MAX || value < beta);
-    acc = Value::makeUnknown(MAX ? value : -N); 
-  }
-  acc.updateHistoryPos(historyDepth);  
-  if (d) {
-    history->push(hash, d);  
-    for (int i = 0; i < nMoves; ++i) {
-      int p = moves[i];
-      if (!IS(p, done)) {
-        Hash h = hashes[i];
-        Node sub = n.play<MAX ? BLACK : WHITE>(p);
-        Value v = miniMax<!MAX>(sub, h, history, beta, d - 1);
-        tt.set(h, v, d - 1);
-        // sub.print(); v.print();
-        if (v.isCut<MAX>(beta)) {
-          acc = v.relaxBound<MAX>();
-          break;
-        }
-        acc = acc.accumulate<MAX>(v);
-      }
-    }
-    history->pop(hash);
-  }
-
-  /*
-  if (d >= 10) {
-    printf("D %d ", d);
-    acc.print();
-    n.print();
-  }
-  */
-  return acc;
-}
-
-int main(int argc, char **argv) {
-  Driver driver;
-  driver.mtd();
-}
 
     /*
     if (v.kind == UNKNOWN) {

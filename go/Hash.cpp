@@ -4,6 +4,8 @@
 #include "transtable.hpp"
 #include "data.hpp"
 
+#include <stdio.h>
+
 #define C(a, b) ((uint128_t)a << 64) + b
 
 const uint128_t zob0[64] = {
@@ -107,6 +109,10 @@ Hash Hash::update(int pos, int oldKoPos, int koPos, int oldNPass, int nPass, uin
     }
   }
   return Hash(hash ^ h);
+}
+
+void Hash::print() {
+  printf("Hash %lx %lx ", pos, lock);
 }
 
 template Hash Hash::update<BLACK>(int, int, int, int, int, uint64_t) const;

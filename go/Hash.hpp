@@ -18,4 +18,5 @@ public:
 
   template<int C>
   Hash update(int pos, int oldKoPos, int koPos, int oldNPass, int nPass, uint64_t capture) const;
+  void print();
 };
