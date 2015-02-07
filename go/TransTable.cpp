@@ -38,9 +38,9 @@ Value TransTable::get(const Hash &hash, int d) {
 
 void TransTable::set(const Hash &hash, Value v, int depth) {
   if (depth >= v.getHistoryPos()) {
-    if (hash.pos == 0x61b4475) {
-      printf("hash write %lx ", hash.lock);
-      v.print();
+    if (hash.pos == 0x4d3a11e && hash.lock == 0x4dc4b810b666 && depth > 8) {
+      printf("hash write d %d", depth); v.print();
+      // abort();
     }
     assert(v.kind > 0 && v.kind <= 4);
     assert(depth >= 0 && depth < 64);
