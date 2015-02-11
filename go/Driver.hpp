@@ -11,10 +11,7 @@ class History;
 
 class Driver {
   TransTable tt;
-  Node stack[64];
   std::vector<int> minMoves;
-  bool limitPrint = false;
-  Node interest;
   
 public:
   template<bool MAX> Value miniMax(const Node &, const Hash &, History *, const int beta, int d);

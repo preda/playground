@@ -34,18 +34,13 @@ public:
   }
 };
 
-static const int LIMIT = 35;
-
 void Driver::mtd(const Node &root) {
   Hash hash;
   History history;
   int beta = N;
-  int d = 14;
+  int d = 18;
   
   while (true) {
-    if (d >= LIMIT) {
-      limitPrint = true;
-    }
     Value v = miniMax<true>(root, hash, &history, beta, d);
     assert(v.isEnough(beta) || v.isDepthLimited());
     printf("MTD %d, beta %d: ", d, beta); v.print();
@@ -63,7 +58,6 @@ void Driver::mtd(const Node &root) {
     }
   }
 
-  /*
   minMoves.clear();
   std::vector<int> work;
   int l = extract<true>(root, hash, &history, beta, d, d + 1, work);
@@ -75,45 +69,28 @@ void Driver::mtd(const Node &root) {
     n = ((i&1) == 0) ? n.play<BLACK>(p) : n.play<WHITE>(p);
     n.print();
   }
-  */
 }
 
 template<bool MAX>
 Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const int beta, int d) {
-  bool interestPrint = false; // = d >= 3;
-  if (false && n == interest) { interestPrint = true; printf("Found interest at depth %d\n", d); }
-
-  if (interestPrint) {
-    printf("Enter %d max %d\n", d, (int)MAX);
-    n.print();
-  }
-  
   assert(d >= 0);
   Value v = tt.get(hash, d, beta);
   if (v.isEnough(beta) || v.isDepthLimited()) { return v; }
   if (v.isNone()) {
     v = n.score<MAX>(beta);
     if (v.isEnough(beta)) {
-      if (interestPrint) { n.print("score"); v.print(); }
       tt.set(hash, v, d, beta);
       return v;
     }
   }
   assert(!n.isEnded());
-  assert(!v.isDepthLimited()); // && !v.isNone());
-  // assert((MAX && v.isLow) || (!MAX && v.isUpp));
+  assert(!v.isDepthLimited());
   Value acc = Value::makeExact(MAX ? -N : N);
-  /*
-  int value = MAX ? (v.kind == LOWER_BOUND ? v.value : -N) :
-    (v.kind == UPPER_BOUND ? v.value : N);
-  Value acc = Value::makeExact(value);
-  */
   
   Vect<byte, N+1> moves;
   n.genMoves<MAX ? BLACK : WHITE>(moves);
   int nMoves = moves.size();
   assert(nMoves > 0);
-  if (interestPrint) { printf("nMoves %d\n", nMoves); }
   Hash hashes[nMoves];
   uint64_t todo = 0;
   
@@ -123,44 +100,24 @@ Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const i
     hashes[i] = h;
     int historyPos = history->depthOf(h);
     if (historyPos) {
-      // printf("move %d hist %d\n", p, historyPos);
       assert(historyPos > d);
       acc.updateHistoryPos(historyPos);
-      if (limitPrint || interestPrint) { printf("done history "); v.print(); }
     } else {
       Value v = tt.get(h, d - 1, beta);
-      // printf("move %d: ", p); v.print();
-      // if (print) { h.print(); v.print(); }
       if (v.isCut<MAX>(beta)) {
         Value vv = v.relaxBound<MAX>();
-        if (limitPrint || interestPrint) {
-          // printf("tt cut ");
-          vv.print();
-        }
         tt.set(hash, vv, d, beta);
         return vv;
       } else if (v.isDepthLimited() || v.isCut<!MAX>(beta)) {
         acc = acc.accumulate<MAX>(v);
-        // printf("%d from tt %d max %d ", p, d, (int)MAX); v.print(); acc.print();
       } else {
         SET(p, todo);
       }
-      /*
-      if (!v.isEnough(beta)) {
-        SET(p, todo);
-      } else {
-        if (v.isCut<MAX>(beta)) {
-        } else {
-          acc.accumulate<MAX>(v);
-        }
-      }
-      */
     }
   }
   
   if (todo) {
     if (d == 0) {
-      // assert(!MAX || acc.value < beta); // ??
       acc = Value::makeDepthLimited(acc.historyPos);
     } else {
       history->push(hash, d);  
@@ -173,9 +130,6 @@ Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const i
           assert(!v.isNone());
           if (v.isCut<MAX>(beta)) {
             acc = v.relaxBound<MAX>();
-            // printf("cut %d max %d: ", d, (int)MAX);
-            // v.print();
-            // acc.print();
             break;
           } else {
             acc = acc.accumulate<MAX>(v);
@@ -184,11 +138,6 @@ Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const i
       }
       history->pop(hash, d);
     }
-  }
-  if (interestPrint /*|| (d == 0 && !acc.isDepthLimited())*/) {
-    // n.print();
-    acc.print(); // printf("nMoves %d %lx\n", nMoves, todo);
-    // assert(false);
   }
   tt.set(hash, acc, d, beta);
   return acc;
@@ -200,13 +149,13 @@ int main(int argc, char **argv) {
   Driver driver;
   driver.mtd(n);
 }
-/*
+
 template<bool MAX>
 int Driver::extract(const Node &n, const Hash &hash, History *history, const int beta, int d, int limit, std::vector<int> &moves) {
   assert(limit > 0);
   --limit;
   if (n.isEnded()) {
-    assert(n.score(beta).value == beta);
+    assert(n.score<MAX>(beta).value == beta);
     minMoves = moves;
     return 0;
   }
@@ -225,13 +174,8 @@ int Driver::extract(const Node &n, const Hash &hash, History *history, const int
     if (!history->depthOf(h)) {
       Node sub = n.play<MAX ? BLACK : WHITE>(p);
       Value v = miniMax<!MAX>(sub, h, history, beta, d - 1);
-      assert(v.isEnough(beta));
-      if (MAX) {
-        assert(v.value <= beta);
-      } else {
-        assert(v.value >= beta);
-      }
-      if (v.value == beta) {
+      // assert(!v.isCut<MAX>(beta));
+      if (v.isEnough(beta) && v.value == beta) {
         moves.push_back(p);
         int subLimit = extract<!MAX>(sub, h, history, beta, d - 1, limit, moves);
         moves.pop_back();
@@ -247,4 +191,3 @@ int Driver::extract(const Node &n, const Hash &hash, History *history, const int
   // moves.push(minP);
   return limit + 1;  
 }
-*/
