@@ -25,7 +25,7 @@ private:
 public:
   Node();
 
-  void setup(const char *board, int nPass);
+  void setup(const char *board, int nPass = 0, int koPos = 0);
   // Node(const Node &other) { memcpy(this, &other, sizeof(Node)); }
      
   template<int C> bool is(int p) const { return IS(p, stone[C]); }
@@ -43,13 +43,13 @@ public:
   template<int C> Hash hashOnPlay(const Hash &h, int p) const;
   
   template<int C> void genMoves(Vect<byte, N+1> &outMoves) const;
-  Value score(int beta) const;
+  template<bool MAX> Value score(int beta) const;
   int finalScore() const;
   
   bool isKo() const { return koPos != 0; }
   bool lastWasPass() const { return nPass > 0; }
   
-  void print() const;
+  void print(const char *s = 0) const;
   bool isEnded() const { return nPass == 2; }
   bool operator==(const Node &n) const { return stone[0] == n.stone[0] && stone[1] == n.stone[1] && nPass == n.nPass; }
   

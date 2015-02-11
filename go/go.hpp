@@ -58,11 +58,13 @@ constexpr bool isBlackOrWhite(int color) { return color == BLACK || color == WHI
 */
 
 //4x4
+
 #define BORDER 0xff10909090ff
 #define INSIDE 0xf0f0f0f00
 #define HALF_Y 0xf0f00
 #define HALF_X 0x303030300
 #define HALF_DIAG 0x80c0e0f00
+
 
 //3x3
 /*

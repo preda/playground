@@ -21,7 +21,7 @@ Node::Node() :
   gids{0}
 { }
 
-void Node::setup(const char *board, int nPass) {
+void Node::setup(const char *board, int nPass, int koPos) {
   for (int y = 0; y < SIZE_Y; ++y) {
     for (int x = 0; x < SIZE_X; ++x) {
       char c = *board++;
@@ -36,6 +36,7 @@ void Node::setup(const char *board, int nPass) {
   }
   assert(!*board);
   this->nPass = nPass;
+  this->koPos = koPos;
 }
 
 template <int C> void Node::updateGroupGids(uint64_t group, int gid) {
@@ -466,13 +467,36 @@ int Node::finalScore() const {
   return size(total[BLACK]) - size(total[WHITE]);
 }
 
-Value Node::score(int beta) const {
+template<bool MAX> Value Node::score(int beta) const {
   if (isEnded()) { return Value::makeExact(finalScore()); }
-  int max =  N - 2 * size(points[WHITE]);
-  if (max < beta) { return Value::makeUpperBound(max); }
+  if (!points[BLACK] && !points[WHITE]) { return Value::makeNone(); }
+  
   int min = -N + 2 * size(points[BLACK]);
-  return Value::makeLowerBound(min);
+  int max =  N - 2 * size(points[WHITE]);
+  assert(min <= max);
+  /*
+  if (nPass == 1) {
+    int final = finalScore();
+    assert(min <= final && final <= max);    
+    if (MAX) {
+      min = final;
+    } else {
+      max = final;
+    }
+  }
+  */
+  if (max < beta) { return Value::makeUpp(max); }
+  return min == -N ? Value::makeNone() : Value::makeLow(min);
 }
+
+  /*
+  } else {
+    if (MAX) {
+      return Value::makeLow(min);
+    } else {
+      return Value::makeUpp(max);
+    }
+    }*/
 
 char Node::charForPos(int p) const {
   return is<BLACK>(p) ? 'x' : is<WHITE>(p) ? 'o' : isEmpty(p) ? '.' : isBorder(p) ? '-' : '?';
@@ -489,7 +513,8 @@ int Node::groupColor(int gid) const {
   return 0;
 }
 
-void Node::print() const {
+void Node::print(const char *s) const {
+  if (s) { printf("%s\n", s); }
   char line1[256], line2[256], line3[256];
   for (int y = 0; y < SIZE_Y; ++y) {
     for (int x = 0; x < SIZE_X; ++x) {
@@ -528,5 +553,8 @@ void Node::print() const {
 
 TEMPLATES(BLACK)
 TEMPLATES(WHITE)
+
+template Value Node::score<true>(int) const;
+template Value Node::score<false>(int) const;
 
 #undef TEMPLATES

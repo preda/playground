@@ -15,6 +15,7 @@ public:
   TransTable();
   ~TransTable();
 
-  Value get(const Hash &hash, int depth);
-  void set(const Hash &hash, Value value, int depth);
+  Value get(const Hash &hash, int depth, int beta);
+  void set(const Hash &hash, Value value, int depth, int beta);
+  // void setNoDepth(const Hash &hash, Value value, int beta);
 };
