@@ -18,14 +18,14 @@ private:
   uint64_t stone[2];
   uint64_t points[2];
   uint64_t groups[MAX_GROUPS];
-  int koPos;
+  // int koPos;
   int nPass;
   byte gids[BIG_N];
 
 public:
   Node();
 
-  void setup(const char *board, int nPass = 0, int koPos = 0);
+  void setup(const char *board, int nPass = 0);
   // Node(const Node &other) { memcpy(this, &other, sizeof(Node)); }
      
   template<int C> bool is(int p) const { return IS(p, stone[C]); }
@@ -46,11 +46,11 @@ public:
   template<bool MAX> Value score(int beta) const;
   int finalScore() const;
   
-  bool isKo() const { return koPos != 0; }
-  bool lastWasPass() const { return nPass > 0; }
+  // bool isKo() const { return koPos != 0; }
+  // bool lastWasPass() const { return nPass > 0; }
   
   void print(const char *s = 0) const;
-  bool isEnded() const { return nPass == 2; }
+  bool isEnded() const { return nPass >= 3; }
   bool operator==(const Node &n) const { return stone[0] == n.stone[0] && stone[1] == n.stone[1] && nPass == n.nPass; }
   
 private:

@@ -16,12 +16,11 @@ Node::Node() :
   stone{0},
   points{0},
   groups{0},
-  koPos(0),
   nPass(0),
   gids{0}
 { }
 
-void Node::setup(const char *board, int nPass, int koPos) {
+void Node::setup(const char *board, int nPass) {
   for (int y = 0; y < SIZE_Y; ++y) {
     for (int x = 0; x < SIZE_X; ++x) {
       char c = *board++;
@@ -36,7 +35,6 @@ void Node::setup(const char *board, int nPass, int koPos) {
   }
   assert(!*board);
   this->nPass = nPass;
-  this->koPos = koPos;
 }
 
 template <int C> void Node::updateGroupGids(uint64_t group, int gid) {
@@ -58,7 +56,7 @@ inline uint64_t shadow(int p) {
 }
 
 template<int C> int Node::valueOfMove(int pos) const {
-  assert(isEmpty(pos) && koPos != pos);
+  assert(isEmpty(pos));
   bool isSelfEye = true;
   int value = 0;
   uint64_t mergeGroup = shadow(pos);
@@ -115,24 +113,15 @@ template<int C> int Node::valueOfMove(int pos) const {
 
 template<int C> Hash Node::hashOnPlay(const Hash &hash, int pos) const {
   uint64_t capture = 0;
-  bool isKo = false;
   int newNPass = 0;
   if (pos == PASS) {
-    if (koPos) {
-      assert(nPass == 0);
-    } else {
-      assert(nPass < 2);
-      newNPass = nPass + 1;
-    }
+    assert(nPass < 3);
+    newNPass = nPass + 1;
   } else {
     assert(isEmpty(pos));
-    assert(pos != koPos);
     newNPass = 0;
-    bool maybeKo = true;
     for (int p : NEIB(pos)) {
-      if (isEmpty(p) || is<C>(p)) {
-        maybeKo = false;
-      } else if (is<1-C>(p)) {
+      if (is<1-C>(p)) {
         int gid = gids[p];
         uint64_t g = groups[gid];
         if (libsOfGroup(g) == 1) {
@@ -140,41 +129,29 @@ template<int C> Hash Node::hashOnPlay(const Hash &hash, int pos) const {
         }
       }
     }
-    isKo = maybeKo && size(capture) == 1;
   }
-  int newKoPos = isKo ? firstOf(capture) : 0;
-  return hash.update<C>(pos, koPos, newKoPos, nPass, newNPass, capture); 
+  return hash.update<C>(pos, nPass, newNPass, capture); 
 }
 
 template<int C> void Node::playInt(int pos) {
   static_assert(isBlackOrWhite(C), "color");
   if (pos == PASS) {
-    if (koPos) {
-      assert(nPass == 0);
-      koPos = 0;
-    } else {
-      assert(nPass < 2);
-      ++nPass;
-    }
+    assert(nPass < 3);
+    ++nPass;
     return;
   }
   
   assert(isEmpty(pos));
-  assert(pos != koPos);
   nPass = 0;
     
   uint64_t group = shadow(pos);
   int newGid = -1;
   bool isSimple = true;
-  bool maybeKo = true;
   uint64_t capture = 0;
   for (int p : NEIB(pos)) {
-    if (isEmpty(p)) {
-      maybeKo = false;
-    } else {
+    if (!isEmpty(p)) {
       int gid = gids[p];
       if (is<C>(p)) {
-        maybeKo = false;
         group |= groups[gid];
         if (newGid == -1) {
           newGid = gid;
@@ -191,8 +168,6 @@ template<int C> void Node::playInt(int pos) {
       }
     }
   }
-  bool isKo = maybeKo && size(capture) == 1;
-  koPos = isKo ? firstOf(capture) : 0;
   stone[1-C] &= ~capture;
   SET(pos, stone[C]);
   updateEmpty();
@@ -420,7 +395,7 @@ template<typename T> bool Node::isSymmetry(T t) const {
 
 uint64_t Node::maybeMoves() const {
   uint64_t area = empty;
-  if (!koPos && size(empty) > N - 12) {
+  if (size(empty) > N - 12) {
     if (isSymmetry(reflectX))    { area &= HALF_X; }
     if (isSymmetry(reflectY))    { area &= HALF_Y; }
     if (isSymmetry(reflectDiag)) { area &= HALF_DIAG; }
@@ -429,11 +404,10 @@ uint64_t Node::maybeMoves() const {
 }
 
 template<int C> void Node::genMoves(Vect<byte, N+1> &moves) const {
-  assert(nPass < 2);
+  assert(!isEnded());
   int tmp[N];
   int n = 0;
   uint64_t area = maybeMoves();
-  if (koPos) { area &= ~(1ull << koPos); }
   for (int p : Bits(area)) {
     int v = valueOfMove<C>(p);
     if (v >= 0) {
@@ -442,14 +416,13 @@ template<int C> void Node::genMoves(Vect<byte, N+1> &moves) const {
   }
   std::sort(tmp, tmp + n);
   moves.clear();
-  if (nPass == 1) {
-    assert(!koPos);
+  if (nPass == 2) {
     moves.push(PASS);
   }
   for (int *pt = tmp, *end = tmp + n; pt < end; ++pt) {
     moves.push(*pt & 0xff);
   }
-  if (nPass == 0) {
+  if (nPass < 2) {
     moves.push(PASS);
   }
 }
@@ -474,8 +447,8 @@ template<bool MAX> Value Node::score(int beta) const {
   int min = -N + 2 * size(points[BLACK]);
   int max =  N - 2 * size(points[WHITE]);
   assert(min <= max);
-  /*
-  if (nPass == 1) {
+
+  if (nPass == 2) {
     int final = finalScore();
     assert(min <= final && final <= max);    
     if (MAX) {
@@ -484,19 +457,10 @@ template<bool MAX> Value Node::score(int beta) const {
       max = final;
     }
   }
-  */
+
   if (max < beta) { return Value::makeUpp(max); }
   return min == -N ? Value::makeNone() : Value::makeLow(min);
 }
-
-  /*
-  } else {
-    if (MAX) {
-      return Value::makeLow(min);
-    } else {
-      return Value::makeUpp(max);
-    }
-    }*/
 
 char Node::charForPos(int p) const {
   return is<BLACK>(p) ? 'x' : is<WHITE>(p) ? 'o' : isEmpty(p) ? '.' : isBorder(p) ? '-' : '?';
@@ -540,7 +504,6 @@ void Node::print(const char *s) const {
     }
   }
   */
-  if (koPos) { printf("ko: (%d, %d) ", Y(koPos), X(koPos)); }
   if (nPass) { printf("nPass %d ", nPass); }
   printf("\n\n");
 }

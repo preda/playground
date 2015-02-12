@@ -96,10 +96,8 @@ Hash::Hash(uint128_t hash) :
 }
 
 template<int C>
-Hash Hash::update(int pos, int oldKoPos, int koPos, int oldNPass, int nPass, uint64_t capture) const {
+Hash Hash::update(int pos, int oldNPass, int nPass, uint64_t capture) const {
   uint128_t h = hashSide();
-  if (oldKoPos)    { h ^= hashKo(oldKoPos); }
-  if (koPos)       { h ^= hashKo(koPos); }
   if (oldNPass)    { h ^= hashPass(oldNPass); }
   if (nPass)       { h ^= hashPass(nPass); }
   if (pos != PASS) { h ^= hashPos<C>(pos); }
@@ -115,5 +113,5 @@ void Hash::print() {
   printf("Hash %lx %lx ", pos, lock);
 }
 
-template Hash Hash::update<BLACK>(int, int, int, int, int, uint64_t) const;
-template Hash Hash::update<WHITE>(int, int, int, int, int, uint64_t) const;
+template Hash Hash::update<BLACK>(int, int, int, uint64_t) const;
+template Hash Hash::update<WHITE>(int, int, int, uint64_t) const;
