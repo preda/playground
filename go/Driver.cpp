@@ -66,7 +66,7 @@ void Driver::mtd(const Node &root) {
   Node n = root;
   for (int i = 0; i < l; ++i) {
     int p = minMoves[i];
-    n = ((i&1) == 0) ? n.play<BLACK>(p) : n.play<WHITE>(p);
+    n = ((i&1) == 0) ? n.play<true>(p) : n.play<false>(p);
     n.print();
   }
 }
@@ -88,7 +88,7 @@ Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const i
   Value acc = Value::makeExact(MAX ? -N : N);
   
   Vect<byte, N+1> moves;
-  n.genMoves<MAX ? BLACK : WHITE>(moves);
+  n.genMoves<MAX>(moves);
   int nMoves = moves.size();
   assert(nMoves > 0);
   Hash hashes[nMoves];
@@ -96,7 +96,7 @@ Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const i
   
   for (int i = 0; i < nMoves; ++i) {
     int p = moves[i];
-    Hash h = n.hashOnPlay<MAX ? BLACK : WHITE>(hash, p);
+    Hash h = n.hashOnPlay<MAX>(hash, p);
     hashes[i] = h;
     int historyPos = history->depthOf(h);
     if (historyPos) {
@@ -125,7 +125,7 @@ Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const i
         int p = moves[i];
         if (IS(p, todo)) {
           Hash h = hashes[i];
-          Node sub = n.play<MAX ? BLACK : WHITE>(p);
+          Node sub = n.play<MAX>(p);
           Value v = miniMax<!MAX>(sub, h, history, beta, d - 1);
           assert(!v.isNone());
           if (v.isCut<MAX>(beta)) {
@@ -163,16 +163,16 @@ int Driver::extract(const Node &n, const Hash &hash, History *history, const int
     return 1;
   }
   Vect<byte, N+1> subMoves;
-  n.genMoves<MAX ? BLACK : WHITE>(subMoves);
+  n.genMoves<MAX>(subMoves);
   int nMoves = subMoves.size();
   assert(nMoves > 0);
   history->push(hash, d);
   // int minP = 0;
   for (int i = 0; i < nMoves; ++i) {
     int p = subMoves[i];
-    Hash h = n.hashOnPlay<MAX ? BLACK : WHITE>(hash, p);
+    Hash h = n.hashOnPlay<MAX>(hash, p);
     if (!history->depthOf(h)) {
-      Node sub = n.play<MAX ? BLACK : WHITE>(p);
+      Node sub = n.play<MAX>(p);
       Value v = miniMax<!MAX>(sub, h, history, beta, d - 1);
       // assert(!v.isCut<MAX>(beta));
       if (v.isEnough(beta) && v.value == beta) {
@@ -182,12 +182,10 @@ int Driver::extract(const Node &n, const Hash &hash, History *history, const int
         if (subLimit < limit) {
           limit = subLimit;
           if (limit == 0) { break; }
-          // minP = p;
         }
       }
     }
   }
   history->pop(hash, d);
-  // moves.push(minP);
   return limit + 1;  
 }

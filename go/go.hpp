@@ -19,14 +19,7 @@ enum {
   
   N = SIZE_X * SIZE_Y,
   BIG_N = BIG_X * BIG_Y,
-
-  BLACK = 0,
-  WHITE = 1,
-  EMPTY = 2,
-  BROWN = 3,
-
   MAX_GROUPS = N,
-
   PASS = 1,
 };
 
@@ -34,7 +27,7 @@ static inline int P(int y, int x) { return ((y + 1) << X_SHIFT) + x; }
 static inline int Y(int pos) { return (pos >> X_SHIFT) - 1; }
 static inline int X(int pos) { return pos & (BIG_X - 1); }
 
-constexpr bool isBlackOrWhite(int color) { return color == BLACK || color == WHITE; }
+// constexpr bool isBlackOrWhite(int color) { return color == BLACK || color == WHITE; }
 
 #define SET(p, bits) bits |= (1ull << (p))
 
