@@ -49,6 +49,8 @@ public:
   bool isEnded() const { return nPass >= 3; }
   bool operator==(const Node &n) const { return stoneBlack == n.stoneBlack && stoneWhite == n.stoneWhite && nPass == n.nPass; }
   
+  int getNPass() const { return nPass; }
+  
 private:
   template<bool BLACK> void playInt(int p);
   

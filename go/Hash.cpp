@@ -85,24 +85,26 @@ template<bool BLACK> uint128_t hashPos(int p) { return BLACK ? zob0[p] : zob1[p]
 uint128_t hashSide()          { return hashPos<true>(0); }
 uint128_t hashPass(int nPass) { return hashPos<true>(nPass); }
 
-Hash::Hash(uint128_t hash) :
+Hash::Hash(uint128_t hash, uint128_t situationHash) :
   hash(hash),
+  situationHash(situationHash),
   pos(hash & MASK),
   lock(((uint64_t) (hash >> 64)) & LOCK_MASK) {
   while (pos >= SIZE) { pos >>= RES_BITS; }
 }
 
 template<bool BLACK> Hash Hash::update(int pos, int oldNPass, int nPass, uint64_t capture) const {
-  uint128_t h = hashSide();
-  if (oldNPass)    { h ^= hashPass(oldNPass); }
-  if (nPass)       { h ^= hashPass(nPass); }
-  if (pos != PASS) { h ^= hashPos<BLACK>(pos); }
+  uint128_t situationDelta = hashSide();
+  if (pos != PASS) { situationDelta ^= hashPos<BLACK>(pos); }
   if (capture) {
     for (int p : Bits(capture)) {
-      h ^= hashPos<!BLACK>(p);
+      situationDelta ^= hashPos<!BLACK>(p);
     }
-  }
-  return Hash(hash ^ h);
+  }  
+  uint128_t hashDelta = situationDelta;
+  if (oldNPass)    { hashDelta ^= hashPass(oldNPass); }
+  if (nPass)       { hashDelta ^= hashPass(nPass); }
+  return Hash(hash ^ hashDelta, situationHash ^ situationDelta);
 }
 
 void Hash::print() {

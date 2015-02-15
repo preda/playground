@@ -438,7 +438,7 @@ template<bool MAX> Value Node::score(int beta) const {
   int min = -N + 2 * size(pointsBlack);
   int max =  N - 2 * size(pointsWhite);
   assert(min <= max);
-
+  /*
   if (nPass == 2) {
     int final = finalScore();
     assert(min <= final && final <= max);    
@@ -448,6 +448,7 @@ template<bool MAX> Value Node::score(int beta) const {
       max = final;
     }
   }
+  */
 
   if (max < beta) { return Value::makeUpp(max); }
   return min == -N ? Value::makeNone() : Value::makeLow(min);

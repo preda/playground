@@ -8,8 +8,9 @@ typedef unsigned char byte;
 typedef signed char sbyte;
 typedef unsigned __int128 uint128_t;
 
-#define SIZE_X 4
-#define SIZE_Y 4
+#define SQ_SIZE 4
+#define SIZE_X SQ_SIZE
+#define SIZE_Y SQ_SIZE
 
 enum {
   X_SHIFT = 3,
@@ -26,8 +27,6 @@ enum {
 static inline int P(int y, int x) { return ((y + 1) << X_SHIFT) + x; }
 static inline int Y(int pos) { return (pos >> X_SHIFT) - 1; }
 static inline int X(int pos) { return pos & (BIG_X - 1); }
-
-// constexpr bool isBlackOrWhite(int color) { return color == BLACK || color == WHITE; }
 
 #define SET(p, bits) bits |= (1ull << (p))
 
