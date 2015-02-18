@@ -27,31 +27,26 @@ Value TransTable::get(const Hash &hash, int depth, int beta) {
   if ((v & LOCK_MASK) != lock) { return Value::makeNone(); }
   
   unsigned packed = v >> LOCK_BITS;
-  int value = (sbyte) (packed & 0xff);
-  int     d = (packed >> 8) & 0x3f;
-  bool isLow = packed & (1 << 14);
-  bool isUpp = packed & (1 << 15);
-
-  if (isLow || isUpp) {
-    return Value(isLow, isUpp, value);
-  } else {
-    return (value == beta && d >= depth) ? Value::makeDepthLimited() : Value::makeNone();
-  }
+  int low = (sbyte)(packed & 0xff);
+  int upp = (sbyte)((packed >> 8) & 0xff);
+  return Value(low, upp);
 }
 
 void TransTable::set(const Hash &hash, Value value, int depth, int beta) {
   assert(depth >= 0 && depth <= 0x3f);
   assert(-128 <= beta && beta < 128);
-  if (depth >= value.historyPos) {
+  if (depth >= value.historyPos && !value.isDepthLimited()) {
+    // assert(value.isEnough(beta));
     unsigned packed;
-    assert(value.isEnough(beta) || value.isDepthLimited());
-    if (value.isDepthLimited()) {
-      assert(!value.isLow && !value.isUpp);
-      packed = (depth << 8) | (byte)beta;
-    } else {
-      assert(value.isLow || value.isUpp);
-      packed = (value.isLow ? (1<<14) : 0) | (value.isUpp ? (1<<15) : 0) | (byte)value.value;      
-    }
+    packed = ((byte)value.low) | (((byte)value.upp) << 8);
     slots[hash.pos] = (((uint64_t) packed) << LOCK_BITS) | hash.lock;
   }
 }
+
+    /*
+    if (value.isDepthLimited()) {
+      packed = (depth << 8) | (byte)beta;
+    } else {
+    */
+
+  // return (value == beta && d >= depth) ? Value::makeDepthLimited() : Value::makeNone();

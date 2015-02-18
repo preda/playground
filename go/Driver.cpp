@@ -46,13 +46,11 @@ void Driver::mtd(const Node &root, int iniDepth) {
     if (v.isDepthLimited()) {
       ++d;
     } else {
-      if (v.isUpp) {
-        assert(v.value < beta);
-        beta = v.value;
-        if (beta == -N) { break; }
-        // break;
+      if (v.upp < beta) {
+        beta = v.upp;
+        if (beta == -N) { break; }        
       } else {
-        assert(v.isLow && v.value == beta);
+        assert(v.low == beta);
         break;
       }
     }
@@ -72,6 +70,19 @@ void Driver::mtd(const Node &root, int iniDepth) {
   */
 }
 
+      /*      
+      if (v.isUpp) {
+        assert(v.value < beta);
+        beta = v.value;
+        if (beta == -N) { break; }
+        // break;
+      } else {
+        assert(v.isLow && v.value == beta);
+        break;
+      }
+      */
+
+
 template<bool MAX>
 Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const int beta, int d) {
   bool interest = false && d >= 10;
@@ -80,8 +91,9 @@ Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const i
   if (v.isEnough(beta) /*|| v.isDepthLimited()*/) { return v; }
   if (v.isNone()) {
     v = n.score<MAX>(beta);
+    tt.set(hash, v, d, beta);
     if (v.isEnough(beta)) {
-      tt.set(hash, v, d, beta);
+      // tt.set(hash, v, d, beta);
       return v;
     }
   }
@@ -210,7 +222,7 @@ int Driver::extract(const Node &n, const Hash &hash, History *history, const int
       Node sub = n.play<MAX>(p);
       Value v = miniMax<!MAX>(sub, h, history, beta, d - 1);
       // assert(!v.isCut<MAX>(beta));
-      if (v.isEnough(beta) && v.value == beta) {
+      if (v.isEnough(beta) && v.low == beta) {
         moves.push_back(p);
         int subLimit = extract<!MAX>(sub, h, history, beta, d - 1, limit, moves);
         moves.pop_back();
