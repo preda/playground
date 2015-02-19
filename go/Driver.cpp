@@ -70,19 +70,6 @@ void Driver::mtd(const Node &root, int iniDepth) {
   */
 }
 
-      /*      
-      if (v.isUpp) {
-        assert(v.value < beta);
-        beta = v.value;
-        if (beta == -N) { break; }
-        // break;
-      } else {
-        assert(v.isLow && v.value == beta);
-        break;
-      }
-      */
-
-
 template<bool MAX>
 Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const int beta, int d) {
   bool interest = false && d >= 10;
