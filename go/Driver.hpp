@@ -13,6 +13,9 @@ class Driver {
   TransTable tt;
   std::vector<int> minMoves;
   std::vector<int> stack;
+  int rootD;
+  std::vector<int> interestStack;
+  Node iNode;
   
 public:
   template<bool MAX> Value miniMax(const Node &, const Hash &, History *, const int beta, int d);

@@ -8,7 +8,7 @@ typedef unsigned char byte;
 typedef signed char sbyte;
 typedef unsigned __int128 uint128_t;
 
-#define SQ_SIZE 4
+#define SQ_SIZE 3
 #define SIZE_X SQ_SIZE
 #define SIZE_Y SQ_SIZE
 

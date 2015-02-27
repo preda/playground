@@ -101,7 +101,7 @@ template<bool BLACK> Hash Node::hashOnPlay(const Hash &hash, int pos) const {
   uint64_t capture = 0;
   int newNPass = 0;
   if (pos == PASS) {
-    assert(nPass < 3);
+    assert(nPass < 2);
     newNPass = nPass + 1;
   } else {
     assert(isEmpty(pos));
@@ -121,7 +121,7 @@ template<bool BLACK> Hash Node::hashOnPlay(const Hash &hash, int pos) const {
 
 template<bool BLACK> void Node::playInt(int pos) {
   if (pos == PASS) {
-    assert(nPass < 3);
+    assert(nPass < 2);
     ++nPass;
     return;
   }
@@ -409,13 +409,13 @@ template<bool BLACK> void Node::genMoves(Vect<byte, N+1> &moves) const {
   }
   std::sort(tmp, tmp + n);
   moves.clear();
-  if (nPass == 2) {
+  if (nPass == 1) {
     moves.push(PASS);
   }
   for (int *pt = tmp, *end = tmp + n; pt < end; ++pt) {
     moves.push(*pt & 0xff);
   }
-  if (nPass < 2) {
+  if (nPass == 0) {
     moves.push(PASS);
   }
 }
@@ -439,7 +439,7 @@ template<bool MAX> Value Node::score(int beta) const {
   int max =  N - 2 * size(pointsWhite);
   assert(min <= max);
   /*
-  if (nPass == 2) {
+  if (nPass == 1) {
     int final = finalScore();
     assert(min <= final && final <= max);    
     if (MAX) {
@@ -457,19 +457,6 @@ template<bool MAX> Value Node::score(int beta) const {
 char Node::charForPos(int p) const {
   return is<true>(p) ? 'x' : is<false>(p) ? 'o' : isEmpty(p) ? '.' : isBorder(p) ? '-' : '?';
 }
-
-/*
-bool Node::groupIsBlack(int gid) const {
-  for (int p = 0; p < BIG_N; ++p) {
-    if (gids[p] == gid && (is<true>(p) || is<false>(p))) {
-      return is<true>(p);
-    }
-  }
-  // printf("groupColor gid %d %lx %d\n", gid, groups[gid], gids[P(0, 0)]);
-  assert(false);
-  return false;
-}
-*/
 
 void Node::print(const char *s) const {
   if (s) { printf("%s\n", s); }

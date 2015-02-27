@@ -31,8 +31,6 @@ public:
   bool isEmpty(int p)  const { return IS(p, empty); }
   bool isBorder(int p) const { return IS(p, BORDER); }
   
-  // template<int C> bool isSuicide(int p) const { return valueOfMove<C>(p) < 0; }
-  
   template<bool BLACK> Node play(int p) const {
     Node n(*this);
     n.playInt<BLACK>(p);
@@ -46,7 +44,7 @@ public:
   int finalScore() const;
   
   void print(const char *s = 0) const;
-  bool isEnded() const { return nPass >= 3; }
+  bool isEnded() const { return nPass >= 2; }
   bool operator==(const Node &n) const { return stoneBlack == n.stoneBlack && stoneWhite == n.stoneWhite && nPass == n.nPass; }
   
   int getNPass() const { return nPass; }
