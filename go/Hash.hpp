@@ -16,6 +16,7 @@ public:
 
   Hash() : Hash(-1, -1) { }
 
-  template<bool BLACK> Hash update(int pos, int oldNPass, int nPass, uint64_t capture) const;
+  template<bool BLACK>
+  Hash update(int pos, int oldKoPos, int koPos, int oldNPass, int nPass, uint64_t capture) const;
   void print();
 };

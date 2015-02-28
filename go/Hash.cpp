@@ -82,6 +82,7 @@ C(0xe81ad6be178691cb, 0xf1e285dafebc8bd1), C(0xc3a001e636ab3474, 0x844008b2ad2ba
 
 template<bool BLACK> uint128_t hashPos(int p) { return BLACK ? zob0[p] : zob1[p]; }
 
+uint128_t hashKo(int p)       { return hashPos<true>(p) ^ hashPos<false>(p); }
 uint128_t hashSide()          { return hashPos<true>(0); }
 uint128_t hashPass(int nPass) { return hashPos<true>(nPass); }
 
@@ -93,8 +94,11 @@ Hash::Hash(uint128_t hash, uint128_t situationHash) :
   while (pos >= SIZE) { pos >>= RES_BITS; }
 }
 
-template<bool BLACK> Hash Hash::update(int pos, int oldNPass, int nPass, uint64_t capture) const {
+template<bool BLACK>
+Hash Hash::update(int pos, int oldKoPos, int koPos, int oldNPass, int nPass, uint64_t capture) const {
   uint128_t situationDelta = hashSide();
+  if (oldKoPos)    { situationDelta ^= hashKo(oldKoPos); }
+  if (koPos)       { situationDelta ^= hashKo(koPos); }
   if (pos != PASS) { situationDelta ^= hashPos<BLACK>(pos); }
   if (capture) {
     for (int p : Bits(capture)) {
@@ -111,5 +115,5 @@ void Hash::print() {
   printf("Hash %lx %lx ", pos, lock);
 }
 
-template Hash Hash::update<true>(int, int, int, uint64_t) const;
-template Hash Hash::update<false>(int, int, int, uint64_t) const;
+template Hash Hash::update<true>(int, int, int, int, int, uint64_t) const;
+template Hash Hash::update<false>(int, int, int, int, int, uint64_t) const;

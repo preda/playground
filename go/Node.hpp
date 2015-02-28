@@ -18,16 +18,18 @@ private:
   uint64_t stoneBlack, stoneWhite;
   uint64_t pointsBlack, pointsWhite;
   uint64_t groups[MAX_GROUPS];
+  int koPos;
   int nPass;
   byte gids[BIG_N];
 
 public:
   Node();
-
-  void setup(const char *board, int nPass = 0);
-
+  
+  void setup(const char *board, int nPass = 0, int koPos = 0);
+  
   template<bool BLACK> inline uint64_t stone() const { return BLACK ? stoneBlack : stoneWhite; }
   template<bool BLACK> bool is(int p) const { return IS(p, stone<BLACK>()); }
+
   bool isEmpty(int p)  const { return IS(p, empty); }
   bool isBorder(int p) const { return IS(p, BORDER); }
   
@@ -43,11 +45,15 @@ public:
   template<bool MAX> Value score(int beta) const;
   int finalScore() const;
   
-  void print(const char *s = 0) const;
   bool isEnded() const { return nPass >= 2; }
-  bool operator==(const Node &n) const { return stoneBlack == n.stoneBlack && stoneWhite == n.stoneWhite && nPass == n.nPass; }
+  bool operator==(const Node &n) const {
+    return stoneBlack == n.stoneBlack && stoneWhite == n.stoneWhite && nPass == n.nPass && koPos == n.koPos;
+  }
   
   int getNPass() const { return nPass; }
+  bool isKo() const { return koPos != 0; }
+  bool lastWasPass() const { return nPass > 0; }  
+  void print(const char *s = 0) const;
   
 private:
   template<bool BLACK> void playInt(int p);
