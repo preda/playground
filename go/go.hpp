@@ -4,6 +4,8 @@
 
 #include <stdint.h>
 
+#define PURE const __attribute__((warn_unused_result))
+
 typedef unsigned char byte;
 typedef signed char sbyte;
 typedef unsigned __int128 uint128_t;

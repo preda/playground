@@ -41,6 +41,15 @@ void Node::setup(const char *board, int nPass, int koPos) {
   this->koPos = koPos;
 }
 
+void Node::swapSidesInt() {
+  uint64_t save = stoneBlack;
+  stoneBlack = stoneWhite;
+  stoneWhite = save;
+  save = pointsBlack;
+  pointsBlack = pointsWhite;
+  pointsWhite = save;
+}
+
 template <bool BLACK> void Node::updateGroupGids(uint64_t group, int gid) {
   for (int p : Bits(group & stone<BLACK>())) { gids[p] = gid; }
 }
@@ -99,7 +108,7 @@ template<bool BLACK> int Node::valueOfMove(int pos) const {
   return value + (size(capture) + mergeLibs - 1) * 10;
 }
 
-template<bool BLACK> Hash Node::hashOnPlay(const Hash &hash, int pos) const {
+Hash Node::hashOnPlay(int pos) const {
   uint64_t capture = 0;
   bool isKo = false;
   int newNPass = 0;
@@ -129,7 +138,7 @@ template<bool BLACK> Hash Node::hashOnPlay(const Hash &hash, int pos) const {
     isKo = maybeKo && size(capture) == 1;
   }
   int newKoPos = isKo ? firstOf(capture) : 0;
-  return hash.update<BLACK>(pos, koPos, newKoPos, nPass, newNPass, capture); 
+  return Hash(stoneBlack, stoneWhite, newKoPos, newNPass); // + capture
 }
 
 template<bool BLACK> void Node::playInt(int pos) {

@@ -26,9 +26,15 @@ public:
   Node();
   
   void setup(const char *board, int nPass = 0, int koPos = 0);
+
+  Node swapSides() const {
+    Node n(*this);
+    n.swapSidesInt();
+    return n;
+  }
   
-  template<bool BLACK> inline uint64_t stone() const { return BLACK ? stoneBlack : stoneWhite; }
-  template<bool BLACK> bool is(int p) const { return IS(p, stone<BLACK>()); }
+  // template<bool BLACK> inline uint64_t stone() const { return BLACK ? stoneBlack : stoneWhite; }
+  // template<bool BLACK> bool is(int p) const { return IS(p, stone<BLACK>()); }
 
   bool isEmpty(int p)  const { return IS(p, empty); }
   bool isBorder(int p) const { return IS(p, BORDER); }
@@ -39,7 +45,7 @@ public:
     return n;
   }
 
-  template<bool BLACK> Hash hashOnPlay(const Hash &h, int p) const;
+  Hash hashOnPlay(int p) const;
   
   template<bool BLACK> void genMoves(Vect<byte, N+1> &outMoves) const;
   template<bool MAX> Value score(int beta) const;
@@ -57,6 +63,7 @@ public:
   
 private:
   template<bool BLACK> void playInt(int p);
+  void swapSidesInt();
   
   
   void updateEmpty() { empty = ~(stoneBlack | stoneWhite) & INSIDE; }

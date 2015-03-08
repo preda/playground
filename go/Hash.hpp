@@ -4,19 +4,22 @@
 
 #include "go.hpp"
 
-// template<bool BLACK> uint128_t hashUpdate(int pos, int oldKoPos, int koPos, int oldNPass, int nPass, uint64_t capture);
+typedef uint64_t Hash;
 
+Hash hashOf(uint64_t black, uint64_t white, );
+
+/*
 class Hash {
-  Hash(uint128_t h, uint128_t);
-  
 public:
-  uint128_t hash;
-  uint128_t situationHash;
-  uint64_t pos, lock;
-
-  Hash() : Hash(-1, -1) { }
-
-  template<bool BLACK>
-  Hash update(int pos, int oldKoPos, int koPos, int oldNPass, int nPass, uint64_t capture) const;
-  void print();
+  Hash(uint64_t black, uint64_t white, int koPos, int nPass, bool swapped);
+  uint64_t hash;
 };
+
+class FullHash {
+  FullHash(uint64_t positionHash, bool swapped, int nPass);
+
+  void print();
+
+  uint64_t hash;
+};
+*/

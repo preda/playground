@@ -1,7 +1,6 @@
 // (c) Copyright 2014 Mihai Preda. All rights reserved.
 
 #include "TransTable.hpp"
-#include "transtable.hpp"
 #include "Hash.hpp"
 #include "Value.hpp"
 
@@ -10,9 +9,9 @@
 #include <stdlib.h>
 
 TransTable::TransTable() :
-  slots((uint64_t *) calloc(SIZE + SEARCH - 1, 8))
+  pages((Page *) malloc(NPAGE * sizeof(Page)))
 {
-  printf("Size %.2f GB\n", SIZE * 8 / (1024 * 1024 * 1024.0f));
+  printf("Size %.2f GB\n", (NPAGE * sizeof(Page)) / (1024 * 1024 * 1024.0f));
 }
 
 TransTable::~TransTable() {
@@ -21,6 +20,33 @@ TransTable::~TransTable() {
 }
 
 Value TransTable::get(const Hash &hash, int depth, int beta) {
+  uint64_t h = hash.hash;
+  int pageId = h & PAGE_MASK;
+  if (!active.get(pageId)) {
+    return Value::makeNone();
+  }
+  uint64_t *page = pages[pageId].slots;
+  unsigned lock = (unsigned)(hash >> NPAGE_BITS);
+  for (uint64_t *p = page, *end = page + SLOTS_PER_PAGE; p < end; ++p) {
+    if ((unsigned)(*p) == lock) {
+      unsigned packed = *p >> 32;
+      int value = (sbyte) (packed & 0xff);
+      int     d = (packed >> 8) & 0x3f;
+      bool isLow = packed & (1 << 14);
+      bool isUpp = packed & (1 << 15);
+      
+      if (isLow || isUpp) {
+        return Value(isLow, isUpp, value);
+      } else {
+        return (value == beta && d >= depth) ? Value::makeDepthLimited() : Value::makeNone();
+      }
+    }
+  }
+  return Value::makeNone();
+
+  
+  uint64_t *page = slots + (h & PAGE_MASK) * N_PER_PAGE;
+  
   uint64_t pos  = hash.pos;
   uint64_t lock = hash.lock;
   uint64_t v = slots[pos];

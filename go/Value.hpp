@@ -21,6 +21,8 @@ public:
     assert(low >= -N-1 && low <= N && upp >= -N && upp <= N && low <= upp);
   }
 
+  Value swapSide() PURE { return Value(-upp, -low, historyPos); }
+  
   void print() {
     if (historyPos) { printf("history %d ", historyPos); }
     if (isNone()) {
@@ -48,7 +50,7 @@ public:
   static Value makeUpp(int v)     { return Value(-N, v); }
   static Value makeLow(int v)     { return Value(v,  N); }
   static Value makeExact(int v)   { return Value(v,  v); }
-  static Value makeDepthLimited(int histPos = 0) { return Value(-N-1, N, histPos); }
+  static Value makeDepthLimited(int histPos = 0) { return Value(-N-1, N+1, histPos); }
   static Value makeNone()         { return Value(-N, N); }
 
   template<bool MAX> Value relaxBound() const {
