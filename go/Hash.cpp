@@ -38,10 +38,13 @@ template uint64_t extract<6>(uint64_t stones) {
 
 uint64_t power(uint64_t bits);
 
-Hash::Hash(uint64_t black, uint64_t white) {
+Hash hashOf(uint64_t black, uint64_t white, int codedKo, bool pass, bool swapped) {
+  assert(0 <= codedKo && codedKo < 4);
   uint64_t bitsBlack = extract<N>(black);
   uint64_t bitsWhite = extract<N>(white);
-  hash = (power(bitsBlack) << 1) + power(bitsWhite);
+  uint64_t positionHash = (power(bitsBlack) << 1) + power(bitsWhite);
+  unsigned extra = (codedKo << 2) | (pass ? 2 : 0) | (swapped ? 1 : 0);
+  return (positionHash << 4) | extra;
 }
 
 unsigned short tab3[512] = {
@@ -111,5 +114,25 @@ FullHash::FullHash(uint64_t positionHash, bool swapped, int nPass) {
   assert(nPass >= 0 && nPass <= 3);
   assert((positionHash >> (64 - 3)) == 0);
   hash = (positionHash << 3) | (nPass << 1) | (swapped ? 1 : 0);
+}
+*/
+
+/*
+template<typename T> static uint64_t transform(uint64_t points, T t) {
+  uint64_t r = 0;
+  for (int p : Bits(points)) { SET(t(p), r); }
+  return r;
+}
+
+uint64_t reflectX(uint64_t points) {
+  return transform(points, [](int p) { return P(Y(p), SIZE_X - 1 - X(p)); });
+}
+
+uint64_t reflectY(uint64_t points) {
+  return transform(points, [](int p) { return P(SIZE_Y - 1 - Y(p), X(p)); });
+}
+
+uint64_t reflectDiag(uint64_t points) {
+  return transform(points, [](int p) { return P(X(p), Y(p)); });
 }
 */
