@@ -5,31 +5,15 @@
 
 typedef unsigned long long u64;
 
-typedef struct {
-  unsigned d0, d1, d2;
-} N96;
+struct U3 { unsigned a, b, c; };
+struct U4 { unsigned a, b, c, d; };
+struct U6 { unsigned a, b, c, d, e, f; };
 
-typedef struct {
-  unsigned d0, d1, d2, d3, d4, d5;
-} N192;
-
-typedef struct {
-  unsigned d0, d1, d2, d3;
-} N128;
-
-__device__ static unsigned mul(unsigned a, unsigned b) {
-  return a * b;
-}
+__device__ static unsigned mul(unsigned a, unsigned b) { return a * b; }
 
 __device__ static unsigned madhi_cc(unsigned a, unsigned b, unsigned c) {
   unsigned r;
   asm("mad.hi.cc.u32 %0, %1, %2, %3;" : "=r"(r) : "r"(a), "r"(b), "r"(c));
-  return r;
-}
-
-__device__ static unsigned madhic_cc(unsigned a, unsigned b, unsigned c) {
-  unsigned r;
-  asm("madc.hi.cc.u32 %0, %1, %2, %3;" : "=r"(r) : "r"(a), "r"(b), "r"(c));
   return r;
 }
 
@@ -39,15 +23,15 @@ __device__ static unsigned mulhic(unsigned a, unsigned b) {
   return r;
 }
 
-__device__ static unsigned add_cc(unsigned a, unsigned b) {
+__device__ static unsigned madhic_cc(unsigned a, unsigned b, unsigned c) {
   unsigned r;
-  asm("add.cc.u32 %0, %1, %2;" : "=r" (r) : "r" (a), "r" (b));
+  asm("madc.hi.cc.u32 %0, %1, %2, %3;" : "=r"(r) : "r"(a), "r"(b), "r"(c));
   return r;
 }
 
-__device__ static unsigned addc_cc(unsigned a, unsigned b) {
+__device__ static unsigned add_cc(unsigned a, unsigned b) {
   unsigned r;
-  asm("addc.cc.u32 %0, %1, %2;" : "=r" (r) : "r" (a), "r" (b));
+  asm("add.cc.u32 %0, %1, %2;" : "=r" (r) : "r" (a), "r" (b));
   return r;
 }
 
@@ -57,15 +41,15 @@ __device__ static unsigned addc(unsigned a, unsigned b) {
   return r;
 }
 
-__device__ static unsigned sub_cc(unsigned a, unsigned b) {
+__device__ static unsigned addc_cc(unsigned a, unsigned b) {
   unsigned r;
-  asm("sub.cc.u32 %0, %1, %2;" : "=r" (r) : "r" (a), "r" (b));
+  asm("addc.cc.u32 %0, %1, %2;" : "=r" (r) : "r" (a), "r" (b));
   return r;
 }
 
-__device__ static unsigned subc_cc(unsigned a, unsigned b) {
+__device__ static unsigned sub_cc(unsigned a, unsigned b) {
   unsigned r;
-  asm("subc.cc.u32 %0, %1, %2;" : "=r" (r) : "r" (a), "r" (b));
+  asm("sub.cc.u32 %0, %1, %2;" : "=r" (r) : "r" (a), "r" (b));
   return r;
 }
 
@@ -75,132 +59,111 @@ __device__ static unsigned subc(unsigned a, unsigned b) {
   return r;
 }
 
-__device__ static unsigned shfl(unsigned a, unsigned b, unsigned n) {
+__device__ static unsigned subc_cc(unsigned a, unsigned b) {
+  unsigned r;
+  asm("subc.cc.u32 %0, %1, %2;" : "=r" (r) : "r" (a), "r" (b));
+  return r;
+}
+
+__device__ static unsigned shl(unsigned a, unsigned b, int n) {
   unsigned r;
   asm("shf.l.wrap.b32 %0, %1, %2, %3;" : "=r"(r) : "r"(a), "r"(b), "r"(n));
   return r;
 }
 
-__device__ static unsigned shfr(unsigned a, unsigned b, unsigned n) {
+__device__ static unsigned shr(unsigned a, unsigned b, int n) {
   unsigned r;
   asm("shf.r.wrap.b32 %0, %1, %2, %3;" : "=r"(r) : "r"(a), "r"(b), "r"(n));
   return r;
 }
 
-// 4W = 3W * 1W 
-__device__ static N128 mul(N96 a, unsigned n) {
-  N128 r;
-  r.d0 =         mul(n, a.d0);
-  r.d1 =  add_cc(mulhi(n, a.d0), mul(n, a.d1));
-  r.d2 = addc_cc(mulhi(n, a.d1), mul(n, a.d2));
-  r.d3 =    addc(mulhi(n, a.d2), 0);
-  return r;
+__device__ static U4 mul(U3 v, unsigned n) {
+  unsigned a =         mul(n, v.a);
+  unsigned b =  add_cc(mulhi(n, v.a), mul(n, v.b));
+  unsigned c = addc_cc(mulhi(n, v.b), mul(n, v.c));
+  unsigned d =    addc(mulhi(n, v.c), 0);
+  return {a, b, c, d};
 }
 
-// 6W = 6W - 6W
-__device__ static N192 subshl(N192 a, N192 b, int n) {
-  N192 r;
-  r.d0 =  sub_cc(a.d0, b.d0 << n);
-  r.d1 = subc_cc(a.d1, shfl(b.d0, b.d1, n));
-  r.d2 = subc_cc(a.d2, shfl(b.d1, b.d2, n));
-  r.d3 = subc_cc(a.d3, shfl(b.d2, b.d3, n));
-  r.d4 = subc_cc(a.d4, shfl(b.d3, b.d4, n));
-  r.d5 =    subc(a.d5, shfl(b.d4, b.d5, n));
-  return r;
+__device__ static U6 subshl(U6 x, U6 y, int n) {
+  unsigned a =  sub_cc(x.a, y.a << n);
+  unsigned b = subc_cc(x.b, shl(y.a, y.b, n));
+  unsigned c = subc_cc(x.c, shl(y.b, y.c, n));
+  unsigned d = subc_cc(x.d, shl(y.c, y.d, n));
+  unsigned e = subc_cc(x.e, shl(y.d, y.e, n));
+  unsigned f =    subc(x.f, shl(y.e, y.f, n));
+  return {a, b, c, d, e, f};
 }
 
-__device__ static N192 shl64(N128 a) {
-  return {0, 0, a.d0, a.d1, a.d2, a.d3};
+__device__ static U6 shl2w(U4 x)  { return {0, 0, x.a, x.b, x.c, x.d}; }
+__device__ static U6 shl1w(U4 x)  { return {0, x.a, x.b, x.c, x.d, 0}; }
+__device__ static U6 makeU6(U4 x) { return {x.a, x.b, x.c, x.d, 0, 0}; }
+
+__device__ static U3 shl(U3 x, int n) {
+  return {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n)};
 }
 
-__device__ static N192 shl32(N128 a) {
-  return {0, a.d0, a.d1, a.d2, a.d3, 0};
+__device__ static U6 shl(U6 x, int n) {
+  return {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n), shl(x.c, x.d, n), shl(x.d, x.e, n), shl(x.e, x.f, n)};
 }
 
-__device__ static N192 shl0(N128 a) {
-  return {a.d0, a.d1, a.d2, a.d3, 0, 0};
+__device__ static U3 shr(U3 x, int n) {
+  return {shr(x.a, x.b, n), shr(x.b, x.c, n), x.c >> n};
 }
 
-__device__ static N96 shl(N96 a, int n) {
-  return {a.d0 << n, shfl(a.d0, a.d1, n), shfl(a.d1, a.d2, n)};
-}
-
-__device__ static N192 shl(N192 a, int n) {
-  return {a.d0 << n, shfl(a.d0, a.d1, n), shfl(a.d1, a.d2, n), shfl(a.d2, a.d3, n), shfl(a.d3, a.d4, n), shfl(a.d4, a.d5, n)};
-}
-
-__device__ static N96 shr(N96 a, int n) {
-  return {shfr(a.d0, a.d1, n), shfr(a.d1, a.d2, n), a.d2 >> n};
-}
-
-// 3W = 6W % 3W; b >= 2**95
-__device__ static N96 modAux(N192 a, N96 b) {
-  assert(b.d2 & 0x80000000);
-  const u64 R64 = 0xffffffffffffffffULL / ((0x100000000ULL | shfl(b.d1, b.d2, 1)) + 1);
+// 3W = 6W % 3W; y >= 2**95
+__device__ static U3 modAux(U6 x, U3 y) {
+  assert(y.c & 0x80000000);
+  const u64 R64 = 0xffffffffffffffffULL / ((0x100000000ULL | shl(y.b, y.c, 1)) + 1);
   assert((R64 >> 32) == 0);
   const unsigned R = (unsigned) R64;
-  unsigned n;
-  N192 c;
-
-  n = mulhi(a.d5, R);
-  c = shl64(mul(b, n));
-  a = subshl(a, c, 1);
-  assert((a.d5 & 0xfffffff0) == 0);
-
-  n = mulhi(shfl(a.d4, a.d5, 28), R);
-  c = shl32(mul(b, n));
-  a = subshl(a, c, 5);
-  assert(a.d5 == 0 && (a.d4 & 0xffffff00) == 0);
-
-  n = mulhi(shfl(a.d3, a.d4, 24), R);
-  c = shl0(mul(b, n));
-  a = subshl(a, c, 9);
-  assert(a.d5 == 0 && a.d4 == 0 && (a.d3 & 0xfffff000) == 0);
-
-  n = mulhi(shfl(a.d2, a.d3, 20), R) >> 19;
-  c = shl0(mul(b, n));
-  a = subshl(a, c, 0);
-  assert(a.d5 == 0 && a.d4 == 0 && a.d3 == 0);
   
-  return {a.d0, a.d1, a.d2};
+  x = subshl(x, shl2w(mul(y, mulhi(x.f, R))), 1);
+  assert((x.f & 0xfffffff0) == 0);
+  x = subshl(x, shl1w(mul(y, mulhi(shl(x.e, x.f, 28), R))), 5);
+  assert(x.f == 0 && (x.e & 0xffffff00) == 0);
+  x = subshl(x, makeU6(mul(y, mulhi(shl(x.d, x.e, 24), R))), 9);
+  assert(x.f == 0 && x.e == 0 && (x.d & 0xfffff000) == 0);
+  x = subshl(x, makeU6(mul(y, mulhi(shl(x.c, x.d, 20), R) >> 19)), 0);
+  assert(x.f == 0 && x.e == 0 && x.d == 0);
+  
+  return {x.a, x.b, x.c};
 }
 
-// b > 2**64
-__device__ static N96 mod(N192 a, N96 b) {
-  assert(b.d2);
-  int shift = __clz(b.d2);
-  b = shl(b, shift);
-  a = shl(a, shift);
-  return shr(modAux(a, b), shift);
+// y > 2**64
+__device__ static U3 mod(U6 x, U3 y) {
+  assert(y.c);
+  int shift = __clz(y.c);
+  assert(__clz(x.f) >= shift);
+  return shr(modAux(shl(x, shift), shl(y, shift)), shift);
 }
 
-__device__ static N96 avg96(N96 a, N96 b) {
-  unsigned d0 = add_cc(a.d0, b.d0);
-  unsigned d1 = addc_cc(a.d1, b.d1);
-  unsigned d2 = addc_cc(a.d2, b.d2);
-  unsigned d3 = addc(0, 0);
-  d0 = shfr(d0, d1, 1);
-  d1 = shfr(d1, d2, 1);
-  d2 = shfr(d2, d3, 1);
-  return {d0, d1, d2};
+__device__ static U3 avg(U3 x, U3 y) {
+  unsigned a =  add_cc(x.a, y.a);
+  unsigned b = addc_cc(x.b, y.b);
+  unsigned c = addc_cc(x.c, y.c);
+  unsigned d = addc(0, 0);
+  return {shr(a, b, 1), shr(b, c, 1), shr(c, d, 1)};
 }
 
+/*
 __device__ static N96 add(N96 a, N96 b) {
   unsigned d0 = add_cc(a.d0, b.d0);
   unsigned d1 = addc_cc(a.d1, b.d1);
   unsigned d2 = addc(a.d2, b.d2);
   return {d0, d1, d2};
 }
+*/
 
 // find u, v such that (u << 96) - v * b == 1
-__device__ static void gcd(N96 b, N96 *pu, N96 *pv) {
-  N96 u{1, 0, 0};
-  N96 v{0, 0, 0};
+__device__ static void gcd(U3 b, U3 *pu, U3 *pv) {
+  U3 u{1, 0, 0};
+  U3 v{0, 0, 0};
   for (int i = 96; i; --i) {
     v = shr(v, 1);
-    if (u.d0 & 1) {
-      u = avg96(u, b);
-      v.d2 |= 0x80000000;
+    if (u.a & 1) {
+      u = avg(u, b);
+      v.c |= 0x80000000;
     } else {
       u = shr(u, 1);
     }
@@ -209,15 +172,15 @@ __device__ static void gcd(N96 b, N96 *pu, N96 *pv) {
   *pv = v;
 }
 
-static void print(N96 a) {
-  printf("0x%08x%08x%08x\n", a.d2, a.d1, a.d0);
+static void print(U3 a) {
+  printf("0x%08x%08x%08x\n", a.c, a.b, a.a);
 }
 
-__device__ static void printD(N96 a) {
-  printf("0x%08x%08x%08x\n", a.d2, a.d1, a.d0);
+__device__ static void printD(U3 a) {
+  printf("0x%08x%08x%08x\n", a.c, a.b, a.a);
 }
 
-__global__ void test(N96 *out, N192 *as, N96 *bs) {
+__global__ void test(U3 *out, U6 *as, U3 *bs) {
   /*
   N96 x = {2, 800, 16};
   N96 y = {4, 200, 1};
@@ -225,19 +188,19 @@ __global__ void test(N96 *out, N192 *as, N96 *bs) {
   printD(shr(x, 1));
   printD(shr(y, 1));
   */
-  N96 b = bs[0];
+  U3 b = bs[0];
   gcd(b, out, out + 1);
 }
 
 #define N 32
 
-__managed__ N192 as[N];
-__managed__ N96 bs[N];
-__managed__ N96 out[N * N];
+__managed__ U6 as[N];
+__managed__ U3 bs[N];
+__managed__ U3 out[N * N];
 
 int main() {
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
-  N96 b{0x12345fff, 0x224433aa, 0x76123229};
+  U3 b{0x12345fff, 0x224433aa, 0x76123229};
   bs[0] = b;
   test<<<1, 1>>>(out, as, bs);
   cudaDeviceSynchronize();
