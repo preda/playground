@@ -4,6 +4,7 @@
 #include <stdlib.h>
 
 typedef unsigned long long u64;
+typedef __uint128_t u128;
 
 struct U3 { unsigned a, b, c; };
 struct U4 { unsigned a, b, c, d; };
@@ -146,15 +147,6 @@ __device__ static U3 avg(U3 x, U3 y) {
   return {shr(a, b, 1), shr(b, c, 1), shr(c, d, 1)};
 }
 
-/*
-__device__ static N96 add(N96 a, N96 b) {
-  unsigned d0 = add_cc(a.d0, b.d0);
-  unsigned d1 = addc_cc(a.d1, b.d1);
-  unsigned d2 = addc(a.d2, b.d2);
-  return {d0, d1, d2};
-}
-*/
-
 // find u, v such that (u << 96) - v * b == 1
 __device__ static void gcd(U3 b, U3 *pu, U3 *pv) {
   U3 u{1, 0, 0};
@@ -172,24 +164,55 @@ __device__ static void gcd(U3 b, U3 *pu, U3 *pv) {
   *pv = v;
 }
 
+// Inspired my mfaktc's square96 implem.
+__device__ static U6 square(U3 x) {
+  unsigned a, b, c, d, e, f;
+  asm("{\n"
+      "mul.lo.u32      %0, %6, %6;     \n"  // (d0 * d0).lo
+      "mul.lo.u32      %1, %6, %7;     \n"  // (d0 * d1).lo
+      "mul.hi.u32      %2, %6, %7;     \n"  // (d0 * d1).hi      
+      "add.cc.u32      %1, %1, %1;     \n"  // 2 * (d0 * d1).lo
+      "addc.cc.u32     %2, %2, %2;     \n"  // 2 * (d0 * d1).hi
+      "madc.hi.cc.u32  %3, %7, %7, 0;  \n"  // (d1 * d1).hi
+      "madc.lo.u32     %4, %8, %8, 0;  \n"  // (d2 * d2).lo; %4 <= 0xFFFFFFFA => no carry to %5 needed!
+      "add.u32         %5, %8, %8;     \n"  // 2 * d2; d2 < 2**31
+      "mad.hi.cc.u32   %1, %6, %6, %1; \n"  // (d0 * d0).hi
+      "madc.lo.cc.u32  %2, %7, %7, %2; \n"  // (d1 * d1).lo
+      "madc.lo.cc.u32  %3, %7, %5, %3; \n"  // 2 * (a.d1 * a.d2).lo
+      "addc.u32        %4, %4, 0;      \n"  // %4 <= 0xFFFFFFFB => not carry to %5 needed
+      "mad.lo.cc.u32   %2, %6, a2, %2; \n"  // 2 * (d0 * d2).lo
+      "madc.hi.cc.u32  %3, %6, %5, %3; \n"  // 2 * (d0 * d2).hi
+      "madc.hi.cc.u32  %4, %7, %5, %4; \n"  // 2 * (d1 * d2).hi
+      "madc.hi.u32     %5, %8, %8, 0;  \n"  // (d2 * d2).hi
+      "}\n" : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e), "=r"(f) : "r"(x.a), "r"(x.b), "r"(x.c));
+  return {a, b, c, d, e, f};
+}
+
+__device__ static U4 square(u64 a) {
+  u128 r = a * a;
+  return {r, r >> 32, r >> 64, r >> 96};
+}
+
 static void print(U3 a) {
   printf("0x%08x%08x%08x\n", a.c, a.b, a.a);
+}
+
+static void print(U6 a) {
+  printf("0x%08x%08x%08x'%08x%08x%08x\n", a.f, a.e, a.d, a.c, a.b, a.a);
 }
 
 __device__ static void printD(U3 a) {
   printf("0x%08x%08x%08x\n", a.c, a.b, a.a);
 }
 
-__global__ void test(U3 *out, U6 *as, U3 *bs) {
-  /*
-  N96 x = {2, 800, 16};
-  N96 y = {4, 200, 1};
-  printD(avg96(x, y));
-  printD(shr(x, 1));
-  printD(shr(y, 1));
-  */
+__global__ void test1(U3 *out, U6 *as, U3 *bs) {
+  as[0] = square(bs[0]);
+}
+
+__global__ void test2(U3 *out, U6 *as, U3 *bs) {
   U3 b = bs[0];
-  gcd(b, out, out + 1);
+  u64 n = (((u64) b.b) << 32) | b.a;  
+  as[0] = makeU6(square(n));
 }
 
 #define N 32
@@ -200,19 +223,51 @@ __managed__ U3 out[N * N];
 
 int main() {
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
-  U3 b{0x12345fff, 0x224433aa, 0x76123229};
+  U3 b{0xffffffff, 0xffffffff, 0x7fffffff};
   bs[0] = b;
-  test<<<1, 1>>>(out, as, bs);
+  test1<<<1, 1>>>(out, as, bs);
   cudaDeviceSynchronize();
 
   print(b);
-  print(out[0]);
-  print(out[1]);
+  print(as[0]);
+
+  test2<<<1, 1>>>(out, as, bs);
+  cudaDeviceSynchronize();
+  print(as[0]);
+  // print(out[1]);
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
     printf("CUDA error: %s\n", cudaGetErrorString(err));
   }
 }
+
+/*
+__device__ static U6 square(U3 x) {
+  u64 aa, bb, cc;
+  u64 xaa = (((u64)x.b) << 32) | x.a;
+  u64 xcc = x.c;
+  asm("{\n"
+      "add.u64        %2, %4, %4;"
+      "mul.lo.u64     %0, %3, %3;"
+      "mul.hi.u64     %1, %3, %3;"
+      "mad.lo.cc.u64  %1, %3, %2, %1;"
+      "mulc.hi.cc.u64 %2, %3, %2;"
+      "madc.lo.u64    %2, %4, %4, %2;"
+      "\n}"
+      : "=l"(aa), "=l"(bb), "=l"(cc)
+      : "l"(xaa), "l"(xcc));
+  return {aa, aa >> 32, bb, bb >> 32, cc, cc >> 32};        
+}
+*/
+
+/*
+__device__ static N96 add(N96 a, N96 b) {
+  unsigned d0 = add_cc(a.d0, b.d0);
+  unsigned d1 = addc_cc(a.d1, b.d1);
+  unsigned d2 = addc(a.d2, b.d2);
+  return {d0, d1, d2};
+}
+*/
 
   /*
   u64 u, v;
