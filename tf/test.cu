@@ -235,25 +235,24 @@ __device__ static U3 shr(U3 x, int n) {
 
 // 3W = 6W % 3W; y >= 2**95
 __device__ static U3 mod(U6 x, U3 y, unsigned R) {
-  // print(x); print(y); printf("R %x\n", R);
-  
-  assert(y.c & 0x80000000);
+  // print(x); print(y); printf("R %x\n", R);  
+  assert(y.c >> 29 == 1);
 
   unsigned n;
   n = mulhi(x.f, R);
-  x = subshl(x, shl2w(mul(y, n)), 1);
+  x = subshl(x, shl2w(mul(y, n)), 3);
   print(x);
   assert(!(x.f & 0xfffffff0));
   n = mulhi(shl(x.e, x.f, 28), R);
-  x = subshl(x, shl1w(mul(y, n)), 5);
+  x = subshl(x, shl1w(mul(y, n)), 7);
   print(x);
   assert(!x.f && !(x.e & 0xffffff00));
   n = mulhi(shl(x.d, x.e, 24), R);
-  x = subshl(x, makeU6(mul(y, n)), 9);
+  x = subshl(x, makeU6(mul(y, n)), 11);
   print(x);
   assert(!x.f && !x.e && !(x.d & 0xfffff000));
   n = mulhi(shl(x.c, x.d, 20), R) >> 17;
-  x = sub(x, makeU6(mul(shr(y, 2), n)));
+  x = sub(x, makeU6(mul(y, n)));
   assert(!x.f && !x.e && !x.d);  
   return {x.a, x.b, x.c};
 }
@@ -261,14 +260,14 @@ __device__ static U3 mod(U6 x, U3 y, unsigned R) {
 // y > 2**64 && y < 2**94
 __device__ static U3 mod(U6 x, U3 y) {
   assert(y.c);
-  int shift = __clz(y.c);
-  assert(shift >= 2);
-  assert(__clz(x.f) >= shift - 2);
-  x = shl(x, shift - 2);
+  int shift = __clz(y.c) - 2;
+  assert(shift >= 0);
+  assert(__clz(x.f) >= shift);
+  x = shl(x, shift);
   y = shl(y, shift);
   
-  unsigned R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(y.b, y.c, 1)) + 1);  
-  return shr(mod(x, y, R), shift - 2);
+  unsigned R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(y.b, y.c, 3)) + 1);  
+  return shr(mod(x, y, R), shift);
 }
 
 // Compute mp0 such that: (unsigned) (m * mp0) == 0xffffffff; based on Extended Euclidian Algorithm.
