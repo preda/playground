@@ -1,3 +1,5 @@
+// Copyright (c) Mihai Preda, 2015.
+
 #include <cuda.h>
 #include <stdio.h>
 #include <assert.h>
@@ -10,8 +12,31 @@ struct U3 { unsigned a, b, c; };
 struct U4 { unsigned a, b, c, d; };
 struct U6 { unsigned a, b, c, d, e, f; };
 
+#define __both__ __device__ __host__
+
+static __both__ void print(U3 a) {
+  printf("0x%08x%08x%08x\n", a.c, a.b, a.a);
+}
+
+static __both__ void print(U6 a) {
+  printf("0x%08x%08x%08x'%08x%08x%08x\n", a.f, a.e, a.d, a.c, a.b, a.a);
+}
+
+/*
+__device__ static void printD(U3 a) {
+  print(a);
+}
+
+__device__ static void printD(U6 a) {
+  print(a);
+}
+*/
+
+// --- MUL ---
+
 __device__ static unsigned mul(unsigned a, unsigned b) { return a * b; }
 
+/*
 __device__ static unsigned madhi_cc(unsigned a, unsigned b, unsigned c) {
   unsigned r;
   asm("mad.hi.cc.u32 %0, %1, %2, %3;" : "=r"(r) : "r"(a), "r"(b), "r"(c));
@@ -29,6 +54,9 @@ __device__ static unsigned madhic_cc(unsigned a, unsigned b, unsigned c) {
   asm("madc.hi.cc.u32 %0, %1, %2, %3;" : "=r"(r) : "r"(a), "r"(b), "r"(c));
   return r;
 }
+*/
+
+// --- ADD / SUB ---
 
 __device__ static unsigned add_cc(unsigned a, unsigned b) {
   unsigned r;
@@ -66,6 +94,9 @@ __device__ static unsigned subc_cc(unsigned a, unsigned b) {
   return r;
 }
 
+
+// --- Shift ---
+
 __device__ static unsigned shl(unsigned a, unsigned b, int n) {
   unsigned r;
   asm("shf.l.wrap.b32 %0, %1, %2, %3;" : "=r"(r) : "r"(a), "r"(b), "r"(n));
@@ -78,12 +109,38 @@ __device__ static unsigned shr(unsigned a, unsigned b, int n) {
   return r;
 }
 
-__device__ static U4 mul(U3 v, unsigned n) {
-  unsigned a =         mul(n, v.a);
-  unsigned b =  add_cc(mulhi(n, v.a), mul(n, v.b));
-  unsigned c = addc_cc(mulhi(n, v.b), mul(n, v.c));
-  unsigned d =    addc(mulhi(n, v.c), 0);
-  return {a, b, c, d};
+
+// --- Multiprecision ---
+
+
+__device__ static U3 add(U3 x, U3 y) {
+  unsigned a =  add_cc(x.a, y.a);
+  unsigned b = addc_cc(x.b, y.b);
+  unsigned c = addc_cc(x.c, y.c);
+  assert(!addc(0, 0));
+  return {a, b, c};
+}
+
+__device__ static U6 add(U6 x, U6 y) {
+  unsigned a =  add_cc(x.a, y.a);
+  unsigned b = addc_cc(x.b, y.b);
+  unsigned c = addc_cc(x.c, y.c);
+  unsigned d = addc_cc(x.d, y.d);
+  unsigned e = addc_cc(x.e, y.e);
+  unsigned f = addc_cc(x.f, y.f);
+  assert(!addc(0, 0));
+  return {a, b, c, d, e, f};
+}
+
+__device__ static U6 sub(U6 x, U6 y) {
+  unsigned a =  sub_cc(x.a, y.a);
+  unsigned b = subc_cc(x.b, y.b);
+  unsigned c = subc_cc(x.c, y.c);
+  unsigned d = subc_cc(x.d, y.d);
+  unsigned e = subc_cc(x.e, y.e);
+  unsigned f = subc_cc(x.f, y.f);
+  assert(!subc(0, 0));
+  return {a, b, c, d, e, f};
 }
 
 __device__ static U6 subshl(U6 x, U6 y, int n) {
@@ -96,72 +153,35 @@ __device__ static U6 subshl(U6 x, U6 y, int n) {
   return {a, b, c, d, e, f};
 }
 
-__device__ static U6 shl2w(U4 x)  { return {0, 0, x.a, x.b, x.c, x.d}; }
-__device__ static U6 shl1w(U4 x)  { return {0, x.a, x.b, x.c, x.d, 0}; }
-__device__ static U6 makeU6(U4 x) { return {x.a, x.b, x.c, x.d, 0, 0}; }
+__device__ static U4 mul(U3 v, unsigned n) {
+  unsigned a =         mul(n, v.a);
+  unsigned b =  add_cc(mulhi(n, v.a), mul(n, v.b));
+  unsigned c = addc_cc(mulhi(n, v.b), mul(n, v.c));
+  unsigned d =    addc(mulhi(n, v.c), 0);
+  return {a, b, c, d};
 
-__device__ static U3 shl(U3 x, int n) {
-  return {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n)};
+  /* equivalent alternative:
+  out[0] = mul(n, d0);
+  out[1] = madhi_cc(n, d0, mul(n, d1));
+  out[2] = madhic_cc(n, d1, mul(n, d2));
+  out[3] = mulhic(n, d2);
+  */
 }
 
-__device__ static U6 shl(U6 x, int n) {
-  return {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n), shl(x.c, x.d, n), shl(x.d, x.e, n), shl(x.e, x.f, n)};
-}
-
-__device__ static U3 shr(U3 x, int n) {
-  return {shr(x.a, x.b, n), shr(x.b, x.c, n), x.c >> n};
-}
-
-// 3W = 6W % 3W; y >= 2**95
-__device__ static U3 modAux(U6 x, U3 y) {
-  assert(y.c & 0x80000000);
-  const u64 R64 = 0xffffffffffffffffULL / ((0x100000000ULL | shl(y.b, y.c, 1)) + 1);
-  assert((R64 >> 32) == 0);
-  const unsigned R = (unsigned) R64;
-  
-  x = subshl(x, shl2w(mul(y, mulhi(x.f, R))), 1);
-  assert((x.f & 0xfffffff0) == 0);
-  x = subshl(x, shl1w(mul(y, mulhi(shl(x.e, x.f, 28), R))), 5);
-  assert(x.f == 0 && (x.e & 0xffffff00) == 0);
-  x = subshl(x, makeU6(mul(y, mulhi(shl(x.d, x.e, 24), R))), 9);
-  assert(x.f == 0 && x.e == 0 && (x.d & 0xfffff000) == 0);
-  x = subshl(x, makeU6(mul(y, mulhi(shl(x.c, x.d, 20), R) >> 19)), 0);
-  assert(x.f == 0 && x.e == 0 && x.d == 0);
-  
-  return {x.a, x.b, x.c};
-}
-
-// y > 2**64
-__device__ static U3 mod(U6 x, U3 y) {
-  assert(y.c);
-  int shift = __clz(y.c);
-  assert(__clz(x.f) >= shift);
-  return shr(modAux(shl(x, shift), shl(y, shift)), shift);
-}
-
-__device__ static U3 avg(U3 x, U3 y) {
-  unsigned a =  add_cc(x.a, y.a);
-  unsigned b = addc_cc(x.b, y.b);
-  unsigned c = addc_cc(x.c, y.c);
-  unsigned d = addc(0, 0);
-  return {shr(a, b, 1), shr(b, c, 1), shr(c, d, 1)};
-}
-
-// find u, v such that (u << 96) - v * b == 1
-__device__ static void gcd(U3 b, U3 *pu, U3 *pv) {
-  U3 u{1, 0, 0};
-  U3 v{0, 0, 0};
-  for (int i = 96; i; --i) {
-    v = shr(v, 1);
-    if (u.a & 1) {
-      u = avg(u, b);
-      v.c |= 0x80000000;
-    } else {
-      u = shr(u, 1);
-    }
-  }
-  *pu = u;
-  *pv = v;
+__device__ static U3 mul_lo(U3 x, U3 y) {
+  unsigned a, b, c;
+  asm("{\n"
+      "mul.lo.u32    %0, %3, %6;\n"
+      "mul.hi.u32    %1, %3, %6;\n"
+      "mad.lo.cc.u32 %1, %3, %7, %1;\n"
+      "mul.lo.u32    %2, %3, %8;\n"
+      "madc.hi.u32   %2, %3, %7, %2;\n"
+      "mad.lo.cc.u32 %1, %4, %6, %1;\n"
+      "madc.hi.u32   %2, %4, %6, %2;\n"
+      "mad.lo.u32    %2, %4, %7, %2;\n"
+      "mad.lo.u32    %2, %5, %6, %2;\n"
+      "}\n" : "=r"(a), "=r"(b), "=r"(c) : "r"(x.a), "r"(x.b), "r"(x.c), "r"(y.a), "r"(y.b), "r"(y.c));
+  return {a, b, c};
 }
 
 // Inspired my mfaktc's square96 implem.
@@ -180,7 +200,7 @@ __device__ static U6 square(U3 x) {
       "madc.lo.cc.u32  %2, %7, %7, %2; \n"  // (d1 * d1).lo
       "madc.lo.cc.u32  %3, %7, %5, %3; \n"  // 2 * (a.d1 * a.d2).lo
       "addc.u32        %4, %4, 0;      \n"  // %4 <= 0xFFFFFFFB => not carry to %5 needed
-      "mad.lo.cc.u32   %2, %6, a2, %2; \n"  // 2 * (d0 * d2).lo
+      "mad.lo.cc.u32   %2, %6, %5, %2; \n"  // 2 * (d0 * d2).lo
       "madc.hi.cc.u32  %3, %6, %5, %3; \n"  // 2 * (d0 * d2).hi
       "madc.hi.cc.u32  %4, %7, %5, %4; \n"  // 2 * (d1 * d2).hi
       "madc.hi.u32     %5, %8, %8, 0;  \n"  // (d2 * d2).hi
@@ -188,31 +208,174 @@ __device__ static U6 square(U3 x) {
   return {a, b, c, d, e, f};
 }
 
-__device__ static U4 square(u64 a) {
-  u128 r = a * a;
-  return {r, r >> 32, r >> 64, r >> 96};
+
+__device__ static U6 shl1w(U4 x)  { return {0, x.a, x.b, x.c, x.d, 0}; }
+__device__ static U6 shl2w(U4 x)  { return {0, 0, x.a, x.b, x.c, x.d}; }
+__device__ static U6 shl3w(U3 x)  { return {0, 0, 0, x.a, x.b, x.c}; }
+__device__ static U3 shr1w(U4 x)  { return {x.b, x.c, x.d}; }
+__device__ static U6 makeU6(U3 x) { return {x.a, x.b, x.c, 0, 0, 0}; }
+__device__ static U6 makeU6(U4 x) { return {x.a, x.b, x.c, x.d, 0, 0}; }
+
+
+__device__ static U3 shl(U3 x, int n) {
+  return {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n)};
 }
 
-static void print(U3 a) {
-  printf("0x%08x%08x%08x\n", a.c, a.b, a.a);
+__device__ static U6 shl(U6 x, int n) {
+  return {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n), shl(x.c, x.d, n), shl(x.d, x.e, n), shl(x.e, x.f, n)};
 }
 
-static void print(U6 a) {
-  printf("0x%08x%08x%08x'%08x%08x%08x\n", a.f, a.e, a.d, a.c, a.b, a.a);
+__device__ static U3 shr(U3 x, int n) {
+  return {shr(x.a, x.b, n), shr(x.b, x.c, n), x.c >> n};
 }
 
-__device__ static void printD(U3 a) {
-  printf("0x%08x%08x%08x\n", a.c, a.b, a.a);
+/*
+__device__ static U3 avg(U3 x, U3 y) {
+  U4 z = x + y;
+  return {shr(a, b, 1), shr(b, c, 1), shr(c, d, 1)};
+}
+*/
+
+
+// --- MOD ---
+
+
+// 3W = 6W % 3W; y >= 2**95
+__device__ static U3 mod(U6 x, U3 y, unsigned R) {
+  print(x);
+  print(y);
+  printf("R %x\n", R);
+  
+  assert(y.c & 0x80000000);
+  
+  x = subshl(x, shl2w(mul(y, mulhi(x.f, R))), 1);
+  print(x);
+  assert((x.f & 0xfffffff0) == 0);
+  x = subshl(x, shl1w(mul(y, mulhi(shl(x.e, x.f, 28), R))), 5);
+  print(x);
+  assert(x.f == 0 && (x.e & 0xffffff00) == 0);
+  x = subshl(x, makeU6(mul(y, mulhi(shl(x.d, x.e, 24), R))), 9);
+  print(x);
+  assert(x.f == 0 && x.e == 0 && (x.d & 0xfffff000) == 0);
+  unsigned q = mulhi(shl(x.c, x.d, 20), R) >> 19;
+  U6 yq = makeU6(mul(y, q));
+  print(yq);
+  printf("q %x\n", q);
+  x = sub(x, yq);
+  print(x);
+  // printf("%x %x %x\n", x.d, x.e, x.f);
+  assert(!x.f && !x.e && !x.d);
+  
+  return {x.a, x.b, x.c};
 }
 
-__global__ void test1(U3 *out, U6 *as, U3 *bs) {
-  as[0] = square(bs[0]);
+// y > 2**64
+__device__ static U3 mod(U6 x, U3 y) {
+  assert(y.c);
+  int shift = __clz(y.c);
+  assert(__clz(x.f) >= shift);
+  x = shl(x, shift);
+  y = shl(y, shift);
+  
+  unsigned R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(y.b, y.c, 1)) + 1);  
+  return shr(mod(x, y, R), shift);
 }
 
-__global__ void test2(U3 *out, U6 *as, U3 *bs) {
-  U3 b = bs[0];
-  u64 n = (((u64) b.b) << 32) | b.a;  
-  as[0] = makeU6(square(n));
+// find mp such that (mp * m) mod 2^96 = 2^96 - 1
+__device__ static U3 mprime(U3 m) {
+  U3 u{1, 0, 0};
+  U3 v{0, 0, 0};
+  m = add(shr(m, 1), (U3){1, 0, 0});
+  
+  for (int i = 96; i; --i) {
+    bool odd = u.a & 1;
+    u = shr(u, 1);
+    v = shr(v, 1);
+    if (odd) {
+      u = add(u, m);
+      v.c |= 0x80000000;
+    }
+  }
+  return v;
+}
+
+__device__ static unsigned mprime0(U3 m) {
+  unsigned u = 1;
+  unsigned v = 0;
+  unsigned m0 = shr(m.a, m.b, 1);
+  m0 += 1;
+  for (int i = 32; i; --i) {
+    bool odd = u & 1;
+    u >>= 1;
+    v >>= 1;
+    if (odd) {
+      u += m0;
+      v |= 0x80000000;
+    }
+  }
+  return v;
+}
+
+/*
+// find u, v such that (u << 96) - v * b == 1
+__device__ static void gcd(U3 b, U3 *pu, U3 *pv) {
+  U3 u{1, 0, 0};
+  U3 v{0, 0, 0};
+  for (int i = 96; i; --i) {
+    v = shr(v, 1);
+    if (u.a & 1) {
+      u = avg(u, b);
+      v.c |= 0x80000000;
+    } else {
+      u = shr(u, 1);
+    }
+  }
+  *pu = u;
+  *pv = v;
+}
+*/
+
+// Montgomery Reduction
+// See https://www.cosic.esat.kuleuven.be/publications/article-144.pdf
+// Returns x * U^-1 mod m
+__device__ static U3 montRed(U6 x, U3 m, unsigned mp0) {
+  unsigned t = x.a * mp0;
+  U4 f = mul(m, t);
+  x = add(x, makeU6(f));
+  assert(!x.a);
+  t = x.b * mp0;
+  f = mul(m, t);
+  x = add(x, shl1w(f));
+  assert(!x.b);
+  t = x.c * mp0;
+  f = mul(m, t);
+  x = add(x, shl2w(f));
+  assert(!x.a && !x.b && !x.c);
+  return {x.d, x.e, x.f};
+}
+
+__global__ void test1() {
+  U3 m = {0xffffffff, 0xffffffff, 0xffffffff};
+  unsigned mp = mprime0(m);
+  // U3 u = mod((U6){0, 0, 0, 1, 0, 0}, m);
+
+  U3 aa = {42, 0, 0};
+  U3 a = mod(shl3w(aa), m);
+  U6 a2 = square(a);
+  U3 c = montRed(a2, m, mp);
+  U3 cc = montRed(makeU6(c), m, mp); 
+  print(a);
+  print(c);
+  print(cc);
+  
+  /*
+  U3 mp = mprime(m);
+  unsigned mp0 = mprime0(m);
+  printD(m);
+  printD(mp);
+  printD(mul_lo(m, mp));
+  printf("%08x %08x\n", mp0, mp0 * m.a);
+  */
 }
 
 #define N 32
@@ -223,57 +386,22 @@ __managed__ U3 out[N * N];
 
 int main() {
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
-  U3 b{0xffffffff, 0xffffffff, 0x7fffffff};
-  bs[0] = b;
-  test1<<<1, 1>>>(out, as, bs);
+  // U3 b{0x80ffffff, 0xfffff345, 0x0};
+  test1<<<1, 1>>>();
   cudaDeviceSynchronize();
 
-  print(b);
-  print(as[0]);
-
+  // print(b);
+  // print(as[0]);
+  /*
   test2<<<1, 1>>>(out, as, bs);
   cudaDeviceSynchronize();
   print(as[0]);
-  // print(out[1]);
+  */
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
     printf("CUDA error: %s\n", cudaGetErrorString(err));
   }
 }
-
-/*
-__device__ static U6 square(U3 x) {
-  u64 aa, bb, cc;
-  u64 xaa = (((u64)x.b) << 32) | x.a;
-  u64 xcc = x.c;
-  asm("{\n"
-      "add.u64        %2, %4, %4;"
-      "mul.lo.u64     %0, %3, %3;"
-      "mul.hi.u64     %1, %3, %3;"
-      "mad.lo.cc.u64  %1, %3, %2, %1;"
-      "mulc.hi.cc.u64 %2, %3, %2;"
-      "madc.lo.u64    %2, %4, %4, %2;"
-      "\n}"
-      : "=l"(aa), "=l"(bb), "=l"(cc)
-      : "l"(xaa), "l"(xcc));
-  return {aa, aa >> 32, bb, bb >> 32, cc, cc >> 32};        
-}
-*/
-
-/*
-__device__ static N96 add(N96 a, N96 b) {
-  unsigned d0 = add_cc(a.d0, b.d0);
-  unsigned d1 = addc_cc(a.d1, b.d1);
-  unsigned d2 = addc(a.d2, b.d2);
-  return {d0, d1, d2};
-}
-*/
-
-  /*
-  u64 u, v;
-  gcdHost(7, &u, &v);
-  printf("%llx %llx\n", u, v);
-  */
 
 /*
 void gcdHost(u64 b, u64 *pu, u64 *pv) {
@@ -295,15 +423,6 @@ unsigned random32() {
   return (((unsigned)random()) << 1) | (random() & 1);
 }
 
-N96 random96() {
-  N96 ret = {random32(), random32(), random32()};
-  return ret;
-}
-
-N192 random192() {
-  N192 ret = {random32(), random32(), random32(), random32(), random32(), random32()};
-  return ret;
-}
 */
 
   /*
@@ -329,54 +448,3 @@ N192 random192() {
   dim3 blockDim(N, N);
   */
 
-/*
-__global__ void testMul2(unsigned *out, unsigned d0, unsigned d1, unsigned d2, unsigned n) {
-  unsigned r;
-  asm("shf.l.wrap.b32 %0, %1, %2, %3;" : "=r"(r) : "r"(d0), "r"(d1), "r"(n));
-  *out = r;
-  // int id = threadIdx.x;
-  // mul96a(out, d0, d1, d2, n);
-  // printf("%u: %x %x %x %x\n", n, r[0], r[1], r[2], r[3]);
-}
-*/
-
-/*
-// 6W = 6W - 6W
-__device__ static void sub192(unsigned *out, unsigned *a, unsigned *b) {
-  out[0] = sub_cc(a[0], b[0]);
-  out[1] = subc_cc(a[1], b[1]);
-  out[2] = subc_cc(a[2], b[2]);
-  out[3] = subc_cc(a[3], b[3]);
-  out[4] = subc_cc(a[4], b[4]);
-  out[5] = subc(a[5], b[5]);
-}
-*/
-
-/*
-__device__ static void mul96a(unsigned *out, unsigned d0, unsigned d1, unsigned d2, unsigned n) {
-  out[0] = mul(n, d0);
-  out[1] = madhi_cc(n, d0, mul(n, d1));
-  out[2] = madhic_cc(n, d1, mul(n, d2));
-  out[3] = mulhic(n, d2);
-}
-*/
-
-/*
-__global__ void AAA(unsigned long long *out, unsigned long long a, unsigned long long b) {
-  *out = a * b;
-}
-
-__global__ void BBB(unsigned *out, unsigned a, unsigned b, unsigned c) {
-  unsigned r;
-  asm("madc.lo.u32 %0, %1, %2, %3;": "=r"(r): "r"(a), "r"(b), "r"(c));
-  *out = r;
-}
-*/
-
-
-// #define mul(a, b) ((a) * (b))
-  /*
-  unsigned r;
-  asm("mul.lo.u32 %0, %1, %2;" : "=r" (r) : "r" (a), "r" (b));
-  return r;
-  */
