@@ -229,111 +229,65 @@ __device__ static U3 shr(U3 x, int n) {
   return {shr(x.a, x.b, n), shr(x.b, x.c, n), x.c >> n};
 }
 
-/*
-__device__ static U3 avg(U3 x, U3 y) {
-  U4 z = x + y;
-  return {shr(a, b, 1), shr(b, c, 1), shr(c, d, 1)};
-}
-*/
-
 
 // --- MOD ---
 
 
 // 3W = 6W % 3W; y >= 2**95
 __device__ static U3 mod(U6 x, U3 y, unsigned R) {
-  print(x);
-  print(y);
-  printf("R %x\n", R);
+  // print(x); print(y); printf("R %x\n", R);
   
   assert(y.c & 0x80000000);
-  
-  x = subshl(x, shl2w(mul(y, mulhi(x.f, R))), 1);
+
+  unsigned n;
+  n = mulhi(x.f, R);
+  x = subshl(x, shl2w(mul(y, n)), 1);
   print(x);
-  assert((x.f & 0xfffffff0) == 0);
-  x = subshl(x, shl1w(mul(y, mulhi(shl(x.e, x.f, 28), R))), 5);
+  assert(!(x.f & 0xfffffff0));
+  n = mulhi(shl(x.e, x.f, 28), R);
+  x = subshl(x, shl1w(mul(y, n)), 5);
   print(x);
-  assert(x.f == 0 && (x.e & 0xffffff00) == 0);
-  x = subshl(x, makeU6(mul(y, mulhi(shl(x.d, x.e, 24), R))), 9);
+  assert(!x.f && !(x.e & 0xffffff00));
+  n = mulhi(shl(x.d, x.e, 24), R);
+  x = subshl(x, makeU6(mul(y, n)), 9);
   print(x);
-  assert(x.f == 0 && x.e == 0 && (x.d & 0xfffff000) == 0);
-  unsigned q = mulhi(shl(x.c, x.d, 20), R) >> 19;
-  U6 yq = makeU6(mul(y, q));
-  print(yq);
-  printf("q %x\n", q);
-  x = sub(x, yq);
-  print(x);
-  // printf("%x %x %x\n", x.d, x.e, x.f);
-  assert(!x.f && !x.e && !x.d);
-  
+  assert(!x.f && !x.e && !(x.d & 0xfffff000));
+  n = mulhi(shl(x.c, x.d, 20), R) >> 17;
+  x = sub(x, makeU6(mul(shr(y, 2), n)));
+  assert(!x.f && !x.e && !x.d);  
   return {x.a, x.b, x.c};
 }
 
-// y > 2**64
+// y > 2**64 && y < 2**94
 __device__ static U3 mod(U6 x, U3 y) {
   assert(y.c);
   int shift = __clz(y.c);
-  assert(__clz(x.f) >= shift);
-  x = shl(x, shift);
+  assert(shift >= 2);
+  assert(__clz(x.f) >= shift - 2);
+  x = shl(x, shift - 2);
   y = shl(y, shift);
   
   unsigned R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(y.b, y.c, 1)) + 1);  
-  return shr(mod(x, y, R), shift);
+  return shr(mod(x, y, R), shift - 2);
 }
 
-// find mp such that (mp * m) mod 2^96 = 2^96 - 1
-__device__ static U3 mprime(U3 m) {
-  U3 u{1, 0, 0};
-  U3 v{0, 0, 0};
-  m = add(shr(m, 1), (U3){1, 0, 0});
-  
-  for (int i = 96; i; --i) {
-    bool odd = u.a & 1;
-    u = shr(u, 1);
-    v = shr(v, 1);
-    if (odd) {
-      u = add(u, m);
-      v.c |= 0x80000000;
-    }
-  }
-  return v;
-}
-
+// Compute mp0 such that: (unsigned) (m * mp0) == 0xffffffff; based on Extended Euclidian Algorithm.
 __device__ static unsigned mprime0(U3 m) {
-  unsigned u = 1;
-  unsigned v = 0;
-  unsigned m0 = shr(m.a, m.b, 1);
-  m0 += 1;
-  for (int i = 32; i; --i) {
-    bool odd = u & 1;
-    u >>= 1;
-    v >>= 1;
-    if (odd) {
-      u += m0;
-      v |= 0x80000000;
-    }
+  unsigned m0 = shr(m.a, m.b, 1) + 1;
+  unsigned u = m0;
+  unsigned v = 0x80000000;
+  #pragma unroll
+  for (int i = 31; i; --i) {
+    unsigned bit = u & 1;
+    v = shr(v, bit, 1);
+    u = (u >> 1) + bit * m0;
+    /* Alternative using branch:
+       u >>= 1;
+       if (bit) { u += m0; }
+    */
   }
   return v;
 }
-
-/*
-// find u, v such that (u << 96) - v * b == 1
-__device__ static void gcd(U3 b, U3 *pu, U3 *pv) {
-  U3 u{1, 0, 0};
-  U3 v{0, 0, 0};
-  for (int i = 96; i; --i) {
-    v = shr(v, 1);
-    if (u.a & 1) {
-      u = avg(u, b);
-      v.c |= 0x80000000;
-    } else {
-      u = shr(u, 1);
-    }
-  }
-  *pu = u;
-  *pv = v;
-}
-*/
 
 // Montgomery Reduction
 // See https://www.cosic.esat.kuleuven.be/publications/article-144.pdf
@@ -355,7 +309,7 @@ __device__ static U3 montRed(U6 x, U3 m, unsigned mp0) {
 }
 
 __global__ void test1() {
-  U3 m = {0xffffffff, 0xffffffff, 0xffffffff};
+  U3 m = {0xffffffff, 0xffffffff, 0x3fffffff};
   unsigned mp = mprime0(m);
   // U3 u = mod((U6){0, 0, 0, 1, 0, 0}, m);
 
@@ -363,10 +317,11 @@ __global__ void test1() {
   U3 a = mod(shl3w(aa), m);
   U6 a2 = square(a);
   U3 c = montRed(a2, m, mp);
-  U3 cc = montRed(makeU6(c), m, mp); 
-  print(a);
-  print(c);
-  print(cc);
+  c = montRed(makeU6(c), m, mp); 
+  assert(c.a == aa.a * aa.a);
+  // print(a);
+  // print(c);
+  // print(cc);
   
   /*
   U3 mp = mprime(m);
@@ -389,19 +344,48 @@ int main() {
   // U3 b{0x80ffffff, 0xfffff345, 0x0};
   test1<<<1, 1>>>();
   cudaDeviceSynchronize();
-
-  // print(b);
-  // print(as[0]);
-  /*
-  test2<<<1, 1>>>(out, as, bs);
-  cudaDeviceSynchronize();
-  print(as[0]);
-  */
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
     printf("CUDA error: %s\n", cudaGetErrorString(err));
   }
 }
+
+/*
+// find u, v such that (u << 96) - v * b == 1
+__device__ static void gcd(U3 b, U3 *pu, U3 *pv) {
+  U3 u{1, 0, 0};
+  U3 v{0, 0, 0};
+  for (int i = 96; i; --i) {
+    v = shr(v, 1);
+    if (u.a & 1) {
+      u = avg(u, b);
+      v.c |= 0x80000000;
+    } else {
+      u = shr(u, 1);
+    }
+  }
+  *pu = u;
+  *pv = v;
+}
+
+// find mp such that (mp * m) mod 2^96 = 2^96 - 1
+__device__ static U3 mprime(U3 m) {
+  U3 u{1, 0, 0};
+  U3 v{0, 0, 0};
+  m = add(shr(m, 1), (U3){1, 0, 0});
+  
+  for (int i = 96; i; --i) {
+    bool odd = u.a & 1;
+    u = shr(u, 1);
+    v = shr(v, 1);
+    if (odd) {
+      u = add(u, m);
+      v.c |= 0x80000000;
+    }
+  }
+  return v;
+}
+*/
 
 /*
 void gcdHost(u64 b, u64 *pu, u64 *pv) {
