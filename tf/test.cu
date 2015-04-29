@@ -241,15 +241,12 @@ __device__ static U3 mod(U6 x, U3 y, unsigned R) {
   unsigned n;
   n = mulhi(x.f, R);
   x = subshl(x, shl2w(mul(y, n)), 3);
-  print(x);
   assert(!(x.f & 0xfffffff0));
   n = mulhi(shl(x.e, x.f, 28), R);
   x = subshl(x, shl1w(mul(y, n)), 7);
-  print(x);
   assert(!x.f && !(x.e & 0xffffff00));
   n = mulhi(shl(x.d, x.e, 24), R);
   x = subshl(x, makeU6(mul(y, n)), 11);
-  print(x);
   assert(!x.f && !x.e && !(x.d & 0xfffff000));
   n = mulhi(shl(x.c, x.d, 20), R) >> 17;
   x = sub(x, makeU6(mul(y, n)));
@@ -290,7 +287,7 @@ __device__ static unsigned mprime0(U3 m) {
 
 // Montgomery Reduction
 // See https://www.cosic.esat.kuleuven.be/publications/article-144.pdf
-// Returns x * U^-1 mod m
+// Returns x * U**-1 mod m
 __device__ static U3 montRed(U6 x, U3 m, unsigned mp0) {
   unsigned t = x.a * mp0;
   U4 f = mul(m, t);
@@ -308,28 +305,19 @@ __device__ static U3 montRed(U6 x, U3 m, unsigned mp0) {
 }
 
 __global__ void test1() {
-  U3 m = {0xffffffff, 0xffffffff, 0x3fffffff};
+  // U3 m = {0xffffffff, 0xffffffff, 0x3fffffff};
+  U3 m = {0xabcd0011, 0x00001200, 0x20000000};
   unsigned mp = mprime0(m);
   // U3 u = mod((U6){0, 0, 0, 1, 0, 0}, m);
 
   U3 aa = {42, 0, 0};
   U3 a = mod(shl3w(aa), m);
+  a = add(a, m);
   U6 a2 = square(a);
   U3 c = montRed(a2, m, mp);
   c = montRed(makeU6(c), m, mp); 
   assert(c.a == aa.a * aa.a);
-  // print(a);
-  // print(c);
-  // print(cc);
-  
-  /*
-  U3 mp = mprime(m);
-  unsigned mp0 = mprime0(m);
-  printD(m);
-  printD(mp);
-  printD(mul_lo(m, mp));
-  printf("%08x %08x\n", mp0, mp0 * m.a);
-  */
+  print(a);
 }
 
 #define N 32
