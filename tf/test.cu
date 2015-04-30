@@ -20,9 +20,15 @@ static __both__ void print(U3 a) {
   printf("0x%08x%08x%08x\n", a.c, a.b, a.a);
 }
 
-static __both__ void print(U6 a) {
-  printf("0x%08x%08x%08x'%08x%08x%08x\n", a.f, a.e, a.d, a.c, a.b, a.a);
+static __both__ void print(U4 a) {
+  printf("0x%08x%08x%08x%08x\n", a.d, a.c, a.b, a.a);
 }
+
+static __both__ void print(U6 a) {
+  printf("0x%08x%08x%08x%08x%08x%08x\n", a.f, a.e, a.d, a.c, a.b, a.a);
+}
+
+// #define print(x)
 
 // --- Shift ---
 
@@ -53,13 +59,33 @@ __device__ static U6 add(U6 x, U6 y) {
       : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e), "=r"(f), "=r"(carryOut)
       : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(x.e), "r"(x.f),
         "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d), "r"(y.e), "r"(y.f));
-  // assert(!carryOut);
+  assert(!carryOut);
   return {a, b, c, d, e, f};
+}
+
+__device__ static U4 sub(U4 x, U4 y) {
+  unsigned a, b, c, d, carryOut;
+  asm("sub.cc.u32  %0, %5,  %9;"
+      "subc.cc.u32 %1, %6,  %10;"
+      "subc.cc.u32 %2, %7,  %11;"
+      "subc.cc.u32 %3, %8,  %12;"
+      "subc.u32    %4, 0, 0;"
+      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(carryOut)
+      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d),
+        "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d));
+  assert(!carryOut);
+  return {a, b, c, d};
+}
+
+__device__ static U6 subShl2w(U6 x, U4 y) {
+  U4 r = sub((U4){x.c, x.d, x.e, x.f}, y);
+  return {x.a, x.b, r.a, r.b, r.c, r.d};
 }
 
 __device__ static U6 sub(U6 x, U6 y) {
   unsigned a, b, c, d, e, f, carryOut;
-  asm("sub.cc.u32  %0, %7,  %13;"
+  asm("sub.cc.u32  %0, 1, 0;"
+      "sub.cc.u32  %0, %7,  %13;"
       "subc.cc.u32 %1, %8,  %14;"
       "subc.cc.u32 %2, %9,  %15;"
       "subc.cc.u32 %3, %10, %16;"
@@ -69,7 +95,7 @@ __device__ static U6 sub(U6 x, U6 y) {
       : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e), "=r"(f), "=r"(carryOut)
       : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(x.e), "r"(x.f),
         "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d), "r"(y.e), "r"(y.f));
-  // assert(!carryOut);
+  assert(!carryOut);
   return {a, b, c, d, e, f};
 }
 
@@ -107,9 +133,9 @@ __device__ static U6 square(U3 x) {
       "madc.hi.u32     %5, %8, %8, 0;"   // (d2 * d2).hi
       : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e), "=r"(f)
       : "r"(x.a), "r"(x.b), "r"(x.c));
-  return {a, b, c, d, e, f};
+  U6 r{a, b, c, d, e, f};
+  return r;
 }
-
 
 __device__ static U6 shl1w(U4 x)  { return {0, x.a, x.b, x.c, x.d, 0}; }
 __device__ static U6 shl2w(U4 x)  { return {0, 0, x.a, x.b, x.c, x.d}; }
@@ -117,53 +143,54 @@ __device__ static U6 makeU6(U4 x) { return {x.a, x.b, x.c, x.d, 0, 0}; }
 __device__ static U4 makeU4(U3 x) { return {x.a, x.b, x.c, 0}; }
 
 __device__ static U3 shl(U3 x, int n) {
-  // assert(n >= 0 && n < 32 && !(x.c >> (32 - n)));
+  assert(n >= 0 && n < 32 && !(x.c >> (32 - n)));
   return {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n)};
 }
 
 __device__ static U4 shl(U4 x, int n) {
-  // assert(n >= 0 && n < 32 && !(x.d >> (32 - n)));
+  assert(n >= 0 && n < 32 && !(x.d >> (32 - n)));
   return {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n), shl(x.c, x.d, n)};
 }
 
 __device__ static U6 shl(U6 x, int n) {
-  // assert(n >= 0 && n < 32 && !(x.f >> (32 - n)));
+  assert(n >= 0 && n < 32 && !(x.f >> (32 - n)));
   return {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n), shl(x.c, x.d, n), shl(x.d, x.e, n), shl(x.e, x.f, n)};
 }
 
 __device__ static U3 shr(U3 x, int n) {
-  // assert(n >= 0 && n < 32 && !(x.a << (32 - n)));
+  assert(n >= 0 && n < 32 && !(x.a << (32 - n)));
   return {shr(x.a, x.b, n), shr(x.b, x.c, n), x.c >> n};
 }
 
-
-// --- MOD ---
-
-
-// y >= 2^93 && y < 2^94.
-__device__ static U3 modFlushed(U6 x, U3 y, unsigned R) {
-  // print(x); print(y); printf("R %x\n", R);  
-  assert((y.c >> 29) == 1);
-
+// m >= 2^93 && m < 2^94.
+__device__ __noinline__ U3 mod(U6 x, U3 m, int shift, unsigned R) {
   unsigned n;
+  
+  assert((m.c >> 29) == 1);
+  x = shl(x, shift);
   n = mulhi(x.f, R);
-  x = sub(x, shl2w(shl(mul(y, n), 3)));
-  // assert(!(x.f & 0xfffffff0));
+  /*
+  print(x);
+  U4 tmp2 = shl(mul(m, n), 3);
+  print(tmp2);
+  x = subShl2w(x, tmp2);
+  */
+  U6 tmp = shl2w(shl(mul(m, n), 3));
+  print(tmp);
+  x = sub(x, tmp);
+  print(x);
+  assert(!(x.f & 0xfffffff0));
   n = mulhi(shl(x.e, x.f, 28), R);
-  x = sub(x, shl(shl1w(mul(y, n)), 7));
-  // assert(!x.f && !(x.e & 0xffffff00));
+  x = sub(x, shl(shl1w(mul(m, n)), 7));
+  assert(!x.f && !(x.e & 0xffffff00));
   n = mulhi(shl(x.d, x.e, 24), R);
-  x = sub(x, shl(makeU6(mul(y, n)), 11));
-  // assert(!x.f && !x.e && !(x.d & 0xfffff000));
+  x = sub(x, shl(makeU6(mul(m, n)), 11));
+  assert(!x.f && !x.e && !(x.d & 0xfffff000));
   n = mulhi(shl(x.c, x.d, 20), R) >> 17;
-  x = sub(x, makeU6(mul(y, n)));
-  // assert(!x.f && !x.e && !x.d);  
-  return {x.a, x.b, x.c};
-}
-
-// y > 2**64 && y < 2**94
-__device__ static U3 mod(U6 x, U3 flushedM, int shift, unsigned R) {
-  return shr(modFlushed(shl(x, shift), flushedM, R), shift);
+  x = sub(x, makeU6(mul(m, n)));
+  assert(!x.f && !x.e && !x.d);  
+  U3 r{x.a, x.b, x.c};  
+  return shr(r, shift);
 }
 
 // Compute mp0 such that: (unsigned) (m * mp0) == 0xffffffff; using variant extended euclidian algorithm.
@@ -195,7 +222,8 @@ __device__ static U3 montRed(U6 x, U3 m, unsigned mp0) {
   f = mul(m, t);
   x = add(x, shl2w(f));
   assert(!x.a && !x.b && !x.c);
-  return {x.d, x.e, x.f};
+  U3 r{x.d, x.e, x.f};
+  return r;
 }
 
 // return a**32 in montgomery space modulo m.
@@ -235,9 +263,7 @@ __device__ static bool hasFactor(unsigned p, U3 m) {
   
   a = power32(a, m, mp0);
   a = montRed(makeU6(shl(makeU4(a), p >> 27)), m, mp0);
-  // assert(less(a, m));
-  print(a);
-  print(m);
+  assert(less(a, m));
   return a.a == 1 && !a.b && !a.c;
 }
 
@@ -257,9 +283,10 @@ int main() {
   U3 m{0xf817da27, 0x65e1be70, 0x0000009d};
   test1<<<1, 1>>>(out2, 119129573, m);
   cudaDeviceSynchronize();
-  printf("hasFactor %d\n", out2[0]); 
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
     printf("CUDA error: %s\n", cudaGetErrorString(err));
+  } else {
+    printf("hasFactor %d\n", out2[0]);
   }
 }
