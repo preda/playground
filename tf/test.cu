@@ -59,7 +59,8 @@ __device__ static U6 add(U6 x, U6 y) {
       "addc.u32    %6, 0, 0;"
       : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e), "=r"(f), "=r"(carryOut)
       : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(x.e), "r"(x.f),
-        "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d), "r"(y.e), "r"(y.f));
+        "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d), "r"(y.e), "r"(y.f)
+      : "cc");
   assert(!carryOut);
   return {a, b, c, d, e, f};
 }
@@ -73,7 +74,8 @@ __device__ static U4 sub(U4 x, U4 y) {
       "subc.u32    %4, 0, 0;"
       : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(carryOut)
       : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d),
-        "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d));
+        "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d)
+      : "cc");
   assert(!carryOut);
   return {a, b, c, d};
 }
@@ -88,7 +90,8 @@ __device__ static U5 sub(U5 x, U5 y) {
       "subc.u32    %5, 0, 0;"
       : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e), "=r"(carryOut)
       : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(x.e),
-        "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d), "r"(y.e));
+        "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d), "r"(y.e)
+      : "cc");
   assert(!carryOut);
   return {a, b, c, d, e};
 }
@@ -126,7 +129,8 @@ __device__ static U4 mul(U3 x, unsigned n) {
       "madc.lo.cc.u32 %2, %6, %7, %2;"
       "madc.hi.u32    %3, %6, %7, 0;"
       : "=r"(a), "=r"(b), "=r"(c), "=r"(d)
-      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(n));
+      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(n)
+      : "cc");
   return {a, b, c, d};
 }
 
@@ -166,7 +170,7 @@ __device__ static U4 makeU4(U3 x) { return {x.a, x.b, x.c, 0}; }
 
 __host__ static U3 makeU3(u128 x) {
   assert(!(unsigned) (x >> 96));
-  return { (unsigned) x, (unsigned) (x >> 32), (unsigned) (x >> 64)};
+  return (U3){ (unsigned) x, (unsigned) (x >> 32), (unsigned) (x >> 64)};
 }
 
 __device__ static U3 shl(U3 x, int n) {
@@ -203,7 +207,12 @@ __device__ static U3 shr(U3 x, int n) {
 }
 
 // m >= 2^93 && m < 2^94.
-__device__ __noinline__ U3 mod(U4 xx, U3 m, int shift, unsigned R) {
+__device__ U3 mod(U4 xx, U3 rawM) {
+  int shift = __clz(rawM.c) - 2;
+  assert(shift >= 0);
+  U3 m = shl(rawM, shift);
+  unsigned R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(m.b, m.c, 3)) + 1);
+  
   unsigned n;
   assert((m.c >> 29) == 1);
   U5 x = makeU5(xx);
@@ -266,76 +275,26 @@ __device__ static U3 montRed(U6 x, U3 m, unsigned mp0) {
   return r;
 }
 
-// return a**32 in montgomery space modulo m.
-__device__ static U3 power32(U3 a, U3 m, unsigned mp0) {
-  for (int i = 0; i < 5; ++i) {
-    a = montRed(square(a), m, mp0);
-    // print(montRed(makeU6(a), m, mp0));
-  }
-  return a;
-}
-
 // return x < y;
 __device__ static bool less(U3 x, U3 y) {
   return x.c < y.c || x.b < y.b || x.a < y.a;
 }
 
-__device__ static U3 hasFactor2(unsigned p, U3 m) {
+__device__ static U3 hasFactor(unsigned p, U3 m) {
   unsigned mp0 = mprime0(m);
-  int mShift = __clz(m.c) - 2;
-  assert(mShift >= 0);
-  U3 flushedM = shl(m, mShift);
-  unsigned R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(flushedM.b, flushedM.c, 3)) + 1);
-  U3 a = mod((U4){0, 0, 0, 1}, flushedM, mShift, R);
-  print(a);
-  for (int i = 0; i < 32; ++i) {
-    U6 a2 = square(a);
-    a = montRed(a2, m, mp0);
+
+  U3 a = mod((U4){0, 0, 0, (1 << (p >> 27))}, m);
+  for (p <<= 5; p; p += p) {
+    a = montRed(square(a), m, mp0);
     if (p & 0x80000000) { a = shl(a, 1); }
-    // printf("%2d: ", i); print(a);
-    p <<= 1;
   }
   return montRed(makeU6(a), m, mp0);
-}
-
-// Return whether m is a factor of 2^power - 1
-// power < 2^30. m >= 2**64 && m < 2^94.
-__device__ static bool hasFactor(unsigned p, U3 m) {
-  assert(!(p >> 30));
-  // Will consume p in 6 slices of 5bits each. The active slice of 5bits is flushed to the top of p.
-  p <<= 2;
-  
-  assert(m.c);
-  int mShift = __clz(m.c) - 2;
-  assert(mShift >= 0);
-  U3 flushedM = shl(m, mShift);
-  unsigned R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(flushedM.b, flushedM.c, 3)) + 1);
-
-  printf("p %d shift %d\n", (p >> 27), mShift);
-  U3 a = mod((U4) {0, 0, 0, 1 << (p >> 27)}, flushedM, mShift, R);
-  print(a);
-  unsigned mp0 = mprime0(m);
-  print(montRed(makeU6(a), m, mp0));
-  
-  p <<= 5;
-  for (int i = 0; i < 4; ++i, p <<= 5) {
-    printf("starting slice %d\n", i);
-    a = power32(a, m, mp0);
-    a = mod(shl(makeU4(a), p >> 27), flushedM, mShift, R);
-    print(a);
-    // print(montRed(makeU6(a), m, mp0));
-  }
-  
-  a = power32(a, m, mp0);
-  a = montRed(makeU6(shl(makeU4(a), p >> 27)), m, mp0);
-  assert(less(a, m));
-  return a.a == 1 && !a.b && !a.c;
 }
 
 __managed__ U3 out;
 
 __global__ void test(unsigned p, U3 m) {
-  out = hasFactor2(p, m);
+  out = hasFactor(p, m);
 }
 
 struct Test {
@@ -352,13 +311,17 @@ Test tests[] = {
 
 int main() {
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
-  for (Test t : tests) {
-    unsigned p = t.p;
-    u64 k = t.k;
+  int n = sizeof(tests) / sizeof(tests[0]);
+  for (Test *t = tests, *end = tests + n; t < end; ++t) {
+    unsigned p = t->p;
+    u64 k = t->k;
     u128 mm = (2 * p) * (u128) k + 1;
     U3 m = makeU3(mm);
     // printf("%uL\n", k);
-    print(m);
+    // print(m);
+    int shift = __builtin_clz(p);
+    assert(shift < 27);
+    p <<= shift;
     test<<<1, 1>>>(p, m);
     cudaDeviceSynchronize();
     cudaError_t err = cudaGetLastError();
