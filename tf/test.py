@@ -1,13 +1,46 @@
 from math import log
 
-k = 3089082494924
-p = 800000479
-a = 1
+#(p, k) = (800000479, 3089082494924)
+#(p, k) = (60008807, 259574105937)
+(p, k) = (3321931973, 4016423448)
+
 m = 2 * k * p + 1
 print "m %x p %x" % (m, p)
-bit = int(log(p, 2))
-U = (1 << 96) % m
 
+print '%x' % ((1 << (28 + 96)) % m) 
+
+def clz(x):
+    c = 0
+    while ((x & 0x80000000) == 0):
+        c += 1
+        x <<= 1
+    return c
+
+print clz(p)
+
+def mod(x, rawM):
+    print "%x %x"%(x, rawM)
+    shift = clz(rawM >> 64) - 2
+    m = rawM << shift
+    R = ((1 << 64) - 1) / ((m >> 61) + 1)
+    x <<= shift
+    n = (x >> 128) * R >> 32
+    print "e %d R %d n %d" % ((x>>128), R, n)
+    x = x - ((m * n) << 35)
+    print "x %x" % x
+    n = ((x >> 100) * R) >> 32
+    x = x - ((m * n) << 7)
+    print "x %x" % x
+    n = ((x >> 72) * R) >> (32 + 21)
+    print("mn %x" % (m * n));
+    x = x - m * n
+    print "x %x" % x
+
+
+mod(1 << (28 + 96), m)
+    
+bit = 31 - clz(p)
+a = 1
 while bit >= 0:
     on = p & (1<<bit)
     print "bit %d %d" % (bit, on)

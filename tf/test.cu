@@ -25,6 +25,10 @@ static __both__ void print(U4 a) {
   printf("0x%08x%08x%08x%08x\n", a.d, a.c, a.b, a.a);
 }
 
+static __both__ void print(U5 a) {
+  printf("0x%08x%08x%08x%08x%08x\n", a.e, a.d, a.c, a.b, a.a);
+}
+
 static __both__ void print(U6 a) {
   printf("0x%08x%08x%08x%08x%08x%08x\n", a.f, a.e, a.d, a.c, a.b, a.a);
 }
@@ -208,6 +212,7 @@ __device__ static U3 shr(U3 x, int n) {
 
 // m >= 2^93 && m < 2^94.
 __device__ U3 mod(U4 xx, U3 rawM) {
+  print(xx); print(rawM);
   int shift = __clz(rawM.c) - 2;
   assert(shift >= 0);
   U3 m = shl(rawM, shift);
@@ -218,17 +223,24 @@ __device__ U3 mod(U4 xx, U3 rawM) {
   U5 x = makeU5(xx);
   x = shl(x, shift);
   
-  n = mulhi(x.e, R);  
+  n = mulhi(x.e, R);
+  printf("e %u R %u n %u\n", x.e, R, n);
   x = sub(x, shl(shl1w(mul(m, n)), 3));
   assert(!(x.e & 0xfffffff0));
+  print(x);
   
   n = mulhi(shl(x.d, x.e, 28), R);
   x = sub(x, shl(makeU5(mul(m, n)), 7));
   assert(!x.e && !(x.d & 0xffffff00));
+  print(x);
 
   n = mulhi(shl(x.c, x.d, 24), R) >> 21;
-  x = sub(x, makeU5(mul(m, n)));
+  // sub((U4){x.b, x.c, x.d, x.e}, mul(m, n));
+  U4 tmp = mul(m, n);
+  printf("n %u ", n); print(m); print(tmp);
+  x = sub(x, makeU5(tmp));
   assert(!x.e && !x.d);
+  print(x);
   
   /*
   n = mulhi(x.d, R);  
@@ -285,6 +297,7 @@ __device__ static U3 hasFactor(unsigned p, U3 m) {
 
   U3 a = mod((U4){0, 0, 0, (1 << (p >> 27))}, m);
   for (p <<= 5; p; p += p) {
+    // print(a);
     a = montRed(square(a), m, mp0);
     if (p & 0x80000000) { a = shl(a, 1); }
   }
@@ -302,12 +315,19 @@ struct Test {
   u64 k;
 };
 
+#include "test.h"
+
+// Test tests[] = {{3321931313, 3380886930211844436}};
+
+/*
 Test tests[] = {
+  {60008807, 259574105937ull}
   {800000479,      3089082494924ull},
   {800000011,       955047115584ull},
   {500953,    895189023449202923ull},
   {119129573,     12186227586967ull},
 };
+*/
 
 int main() {
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
@@ -315,13 +335,14 @@ int main() {
   for (Test *t = tests, *end = tests + n; t < end; ++t) {
     unsigned p = t->p;
     u64 k = t->k;
-    u128 mm = (2 * p) * (u128) k + 1;
+    u128 mm = 2 * (u128)p  * k + 1;
     U3 m = makeU3(mm);
     // printf("%uL\n", k);
     // print(m);
     int shift = __builtin_clz(p);
     assert(shift < 27);
     p <<= shift;
+    printf("p %u k %llu m: ", t->p, t->k); print(m);
     test<<<1, 1>>>(p, m);
     cudaDeviceSynchronize();
     cudaError_t err = cudaGetLastError();
@@ -329,7 +350,12 @@ int main() {
       printf("CUDA error: %s\n", cudaGetErrorString(err));
       break;
     } else {
-      print(out);
+      if (out.a != 1 || out.b || out.c) {
+        printf("%10u %20llu  ", t->p, k);
+        print(out);
+      } else {
+        printf("OK\n");
+      }
     }
   }
 }
