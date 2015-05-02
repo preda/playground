@@ -63,8 +63,7 @@ __device__ static U6 add(U6 x, U6 y) {
       "addc.u32    %6, 0, 0;"
       : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e), "=r"(f), "=r"(carryOut)
       : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(x.e), "r"(x.f),
-        "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d), "r"(y.e), "r"(y.f)
-      : "cc");
+        "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d), "r"(y.e), "r"(y.f));
   assert(!carryOut);
   return {a, b, c, d, e, f};
 }
@@ -78,8 +77,7 @@ __device__ static U4 sub(U4 x, U4 y) {
       "subc.u32    %4, 0, 0;"
       : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(carryOut)
       : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d),
-        "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d)
-      : "cc");
+        "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d));
   assert(!carryOut);
   return {a, b, c, d};
 }
@@ -94,8 +92,7 @@ __device__ static U5 sub(U5 x, U5 y) {
       "subc.u32    %5, 0, 0;"
       : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e), "=r"(carryOut)
       : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(x.e),
-        "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d), "r"(y.e)
-      : "cc");
+        "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d), "r"(y.e));
   assert(!carryOut);
   return {a, b, c, d, e};
 }
@@ -125,16 +122,17 @@ __device__ static U6 sub(U6 x, U6 y) {
 */
 
 __device__ static U4 mul(U3 x, unsigned n) {
-  unsigned a, b, c, d;
-  asm("mul.lo.u32     %0, %4, %7;"
-      "mul.hi.u32     %1, %4, %7;"
-      "mad.lo.cc.u32  %1, %5, %7, %1;"
-      "mul.hi.u32     %2, %5, %7;"
-      "madc.lo.cc.u32 %2, %6, %7, %2;"
-      "madc.hi.u32    %3, %6, %7, 0;"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d)
-      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(n)
-      : "cc");
+  unsigned a, b, c, d, carry;
+  asm("mul.lo.u32     %0, %5, %8;"
+      "mul.hi.u32     %1, %5, %8;"
+      "mad.lo.cc.u32  %1, %6, %8, %1;"
+      "mul.hi.u32     %2, %6, %8;"
+      "madc.lo.cc.u32 %2, %7, %8, %2;"
+      "madc.hi.cc.u32 %3, %7, %8, 0;"
+      "addc.u32       %4, 0, 0;"
+      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(carry)
+      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(n));
+  assert(!carry);
   return {a, b, c, d};
 }
 
@@ -156,7 +154,7 @@ __device__ static U6 square(U3 x) {
       "mad.lo.cc.u32   %2, %6, %5, %2;"  // 2 * (d0 * d2).lo
       "madc.hi.cc.u32  %3, %6, %5, %3;"  // 2 * (d0 * d2).hi
       "madc.hi.cc.u32  %4, %7, %5, %4;"  // 2 * (d1 * d2).hi
-      "madc.hi.u32     %5, %8, %8, 0;"   // (d2 * d2).hi
+      "madc.hi.cc.u32     %5, %8, %8, 0;"   // (d2 * d2).hi
       : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e), "=r"(f)
       : "r"(x.a), "r"(x.b), "r"(x.c));
   U6 r{a, b, c, d, e, f};
@@ -212,7 +210,7 @@ __device__ static U3 shr(U3 x, int n) {
 
 // m >= 2^93 && m < 2^94.
 __device__ U3 mod(U4 xx, U3 rawM) {
-  print(xx); print(rawM);
+  // print(xx); print(rawM);
   int shift = __clz(rawM.c) - 2;
   assert(shift >= 0);
   U3 m = shl(rawM, shift);
@@ -224,23 +222,23 @@ __device__ U3 mod(U4 xx, U3 rawM) {
   x = shl(x, shift);
   
   n = mulhi(x.e, R);
-  printf("e %u R %u n %u\n", x.e, R, n);
+  // printf("e %u R %u n %u\n", x.e, R, n);
   x = sub(x, shl(shl1w(mul(m, n)), 3));
   assert(!(x.e & 0xfffffff0));
-  print(x);
+  // print(x);
   
   n = mulhi(shl(x.d, x.e, 28), R);
   x = sub(x, shl(makeU5(mul(m, n)), 7));
   assert(!x.e && !(x.d & 0xffffff00));
-  print(x);
+  // print(x);
 
   n = mulhi(shl(x.c, x.d, 24), R) >> 21;
   // sub((U4){x.b, x.c, x.d, x.e}, mul(m, n));
   U4 tmp = mul(m, n);
-  printf("n %u ", n); print(m); print(tmp);
+  // printf("n %u ", n); print(m); print(tmp);
   x = sub(x, makeU5(tmp));
   assert(!x.e && !x.d);
-  print(x);
+  // print(x);
   
   /*
   n = mulhi(x.d, R);  
@@ -342,7 +340,7 @@ int main() {
     int shift = __builtin_clz(p);
     assert(shift < 27);
     p <<= shift;
-    printf("p %u k %llu m: ", t->p, t->k); print(m);
+    // printf("p %u k %llu m: ", t->p, t->k); print(m);
     test<<<1, 1>>>(p, m);
     cudaDeviceSynchronize();
     cudaError_t err = cudaGetLastError();
@@ -351,10 +349,10 @@ int main() {
       break;
     } else {
       if (out.a != 1 || out.b || out.c) {
-        printf("%10u %20llu  ", t->p, k);
-        print(out);
+        printf("ERROR %10u %20llu m ", t->p, t->k); print(m); print(out);
+        break;
       } else {
-        printf("OK\n");
+        // printf("OK\n");
       }
     }
   }
