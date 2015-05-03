@@ -3,138 +3,144 @@
 #include <cuda.h>
 #include <stdio.h>
 #include <assert.h>
-#include <stdlib.h>
 
 // #define assert(x) 
 
 typedef unsigned long long u64;
 typedef __uint128_t u128;
 
+struct U2 { unsigned a, b; };
 struct U3 { unsigned a, b, c; };
 struct U4 { unsigned a, b, c, d; };
 struct U5 { unsigned a, b, c, d, e; };
 struct U6 { unsigned a, b, c, d, e, f; };
 
-#define __both__ __device__ __host__
+#define INLINE extern inline __device__
 
-__attribute__((unused))
-static __both__ void print(U3 a) {
+INLINE __host__ void print(U3 a) {
   printf("0x%08x%08x%08x\n", a.c, a.b, a.a);
 }
 
-__attribute__((unused))
-static __both__ void print(U4 a) {
+INLINE __host__ void print(U4 a) {
   printf("0x%08x%08x%08x%08x\n", a.d, a.c, a.b, a.a);
 }
 
-__attribute__((unused))
-static __both__ void print(U5 a) {
+INLINE __host__ void print(U5 a) {
   printf("0x%08x%08x%08x%08x%08x\n", a.e, a.d, a.c, a.b, a.a);
 }
 
-__attribute__((unused))
-static __both__ void print(U6 a) {
+INLINE __host__ void print(U6 a) {
   printf("0x%08x%08x%08x%08x%08x%08x\n", a.f, a.e, a.d, a.c, a.b, a.a);
 }
 
 // #define print(x)
 
-// --- Shift ---
-
-__device__ static unsigned shl(unsigned a, unsigned b, int n) {
+// Funnel shift left.
+INLINE unsigned shl(unsigned a, unsigned b, int n) {
   unsigned r;
   asm("shf.l.wrap.b32 %0, %1, %2, %3;" : "=r"(r) : "r"(a), "r"(b), "r"(n));
   return r;
 }
 
-__device__ static unsigned shr(unsigned a, unsigned b, int n) {
+// Funnel shift right.
+INLINE unsigned shr(unsigned a, unsigned b, int n) {
   unsigned r;
   asm("shf.r.wrap.b32 %0, %1, %2, %3;" : "=r"(r) : "r"(a), "r"(b), "r"(n));
   return r;
 }
 
-
-// --- Multiprecision ---
-
 __device__ static U6 add(U6 x, U6 y) {
-  unsigned a, b, c, d, e, f, carryOut;
-  asm("add.cc.u32  %0, %7,  %13;"
-      "addc.cc.u32 %1, %8,  %14;"
-      "addc.cc.u32 %2, %9,  %15;"
-      "addc.cc.u32 %3, %10, %16;"
-      "addc.cc.u32 %4, %11, %17;"
-      "addc.cc.u32 %5, %12, %18;"
-      "addc.u32    %6, 0, 0;"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e), "=r"(f), "=r"(carryOut)
+  unsigned a, b, c, d, e, f;
+  asm("add.cc.u32  %0, %6,  %12;"
+      "addc.cc.u32 %1, %7,  %13;"
+      "addc.cc.u32 %2, %8,  %14;"
+      "addc.cc.u32 %3, %9,  %15;"
+      "addc.cc.u32 %4, %10, %16;"
+      "addc.u32    %5, %11, %17;"
+      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e), "=r"(f)
       : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(x.e), "r"(x.f),
         "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d), "r"(y.e), "r"(y.f));
-  assert(!carryOut);
   return (U6){a, b, c, d, e, f};
 }
 
 __device__ static U4 sub(U4 x, U4 y) {
-  unsigned a, b, c, d, carryOut;
-  asm("sub.cc.u32  %0, %5,  %9;"
-      "subc.cc.u32 %1, %6,  %10;"
-      "subc.cc.u32 %2, %7,  %11;"
-      "subc.cc.u32 %3, %8,  %12;"
-      "subc.u32    %4, 0, 0;"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(carryOut)
+  unsigned a, b, c, d;
+  asm("sub.cc.u32  %0, %4, %8;"
+      "subc.cc.u32 %1, %5, %9;"
+      "subc.cc.u32 %2, %6, %10;"
+      "subc.u32    %3, %7, %11;"
+      : "=r"(a), "=r"(b), "=r"(c), "=r"(d)
       : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d),
         "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d));
-  assert(!carryOut);
   return (U4) {a, b, c, d};
+}
+
+__device__ static U3 mul(U2 x, unsigned n) {
+  unsigned a, b, c;
+  asm("mul.lo.u32     %0, %3, %5;"
+      "mul.hi.u32     %1, %3, %5;"
+      
+      "mad.lo.cc.u32  %1, %4, %5, %1;"
+      "madc.hi.u32    %2, %4, %5, 0;"
+      : "=r"(a), "=r"(b), "=r"(c)
+      : "r"(x.a), "r"(x.b), "r"(n));
+  return (U3) {a, b, c};
 }
 
 __device__ static U4 mul(U3 x, unsigned n) {
-  unsigned a, b, c, d, carry;
-  asm("mul.lo.u32     %0, %5, %8;"
-      "mul.hi.u32     %1, %5, %8;"
-      "mad.lo.cc.u32  %1, %6, %8, %1;"
-      "mul.hi.u32     %2, %6, %8;"
-      "madc.lo.cc.u32 %2, %7, %8, %2;"
-      "madc.hi.cc.u32 %3, %7, %8, 0;"
-      "addc.u32       %4, 0, 0;"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(carry)
+  unsigned a, b, c, d;
+  asm("mul.lo.u32     %0, %4, %7;"
+      "mul.hi.u32     %1, %4, %7;"
+      
+      "mad.lo.cc.u32  %1, %5, %7, %1;"
+      "madc.hi.u32    %2, %5, %7, 0;"
+      
+      "mad.lo.cc.u32  %2, %6, %7, %2;"
+      "madc.hi.u32    %3, %6, %7, 0;"
+      : "=r"(a), "=r"(b), "=r"(c), "=r"(d)
       : "r"(x.a), "r"(x.b), "r"(x.c), "r"(n));
-  assert(!carry);
   return (U4) {a, b, c, d};
 }
 
-// Inspired my mfaktc's square96 implem.
+__device__ static U4 square(U2 x) {
+  unsigned a, b, c, d;
+  asm("mul.lo.u32     %0, %4, %4;"
+      "mul.lo.u32     %1, %4, %5;"
+      "mul.hi.u32     %2, %4, %5;"
+      
+      "add.cc.u32     %1, %1, %1;"
+      "addc.cc.u32    %2, %2, %2;"
+      "addc.u32       %3, 0, 0;"
+      
+      "mad.hi.cc.u32  %1, %4, %4, %1;"
+      "madc.lo.cc.u32 %2, %5, %5, %2;"
+      "madc.hi.u32    %3, %5, %5, %3;"
+      : "=r"(a), "=r"(b), "=r"(c), "=r"(d)
+      : "r"(x.a), "r"(x.b));
+  return (U4) {a, b, c, d};
+}
+
 __device__ static U6 square(U3 x) {
-  unsigned a, b, c, d, e, f;
-  asm("mul.lo.u32      %0, %6, %6;"      // (d0 * d0).lo
-      "mul.lo.u32      %1, %6, %7;"      // (d0 * d1).lo
-      "mul.hi.u32      %2, %6, %7;"      // (d0 * d1).hi      
-      "add.cc.u32      %1, %1, %1;"      // 2 * (d0 * d1).lo
-      "addc.cc.u32     %2, %2, %2;"      // 2 * (d0 * d1).hi
-      "madc.hi.cc.u32  %3, %7, %7, 0;"   // (d1 * d1).hi
-      "madc.lo.u32     %4, %8, %8, 0;"   // (d2 * d2).lo; %4 <= 0xFFFFFFFA => no carry to %5 needed!
-      "add.u32         %5, %8, %8;"      // 2 * d2; d2 < 2**31
-      "mad.hi.cc.u32   %1, %6, %6, %1;"  // (d0 * d0).hi
-      "madc.lo.cc.u32  %2, %7, %7, %2;"  // (d1 * d1).lo
-      "madc.lo.cc.u32  %3, %7, %5, %3;"  // 2 * (a.d1 * a.d2).lo
-      "addc.u32        %4, %4, 0;"       // %4 <= 0xFFFFFFFB => not carry to %5 needed
-      "mad.lo.cc.u32   %2, %6, %5, %2;"  // 2 * (d0 * d2).lo
-      "madc.hi.cc.u32  %3, %6, %5, %3;"  // 2 * (d0 * d2).hi
-      "madc.hi.cc.u32  %4, %7, %5, %4;"  // 2 * (d1 * d2).hi
-      "madc.hi.cc.u32     %5, %8, %8, 0;"   // (d2 * d2).hi
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e), "=r"(f)
-      : "r"(x.a), "r"(x.b), "r"(x.c));
-  return (U6) {a, b, c, d, e, f};
+  assert(!(x.c & 0x80000000));
+  U2 ab = {x.a, x.b};
+  U4 ab2 = square(ab);
+  U3 abc = mul(ab, x.c + x.c);
+  
+  unsigned c, d, e, f;
+  asm("add.cc.u32     %0, %4, %6;"
+      "addc.cc.u32    %1, %5, %7;"
+      "madc.lo.cc.u32 %2, %9, %9, %8;"
+      "madc.hi.u32    %3, %9, %9, 0;"
+      : "=r"(c), "=r"(d), "=r"(e), "=r"(f)
+      : "r"(ab2.c), "r"(ab2.d), "r"(abc.a), "r"(abc.b), "r"(abc.c), "r"(x.c));
+  return (U6) {ab2.a, ab2.b, c, d, e, f};
 }
 
-__device__ static U5 shl1w(U4 x)  { return (U5) {0, x.a, x.b, x.c, x.d}; }
-__device__ static U6 shl2w(U4 x)  { return (U6) {0, 0, x.a, x.b, x.c, x.d}; }
-__device__ static U6 makeU6(U3 x) { return (U6) {x.a, x.b, x.c, 0, 0, 0}; }
-__device__ static U6 makeU6(U4 x) { return (U6) {x.a, x.b, x.c, x.d, 0, 0}; }
-__device__ static U6 makeU6(U5 x) { return (U6) {x.a, x.b, x.c, x.d, x.e, 0}; }
-
-__host__ static U3 makeU3(u128 x) {
-  assert(!(unsigned) (x >> 96));
-  return (U3){ (unsigned) x, (unsigned) (x >> 32), (unsigned) (x >> 64)};
-}
+INLINE U5 shl1w(U4 x)  { return (U5) {0, x.a, x.b, x.c, x.d}; }
+INLINE U6 shl2w(U4 x)  { return (U6) {0, 0, x.a, x.b, x.c, x.d}; }
+INLINE U6 makeU6(U3 x) { return (U6) {x.a, x.b, x.c, 0, 0, 0}; }
+INLINE U6 makeU6(U4 x) { return (U6) {x.a, x.b, x.c, x.d, 0, 0}; }
+INLINE U6 makeU6(U5 x) { return (U6) {x.a, x.b, x.c, x.d, x.e, 0}; }
 
 __device__ static U3 shl(U3 x, int n) {
   assert(n >= 0 && n < 32 && !(x.c >> (32 - n)));
@@ -178,7 +184,7 @@ __device__ static unsigned mprime0(U3 m) {
 
 // Montgomery Reduction
 // See https://www.cosic.esat.kuleuven.be/publications/article-144.pdf
-// Returns x * U**-1 mod m
+// Returns x * U^-1 mod m
 __device__ static U3 montRed(U6 x, U3 m, unsigned mp0) {
   unsigned t = x.a * mp0;
   U4 f = mul(m, t);
@@ -213,12 +219,14 @@ __global__ void test(unsigned p, U3 m) {
   out = hasFactor(p, m);
 }
 
-struct Test {
-  unsigned p;
-  u64 k;
-};
+struct Test { unsigned p; u64 k; };
 
 #include "test.h"
+
+__host__ static U3 makeU3(u128 x) {
+  assert(!(unsigned) (x >> 96));
+  return (U3){ (unsigned) x, (unsigned) (x >> 32), (unsigned) (x >> 64)};
+}
 
 int main() {
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
@@ -252,7 +260,60 @@ int main() {
 }
 
 /*
+__device__ static U6 square1(U3 x) {
+  unsigned a, b, c, d, e, f;
+  asm("mul.lo.u32      %0, %6, %6;"      // (d0 * d0).lo
+      "mul.lo.u32      %1, %6, %7;"      // (d0 * d1).lo
+      "mul.hi.u32      %2, %6, %7;"      // (d0 * d1).hi      
+      "add.cc.u32      %1, %1, %1;"      // 2 * (d0 * d1).lo
+      "addc.cc.u32     %2, %2, %2;"      // 2 * (d0 * d1).hi
+      "madc.hi.cc.u32  %3, %7, %7, 0;"   // (d1 * d1).hi
+      "madc.lo.u32     %4, %8, %8, 0;"   // (d2 * d2).lo; %4 <= 0xFFFFFFFA => no carry to %5 needed!
+      "add.u32         %5, %8, %8;"      // 2 * d2; d2 < 2**31
+      "mad.hi.cc.u32   %1, %6, %6, %1;"  // (d0 * d0).hi
+      "madc.lo.cc.u32  %2, %7, %7, %2;"  // (d1 * d1).lo
+      "madc.lo.cc.u32  %3, %7, %5, %3;"  // 2 * (a.d1 * a.d2).lo
+      "addc.u32        %4, %4, 0;"       // %4 <= 0xFFFFFFFB => not carry to %5 needed
+      "mad.lo.cc.u32   %2, %6, %5, %2;"  // 2 * (d0 * d2).lo
+      "madc.hi.cc.u32  %3, %6, %5, %3;"  // 2 * (d0 * d2).hi
+      "madc.hi.cc.u32  %4, %7, %5, %4;"  // 2 * (d1 * d2).hi
+      "madc.hi.cc.u32     %5, %8, %8, 0;"   // (d2 * d2).hi
+      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e), "=r"(f)
+      : "r"(x.a), "r"(x.b), "r"(x.c));
+  return (U6) {a, b, c, d, e, f};
+}
 
+INLINE bool equal(U6 x, U6 y) {
+  return x.a == y.a && x.b == y.b && x.c == y.c && x.d == y.d && x.e == y.e && x.f == y.f;
+}
+
+__device__ static U6 square(U3 x) {
+  U6 a = square1(x);
+  U6 b = square2(x);
+  if (!equal(a, b)) {
+    print(x);
+    print(a);
+    print(b);
+    assert(false);
+  }
+  return a;
+}
+
+__device__ static U5 mul(U4 x, unsigned n) {
+  unsigned a, b, c, d, e;
+  asm("mul.lo.u32     %0, %5, %9;"
+      "mul.hi.u32     %1, %5, %9;"
+      "mad.lo.cc.u32  %1, %6, %9, %1;"
+      "mul.hi.u32     %2, %6, %9;"
+      "madc.lo.cc.u32 %2, %7, %9, %2;"
+      "mul.hi.u32     %3, %7, %9;"
+      "madc.lo.cc.u32 %3, %8, %9, %3;"      
+      "madc.hi.u32    %4, %8, %9, 0;"
+      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e)
+      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(n));
+  return (U4) {a, b, c, d, e};
+}
+  
 __device__ static U6 shl1w(U4 x)  { return {0, x.a, x.b, x.c, x.d, 0}; }
 __device__ static U5 makeU5(U4 x) { return (U5) {x.a, x.b, x.c, x.d, 0}; }
 __device__ static U4 makeU4(U3 x) { return (U4) {x.a, x.b, x.c, 0}; }
