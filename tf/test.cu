@@ -7,6 +7,7 @@
 // #define assert(x) 
 
 typedef unsigned long long u64;
+typedef unsigned short u16;
 typedef __uint128_t u128;
 
 struct U2 { unsigned a, b; };
@@ -221,15 +222,14 @@ __global__ void test(unsigned p, U3 m) {
 
 struct Test { unsigned p; u64 k; };
 
-#include "test.h"
+#include "tests.inc"
 
-__host__ static U3 makeU3(u128 x) {
+static U3 makeU3(u128 x) {
   assert(!(unsigned) (x >> 96));
   return (U3){ (unsigned) x, (unsigned) (x >> 32), (unsigned) (x >> 64)};
 }
 
-int main() {
-  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
+static void selfTest() {
   int n = sizeof(tests) / sizeof(tests[0]);
   for (Test *t = tests, *end = tests + n; t < end; ++t) {
     unsigned p = t->p;
@@ -255,6 +255,57 @@ int main() {
       } else {
         // printf("OK\n");
       }
+    }
+  }
+}
+
+int main() {
+  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
+  // selfTest();
+
+  unsigned p = 119904229;
+  int startPow2 = 65;
+
+  u64 startK = (((u128) 1) << (startPow2 - 1)) / p;
+  printf("startK %llu\n", startK);
+
+  unsigned pMod4 = p % 4;
+  unsigned kMod4 = startK % 4;
+
+  startK -= kMod4;
+  sieve(p, startK);
+  sieve(p, starK + (4 - pMod4));
+}
+
+u16 primes[] = {
+#include "primes.inc"
+};
+
+#include "sieve.c"
+
+#define SIEVE_SIZE 3800
+
+u64 bits[SIEVE_SIZE];
+
+unsigned kpMod(unsigned p, u64 k, unsigned prime) {
+  unsigned pm = p % prime;
+  unsigned km = k % prime;
+  return (2 * pm * km) % prime;
+}
+
+void sieve(unsigned p, u64 startK) {
+  for (unsigned prime : [3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61]) {
+    unsigned m = kpMod(p, k, prime);
+  }
+}
+
+void sieve(u64 *p, u64 *end, int wordStep, int bitStep, int bit) {
+  while (p < end) {
+    *p |= (1 << bit);
+    p += wordStep;
+    if ((bit += bitStep) < 0) {
+      bit += 64;
+      --p;
     }
   }
 }
