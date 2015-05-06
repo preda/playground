@@ -259,39 +259,53 @@ static void selfTest() {
   }
 }
 
+#define NCLASS (4 * 3 * 5 * 7 * 11 * 13 * 17 * 19 * 23)
+
+// whether 2 * k * p + 1 == 1 or 7 modulo 8.
+extern inline bool q1or7mod8(unsigned p, u64 k) {
+  return !(k & 3) || ((k & 3) + (p & 3) == 4);
+}
+
+// whether 2 * k * p + 1 != 0 modulo prime
+extern inline bool notMultiple(unsigned p, unsigned k, unsigned prime) {
+  // return (((k + k) % prime) * (p % prime) + 1) % prime != 0;
+  return ((p % prime) * 2 * (u64)k + 1) % prime != 0;
+}
+
+static bool accept(unsigned p, unsigned k) {
+  return q1or7mod8(p, k) && notMultiple(p, k, 3) && notMultiple(p, k, 5) && notMultiple(p, k, 7)
+    && notMultiple(p, k, 11) && notMultiple(p, k, 13) && notMultiple(p, k, 17)
+    && notMultiple(p, k, 19) && notMultiple(p, k, 23);
+}
+
 int main() {
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
-  // selfTest();
-
-  unsigned p = 119904229;
+  const unsigned p = 119904229;
   int startPow2 = 65;
 
-  u64 startK = (((u128) 1) << (startPow2 - 1)) / p;
-  printf("startK %llu\n", startK);
+  u64 k = (((u128) 1) << (startPow2 - 1)) / p;
+  k -= k % NCLASS;
+  printf("start K %llu\n", k);
+  int n = 0;
 
+  for (int c = 0; c < NCLASS; ++c, ++k) {
+    if (accept(p, c)) {
+      ++n;
+    }
+  }
+  printf("%d\n", n);
+}
+
+  /*
   unsigned pMod4 = p % 4;
   unsigned kMod4 = startK % 4;
-
   startK -= kMod4;
   sieve(p, startK);
   sieve(p, starK + (4 - pMod4));
-}
 
 u16 primes[] = {
 #include "primes.inc"
 };
-
-#include "sieve.c"
-
-#define SIEVE_SIZE 3800
-
-u64 bits[SIEVE_SIZE];
-
-unsigned kpMod(unsigned p, u64 k, unsigned prime) {
-  unsigned pm = p % prime;
-  unsigned km = k % prime;
-  return (2 * pm * km) % prime;
-}
 
 void sieve(unsigned p, u64 startK) {
   for (unsigned prime : [3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61]) {
@@ -309,3 +323,4 @@ void sieve(u64 *p, u64 *end, int wordStep, int bitStep, int bit) {
     }
   }
 }
+  */
