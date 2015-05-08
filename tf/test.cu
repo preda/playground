@@ -3,6 +3,10 @@
 #include <cuda.h>
 #include <stdio.h>
 #include <assert.h>
+#include <sys/time.h>
+
+#define THREADS_PER_BLOCK 1024
+#define BLOCKS_PER_GRID 64
 
 // #define assert(x) 
 
@@ -15,6 +19,12 @@ struct U3 { unsigned a, b, c; };
 struct U4 { unsigned a, b, c, d; };
 struct U5 { unsigned a, b, c, d, e; };
 struct U6 { unsigned a, b, c, d, e, f; };
+
+u64 timeMillis() {
+  struct timeval tv;
+  gettimeofday(&tv, 0);
+  return tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
 
 #define INLINE extern inline __device__
 
@@ -34,7 +44,7 @@ INLINE __host__ void print(U6 a) {
   printf("0x%08x%08x%08x%08x%08x%08x\n", a.f, a.e, a.d, a.c, a.b, a.a);
 }
 
-// #define print(x)
+#define print(x)
 
 // Funnel shift left.
 INLINE unsigned shl(unsigned a, unsigned b, int n) {
@@ -61,7 +71,18 @@ __device__ static U6 add(U6 x, U6 y) {
       : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e), "=r"(f)
       : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(x.e), "r"(x.f),
         "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d), "r"(y.e), "r"(y.f));
-  return (U6){a, b, c, d, e, f};
+  return (U6) {a, b, c, d, e, f};
+}
+
+__device__ static U3 add(U3 x, U3 y) {
+  unsigned a, b, c;
+  asm("add.cc.u32  %0, %3, %6;"
+      "addc.cc.u32 %1, %4, %7;"
+      "addc.u32    %2, %5, %8;"
+      : "=r"(a), "=r"(b), "=r"(c)
+      : "r"(x.a), "r"(x.b), "r"(x.c),
+        "r"(y.a), "r"(y.b), "r"(y.c));
+  return (U3) {a, b, c};
 }
 
 __device__ static U4 sub(U4 x, U4 y) {
@@ -142,6 +163,7 @@ INLINE U6 shl2w(U4 x)  { return (U6) {0, 0, x.a, x.b, x.c, x.d}; }
 INLINE U6 makeU6(U3 x) { return (U6) {x.a, x.b, x.c, 0, 0, 0}; }
 INLINE U6 makeU6(U4 x) { return (U6) {x.a, x.b, x.c, x.d, 0, 0}; }
 INLINE U6 makeU6(U5 x) { return (U6) {x.a, x.b, x.c, x.d, x.e, 0}; }
+INLINE U2 makeU2(u64 x) { return (U2) {(unsigned) x, (unsigned) (x >> 32)}; }
 
 __device__ static U3 shl(U3 x, int n) {
   assert(n >= 0 && n < 32 && !(x.c >> (32 - n)));
@@ -202,7 +224,8 @@ __device__ static U3 montRed(U6 x, U3 m, unsigned mp0) {
   return (U3) {x.d, x.e, x.f};
 }
 
-__device__ static U3 hasFactor(unsigned p, U3 m) {
+// returns 2^p % m
+__device__ static U3 expMod(unsigned p, U3 m) {
   unsigned mp0 = mprime0(m);
 
   U3 a = mod((U4){0, 0, 0, (1 << (p >> 27))}, m);
@@ -214,10 +237,127 @@ __device__ static U3 hasFactor(unsigned p, U3 m) {
   return montRed(makeU6(a), m, mp0);
 }
 
+// return 2 * k * p + 1 as U3
+__device__ static U3 makeQ(unsigned p, u64 k) {
+  return add(mul(makeU2(k), p + p), (U3){1, 0, 0});
+}
+
+// returns whether (2*k*p + 1) is a factor of (2^p - 1)
+__device__ static bool isFactor(unsigned p, u64 k) {
+  U3 q = makeQ(p, k);
+  U3 r = expMod(p, q);
+  return r.a == 1 && !r.b && !r.c;
+}
+
+#define NTHREADS (THREADS_PER_BLOCK * BLOCKS_PER_GRID)
+
+__managed__ u64 deviceFactor;
+__managed__ unsigned deviceClasses[NTHREADS];
 __managed__ U3 out;
 
 __global__ void test(unsigned p, U3 m) {
-  out = hasFactor(p, m);
+  out = expMod(p, m);
+}
+
+// #define NCLASS (4 * 3 * 5 * 7 * 11 * 13 * 17 * 19 * 23)
+#define NCLASS (4 * 3 * 5 * 7 * 11 * 13 * 17 * 19 * 23)
+
+__global__ void tf(unsigned p, u64 k0, unsigned *classes) {
+  unsigned id = blockIdx.x * blockDim.x + threadIdx.x;
+  unsigned c = deviceClasses[id];
+  if (c == 0xffffffff) { return; }
+  u64 k = k0 + c;
+  for (int i = 0; i < 512; ++i) {
+    if (isFactor(p, k)) {
+      printf("%d found factor %llu\n", id, k);
+      deviceFactor = k;
+      break;
+    }
+    k += NCLASS;
+  }
+}
+
+bool launch(unsigned p, u64 k0, int t, unsigned *classes) {
+  cudaDeviceSynchronize();
+  cudaError_t err = cudaGetLastError();
+  if (err != cudaSuccess) {
+    printf("CUDA error: %s\n", cudaGetErrorString(err));
+    return true;
+  }
+  if (deviceFactor) {
+    printf("factor %llu\n", deviceFactor);
+    return true;
+  }
+  memcpy(deviceClasses, classes, t * sizeof(unsigned));
+  if (t < NTHREADS) {
+    printf("Tail %d\n", t);
+    memset(deviceClasses + t, 0xff, (NTHREADS - t) * sizeof(unsigned));
+  }
+  tf<<<BLOCKS_PER_GRID, THREADS_PER_BLOCK>>>(p, k0, deviceClasses);
+  return false;
+}
+
+// whether 2 * k * p + 1 == 1 or 7 modulo 8.
+extern inline bool q1or7mod8(unsigned p, u64 k) {
+  return !(k & 3) || ((k & 3) + (p & 3) == 4);
+}
+
+// whether 2 * k * p + 1 != 0 modulo prime
+extern inline bool notMultiple(unsigned p, unsigned k, unsigned prime) {
+  // return (((k + k) % prime) * (p % prime) + 1) % prime != 0;
+  unsigned kk = k % prime;
+  return !kk || ((p % prime) * kk * 2 + 1) % prime != 0;
+  
+  // return ((p % prime) * 2 * (u64)k + 1) % prime != 0;
+}
+
+static bool accept(unsigned p, unsigned k) {
+  return q1or7mod8(p, k) && notMultiple(p, k, 3) && notMultiple(p, k, 5) && notMultiple(p, k, 7)
+    && notMultiple(p, k, 11) && notMultiple(p, k, 13) && notMultiple(p, k, 17)
+    && notMultiple(p, k, 19) && notMultiple(p, k, 23);
+}
+
+int findFactor(unsigned p, u64 k0) {
+  u64 timeStart = timeMillis();
+  u64 time1 = timeStart;
+  unsigned classes[NTHREADS];
+  int accepted = 0;
+  int t = 0;
+  int c = 0;
+  for (; c <= NCLASS - 4; c += 4) {
+    if (accept(p, c))     { classes[t++] = c; }
+    if (accept(p, c + 1)) { classes[t++] = c; }
+    if (accept(p, c + 2)) { classes[t++] = c; }
+    if (accept(p, c + 3)) { classes[t++] = c; }
+    
+    if (t >= NTHREADS) {
+      accepted += t;
+      t = 0;
+      if (launch(p, k0, NTHREADS, classes)) { return -1; }
+      // u64 time2 = timeMillis();
+      // printf("%8u: %u ms\n", c, (unsigned)(time2 - time1));
+      // time1 = time2;
+    }
+  }
+  for (; c < NCLASS; c++) {
+    if (accept(p, c)) { classes[t++] = c; }
+  }
+  accepted += t;
+  launch(p, k0, t, classes);
+  u64 time2 = timeMillis(); time1 = time2;
+  printf("%8u: %u ms; total %llu\n", c, (unsigned)(time2 - time1), time2 - timeStart);
+  return accepted;
+}
+
+int main() {
+  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
+  const unsigned p = 119904229;
+  int startPow2 = 69;
+  u64 auxK = (((u128) 1) << (startPow2 - 1)) / p;
+  u64 k0 = auxK - auxK % NCLASS;
+  printf("p %u K0 %llu threads %d classes %d\n", p, k0, NTHREADS, NCLASS);
+  int accepted = findFactor(p, k0);
+  printf("accepted %d (%f%%)\n", accepted, accepted/(float)NCLASS*100);
 }
 
 struct Test { unsigned p; u64 k; };
@@ -258,69 +398,3 @@ static void selfTest() {
     }
   }
 }
-
-#define NCLASS (4 * 3 * 5 * 7 * 11 * 13 * 17 * 19 * 23)
-
-// whether 2 * k * p + 1 == 1 or 7 modulo 8.
-extern inline bool q1or7mod8(unsigned p, u64 k) {
-  return !(k & 3) || ((k & 3) + (p & 3) == 4);
-}
-
-// whether 2 * k * p + 1 != 0 modulo prime
-extern inline bool notMultiple(unsigned p, unsigned k, unsigned prime) {
-  // return (((k + k) % prime) * (p % prime) + 1) % prime != 0;
-  return ((p % prime) * 2 * (u64)k + 1) % prime != 0;
-}
-
-static bool accept(unsigned p, unsigned k) {
-  return q1or7mod8(p, k) && notMultiple(p, k, 3) && notMultiple(p, k, 5) && notMultiple(p, k, 7)
-    && notMultiple(p, k, 11) && notMultiple(p, k, 13) && notMultiple(p, k, 17)
-    && notMultiple(p, k, 19) && notMultiple(p, k, 23);
-}
-
-int main() {
-  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
-  const unsigned p = 119904229;
-  int startPow2 = 65;
-
-  u64 k = (((u128) 1) << (startPow2 - 1)) / p;
-  k -= k % NCLASS;
-  printf("start K %llu\n", k);
-  int n = 0;
-
-  for (int c = 0; c < NCLASS; ++c, ++k) {
-    if (accept(p, c)) {
-      ++n;
-    }
-  }
-  printf("%d\n", n);
-}
-
-  /*
-  unsigned pMod4 = p % 4;
-  unsigned kMod4 = startK % 4;
-  startK -= kMod4;
-  sieve(p, startK);
-  sieve(p, starK + (4 - pMod4));
-
-u16 primes[] = {
-#include "primes.inc"
-};
-
-void sieve(unsigned p, u64 startK) {
-  for (unsigned prime : [3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61]) {
-    unsigned m = kpMod(p, k, prime);
-  }
-}
-
-void sieve(u64 *p, u64 *end, int wordStep, int bitStep, int bit) {
-  while (p < end) {
-    *p |= (1 << bit);
-    p += wordStep;
-    if ((bit += bitStep) < 0) {
-      bit += 64;
-      --p;
-    }
-  }
-}
-  */
