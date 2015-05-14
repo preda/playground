@@ -1,6 +1,6 @@
 // Copyright (c) Mihai Preda, 2015.
 
-#include <cuda.h>
+// #include <cuda.h>
 #include <stdio.h>
 #include <assert.h>
 #include <sys/time.h>
@@ -255,19 +255,15 @@ __managed__ u64 deviceFactor;
 __managed__ unsigned deviceClasses[NTHREADS];
 __managed__ U3 out;
 
-__global__ void test(unsigned p, U3 m) {
-  out = expMod(p, m);
-}
-
 // #define NCLASS (4 * 3 * 5 * 7 * 11 * 13 * 17 * 19 * 23)
 #define NCLASS (4 * 3 * 5 * 7 * 11 * 13 * 17 * 19 * 23)
 
-__global__ void tf(unsigned p, u64 k0, unsigned *classes) {
+__global__ void tf(unsigned p, u64 k0, unsigned *classes, int repeat) {
   unsigned id = blockIdx.x * blockDim.x + threadIdx.x;
   unsigned c = deviceClasses[id];
   if (c == 0xffffffff) { return; }
   u64 k = k0 + c;
-  for (int i = 0; i < 512; ++i) {
+  for (int i = repeat; i > 0; --i) {
     if (isFactor(p, k)) {
       printf("%d found factor %llu\n", id, k);
       deviceFactor = k;
@@ -277,7 +273,7 @@ __global__ void tf(unsigned p, u64 k0, unsigned *classes) {
   }
 }
 
-bool launch(unsigned p, u64 k0, int t, unsigned *classes) {
+bool launch(unsigned p, u64 k0, int t, unsigned *classes, int repeat) {
   cudaDeviceSynchronize();
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
@@ -293,7 +289,7 @@ bool launch(unsigned p, u64 k0, int t, unsigned *classes) {
     printf("Tail %d\n", t);
     memset(deviceClasses + t, 0xff, (NTHREADS - t) * sizeof(unsigned));
   }
-  tf<<<BLOCKS_PER_GRID, THREADS_PER_BLOCK>>>(p, k0, deviceClasses);
+  tf<<<BLOCKS_PER_GRID, THREADS_PER_BLOCK>>>(p, k0, deviceClasses, repeat);
   return false;
 }
 
@@ -317,13 +313,14 @@ static bool accept(unsigned p, unsigned k) {
     && notMultiple(p, k, 19) && notMultiple(p, k, 23);
 }
 
-int findFactor(unsigned p, u64 k0) {
+int findFactor(unsigned p, u64 k0, int repeat) {
   u64 timeStart = timeMillis();
   u64 time1 = timeStart;
   unsigned classes[NTHREADS];
   int accepted = 0;
   int t = 0;
   int c = 0;
+  int nLaunch = 0;
   for (; c <= NCLASS - 4; c += 4) {
     if (accept(p, c))     { classes[t++] = c; }
     if (accept(p, c + 1)) { classes[t++] = c; }
@@ -331,19 +328,22 @@ int findFactor(unsigned p, u64 k0) {
     if (accept(p, c + 3)) { classes[t++] = c; }
     
     if (t >= NTHREADS) {
-      accepted += t;
+      accepted += NTHREADS;
       t = 0;
-      if (launch(p, k0, NTHREADS, classes)) { return -1; }
-      // u64 time2 = timeMillis();
-      // printf("%8u: %u ms\n", c, (unsigned)(time2 - time1));
-      // time1 = time2;
+      ++nLaunch;
+      if (launch(p, k0, NTHREADS, classes, repeat)) { return -1; }
+      if (!(nLaunch & 0xf)) {
+        u64 time2 = timeMillis();
+        printf("%8u: %u ms\n", c, (unsigned)(time2 - time1));
+        time1 = time2;
+      }
     }
   }
   for (; c < NCLASS; c++) {
     if (accept(p, c)) { classes[t++] = c; }
   }
   accepted += t;
-  launch(p, k0, t, classes);
+  launch(p, k0, t, classes, repeat);
   u64 time2 = timeMillis(); time1 = time2;
   printf("%8u: %u ms; total %llu\n", c, (unsigned)(time2 - time1), time2 - timeStart);
   return accepted;
@@ -351,12 +351,16 @@ int findFactor(unsigned p, u64 k0) {
 
 int main() {
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
+  cudaError_t err = cudaGetLastError();
+  printf("%s\n", cudaGetErrorString(err));
+  
   const unsigned p = 119904229;
-  int startPow2 = 69;
+  int startPow2 = 67;
   u64 auxK = (((u128) 1) << (startPow2 - 1)) / p;
   u64 k0 = auxK - auxK % NCLASS;
-  printf("p %u K0 %llu threads %d classes %d\n", p, k0, NTHREADS, NCLASS);
-  int accepted = findFactor(p, k0);
+  int repeat = (int) (auxK / NCLASS) + 1;
+  printf("p %u K0 %llu threads %d classes %d repeat %d\n", p, k0, NTHREADS, NCLASS, repeat);
+  int accepted = findFactor(p, k0, repeat);
   printf("accepted %d (%f%%)\n", accepted, accepted/(float)NCLASS*100);
 }
 
@@ -364,9 +368,11 @@ struct Test { unsigned p; u64 k; };
 
 #include "tests.inc"
 
-static U3 makeU3(u128 x) {
-  assert(!(unsigned) (x >> 96));
-  return (U3){ (unsigned) x, (unsigned) (x >> 32), (unsigned) (x >> 64)};
+__global__ void test(unsigned p, u64 k) {
+  __shared__ unsigned shared[12 * 1024];
+  shared[12 * 1024 - 1] = 1;
+  U3 q = makeQ(p, k);
+  out = expMod(p, q);
 }
 
 static void selfTest() {
@@ -374,15 +380,11 @@ static void selfTest() {
   for (Test *t = tests, *end = tests + n; t < end; ++t) {
     unsigned p = t->p;
     u64 k = t->k;
-    u128 mm = 2 * (u128)p  * k + 1;
-    U3 m = makeU3(mm);
-    // printf("%uL\n", k);
-    // print(m);
     int shift = __builtin_clz(p);
     assert(shift < 27);
     p <<= shift;
     // printf("p %u k %llu m: ", t->p, t->k); print(m);
-    test<<<1, 1>>>(p, m);
+    test<<<1, 1>>>(p, k);
     cudaDeviceSynchronize();
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
