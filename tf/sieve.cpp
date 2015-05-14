@@ -1,11 +1,13 @@
 #include <stdio.h>
 #include <assert.h>
+#include <vector>
 
 // #define NCLASS (2 * 3 * 5 * 7)
 
-/*
-3,     5,     7,    11,    13,    17,    19,    23,    29, 
-   31,    37,    41,    43,    47,    53,    59,    61,    67,    71, 
+// int smallPrimes[] = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61};
+
+int primes1K[] = {
+   67,    71, 
    73,    79,    83,    89,    97,   101,   103,   107,   109,   113, 
   127,   131,   137,   139,   149,   151,   157,   163,   167,   173, 
   179,   181,   191,   193,   197,   199,   211,   223,   227,   229, 
@@ -21,11 +23,15 @@
   811,   821,   823,   827,   829,   839,   853,   857,   859,   863, 
   877,   881,   883,   887,   907,   911,   919,   929,   937,   941, 
   947,   953,   967,   971,   977,   983,   991,   997
-*/
+};
 
-#define N (16 * 1024)
+#define ASIZE(a) (sizeof(a) / sizeof(a[0]))
 
-unsigned words[N];
+#define NBITS 500000
+
+#define NWORDS ((NBITS - 1) / 32 + 1)
+
+unsigned words[NWORDS];
 
 inline int set(int &a, int x) {
   int prev = a;
@@ -56,7 +62,8 @@ int step(int ii, int p) {
 }
 
 #define BITS(p) (m##p << i##p)
-#define BIT(p) (1 << i##p)
+// #define BIT(p) ((i##p < 32) ? (1 << i##p) : 0)
+#define BIT(p) ((unsigned)(1ull << i##p))
 #define STEP(p) i##p = step(i##p, p)
 #define INIT(p) int i##p = bitToClear(c, s, p)
 #define REPEAT_P32(w, s) w(3)s w(5)s w(7)s w(11)s w(13)s w(17)s w(19)s w(23)s w(29)s w(31)
@@ -77,55 +84,52 @@ void sieve(unsigned c, unsigned s) {
   REPEAT_P32(INIT, ;);
   REPEAT_P64(INIT, ;);
   
-  for (unsigned *pw = words, *end = words + N; pw < end; ++pw) {
+  for (unsigned *pw = words, *end = words + NWORDS; pw < end; ++pw) {
     *pw = REPEAT_P32(BITS, |) | REPEAT_P64(BIT, |);
     REPEAT_P32(STEP, ;);
     REPEAT_P64(STEP, ;);
   }
+
+  words[0] |= 1;
+  
+  for (int *pp = primes1K, *end = primes1K + sizeof(primes1K) / sizeof(primes1K[0]); pp < end; ++pp) {
+    int p = *pp;
+    int btc = bitToClear(c, s, p);
+    while (btc < NBITS) {
+      words[btc >> 5] |= (1 << (btc & 31));
+      btc += p;
+    }
+  }
+  
 }
 
-int extract(int c, int s, unsigned *pw, unsigned *end) {
-  int n = 0;
+void extract(std::vector<int> &primes, int c, int s, unsigned *pw, unsigned *end) {
   for (; pw < end; ++pw, c += 32 * s) {
     unsigned bits = ~*pw;
     while (bits) {
       int i = __builtin_ctz(bits);
-      printf("%d\n", c + i * s);
       bits &= bits - 1;
-      ++n;
+      int p = c + i * s;
+      primes.push_back(p);
     }
   }
-  return n;
 }
 
 int main() {
   sieve(1, 2);
-  int n = extract(1, 2, words, words + N);
-  printf("N %d\n", n);
+  std::vector<int> primes(primes1K, primes1K + ASIZE(primes1K));
+  extract(primes, 1, 2, words, words + NWORDS);
+  // printf("N %lu\n", primes.size());
+  int prev = 0;
+  int cnt = 0;
+  for (int p : primes) {
+    printf("%2d, ", p - prev);
+    ++cnt;
+    if (cnt == 25) {
+      printf("\n");
+      cnt = 0;
+    }
+    prev = p;
+  }
+  printf("\n");
 }
-
-  /*
-  INIT(3); INIT(5); INIT(7); INIT(11); INIT(13); INIT(17); INIT(19); INIT(23); INIT(29); INIT(31);
-  INIT(37); INIT(41); INIT(43); INIT(47); INIT(53); INIT(59); INIT(61);
-  */
-
-
-    /*
-    unsigned mask = (m3 << i3) | (m5 << i5) | (m7 << i7) | (m11 << i11) | (mask13 << i13)
-      | (m17 << i17) | (m19 << i19) | (m23 << i23) | (m29 << i29) | (m31 << i31)
-      | (1 << i37) | (1 << i41) | (1 << i43) | (1 << i47) | (1 << i53) | (1 << i59) | (1 << i61);
-    */
-
-  
-  /*
-  int i3  = bitToClear(1, 2,  3);
-  int i5  = bitToClear(1, 2,  5);
-  int i7  = bitToClear(1, 2,  7);
-  int i11 = bitToClear(1, 2, 11);
-  int i13 = bitToClear(1, 2, 13);
-  int i17 = bitToClear(1, 2, 17);
-  int i19 = bitToClear(1, 2, 19);
-  int i23 = bitToClear(1, 2, 23);
-  int i29 = bitToClear(1, 2, 29);
-  int i31 = bitToClear(1, 2, 31);
-  */
