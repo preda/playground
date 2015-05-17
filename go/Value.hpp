@@ -10,7 +10,9 @@
 
 class Value {
 public:
-  sbyte low, upp;
+  int low, up;
+  int loopLow, loopUp;
+  
   byte historyPos;
   
   Value(int low, int upp, int historyPos = 0) :

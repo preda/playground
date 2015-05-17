@@ -17,19 +17,15 @@ static inline bool IS(int p, auto bits) { return (bits >> p) & 1; }
 
 class Node {
 private:
-  // root state
+  Hash hash;
   uint64_t stoneBlack, stoneWhite;
+  uint64_t empty;
+  uint64_t pBlack, pWhite;
   int koPos;
   int nPass;
   bool swapped;
+  byte gids[N];
 
-  // group info
-  byte gids[BIG_N];
-  std::vector<uint64_t> groups;  
-
-  // derived
-  uint64_t empty;
-  Hash hash;
   
 public:
   Node();
@@ -59,8 +55,15 @@ public:
   void print(const char *s = 0) const;
   
 private:
-  uint64_t pointsBlack();
-  uint64_t pointsWhite();
+  uint64_t pointsBlack() {
+    if (pBlack == -1) { pBlack = bensonAliveBlack(); }
+    return pBlack;
+  }
+  
+  uint64_t pointsWhite() {
+    assert(pWhite != -1);
+    return pWhite;
+  }
 
   Node swapAndPlay(int p);
   void swapSidesInt();
@@ -69,22 +72,22 @@ private:
   int newGid();
   
   int libsOfGroup(uint64_t group) const { return size(group & empty); }
-  int libsOfGid(int gid) const { return libsOfGroup(groups[gid]); }
-  int libsOfGroupAtPos(int p) const { return libsOfGid(gids[p]); }
   int sizeOfGroupBlack(uint64_t group) { return size(group & stoneBlack; }
+
+  // int libsOfGid(int gid) const { return libsOfGroup(groups[gid]); }
+  // int libsOfGroupAtPos(int p) const { return libsOfGid(gids[p]); }
   
-  template<bool BLACK> int sizeOfGroup(uint64_t group) const { return size(group & stone<BLACK>()); }
-  template<bool BLACK> int sizeOfGid(int gid) const { return sizeOfGroup<BLACK>(groups[gid]); }
-  template<bool BLACK> int sizeOfGroupAtPos(int p) const { return sizeOfGid<BLACK>(gids[p]); }
+  // template<bool BLACK> int sizeOfGroup(uint64_t group) const { return size(group & stone<BLACK>()); }
+  // template<bool BLACK> int sizeOfGid(int gid) const { return sizeOfGroup<BLACK>(groups[gid]); }
+  // template<bool BLACK> int sizeOfGroupAtPos(int p) const { return sizeOfGid<BLACK>(gids[p]); }
       
   unsigned neibGroupsBlack(int p) const;
   void setGroupGid(uint64_t group, int gid);
 
-  template<bool BLACK> int valueOfMove(int pos) const;
+  int valueOfMoveBlack(int pos) const;
   uint64_t bensonAliveBlack() const;
   bool hasEyeSpaceWhite(uint64_t area) const;
   std::pair<uint64_t, uint64_t> enclosedRegions() const;
 
-  // uint64_t maybeMoves() const { return empty; }
   char charForPos(int p) const;
 };

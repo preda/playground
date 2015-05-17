@@ -39,21 +39,13 @@ void Driver::mtd(const Node &root, int iniDepth) {
   int beta = 3; //N;
   int d = iniDepth;
 
-  iNode.setup(".x.oxx.ox", 1);
-  
-  interestStack.push_back(9);
-  interestStack.push_back(25);
-  interestStack.push_back(17);
-  // interestStack.push_back(16);
-  /*
-  interestStack.push_back(8);
-  interestStack.push_back(16);
-  */
   while (true) {
-    rootD = d;
     Value v = miniMax(root, hash, &history, beta, d);
+    printf("MTD %d, beta %d: ", d, beta);
+    v.print();
+    
     assert(v.isEnough(beta) || v.isDepthLimited());
-    printf("MTD %d, beta %d: ", d, beta); v.print();
+
     if (v.isDepthLimited()) {
       ++d;
     } else {
@@ -67,43 +59,12 @@ void Driver::mtd(const Node &root, int iniDepth) {
     }
     break;
   }
-  /*
-  minMoves.clear();
-  std::vector<int> work;
-  int l = extract<true>(root, hash, &history, beta, d, d + 1, work);
-  assert(l <= d);
-  assert((int)minMoves.size() == l);
-  Node n = root;
-  for (int i = 0; i < l; ++i) {
-    int p = minMoves[i];
-    n = ((i&1) == 0) ? n.play<true>(p) : n.play<false>(p);
-    n.print();
-  }
-  */
 }
 
-Value Driver::miniMax(const Node &n, const Hash &hash, History *history, const int beta, const int d) {
-  bool interest = false;
-  // interest = (rootD - d) <= 3;
-  interest = n == iNode;
-  if (n == iNode) {
-    printf("%d : ", d);
-    for (int p : stack) { printf("%d ", p); };
-    printf("\n");
-  }
-  /*
-  if ((rootD - d) <= 3 && stack.size() >= interestStack.size()) {
-    for (int i = 0, n = interestStack.size(); i < n; ++i) {
-      if (interestStack[i] != stack[i]) { goto nope; }
-    }
-    interest = true;
-    // printf("* %d\n", d);
-  }
-  nope:
-  */
+Value Driver::miniMax(const Node &n, History *history, const int beta, const int d) {
   assert(d >= 0);
   Value v = tt.get(hash, d, beta);
-  // if (v.isEnough(beta) /*|| v.isDepthLimited()*/) { printf("tt return\n"); return v; }
+
   if (v.isNone()) {
     v = n.score(beta);
     tt.set(hash, v, d, beta);
@@ -217,42 +178,20 @@ int main(int argc, char **argv) {
   driver.mtd(n, depth);
 }
 
-template<bool MAX>
-int Driver::extract(const Node &n, const Hash &hash, History *history, const int beta, int d, int limit, std::vector<int> &moves) {
-  assert(limit > 0);
-  --limit;
-  if (n.isEnded()) {
-    assert(n.score<MAX>(beta).value == beta);
-    minMoves = moves;
-    return 0;
+  /*
+  bool interest = n == iNode;
+  if (n == iNode) {
+    printf("%d : ", d);
+    for (int p : stack) { printf("%d ", p); };
+    printf("\n");
   }
-  if (limit == 0 || d == 0) {
-    return 1;
-  }
-  Vect<byte, N+1> subMoves;
-  n.genMoves<MAX>(subMoves);
-  int nMoves = subMoves.size();
-  assert(nMoves > 0);
-  history->push(hash, d);
-  // int minP = 0;
-  for (int i = 0; i < nMoves; ++i) {
-    int p = subMoves[i];
-    Hash h = n.hashOnPlay<MAX>(hash, p);
-    if (!history->depthOf(h)) {
-      Node sub = n.play<MAX>(p);
-      Value v = miniMax<!MAX>(sub, h, history, beta, d - 1);
-      // assert(!v.isCut<MAX>(beta));
-      if (v.isEnough(beta) && v.low == beta) {
-        moves.push_back(p);
-        int subLimit = extract<!MAX>(sub, h, history, beta, d - 1, limit, moves);
-        moves.pop_back();
-        if (subLimit < limit) {
-          limit = subLimit;
-          if (limit == 0) { break; }
-        }
-      }
+
+  if ((rootD - d) <= 3 && stack.size() >= interestStack.size()) {
+    for (int i = 0, n = interestStack.size(); i < n; ++i) {
+      if (interestStack[i] != stack[i]) { goto nope; }
     }
+    interest = true;
+    // printf("* %d\n", d);
   }
-  history->pop(hash, d);
-  return limit + 1;  
-}
+  nope:
+  */

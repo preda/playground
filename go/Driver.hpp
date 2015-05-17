@@ -11,14 +11,9 @@ class History;
 
 class Driver {
   TransTable tt;
-  std::vector<int> minMoves;
-  std::vector<int> stack;
-  int rootD;
-  std::vector<int> interestStack;
-  Node iNode;
+  // Node interestNode;
   
 public:
   Value miniMax(const Node &, const Hash &, History *, const int beta, int d);
-  // template<bool MAX> int extract(const Node &, const Hash &, History *, const int beta, int d, int limit, std::vector<int> &moves);
   void mtd(const Node &n, int depth);
 };

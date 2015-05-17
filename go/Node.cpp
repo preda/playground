@@ -14,33 +14,18 @@
 #include <assert.h>
 #include <stdio.h>
 
-#define NOT_SET 1
-
 Node::Node() :
+  hash(0),
   stoneBlack(0),
   stoneWhite(0),
+  empty(INSIDE),
+  pBlack(-1),
+  pWhite(-1),
   koPos(0),
   nPass(0),
   swapped(false),
   gids{0},
-  groups({NOT_SET, NOT_SET}),
-  empty(INSIDE),
-  hash(0)
 {
-}
-
-uint64_t pointsBlack() {
-  uint64_t cached = groups[0];
-  if (cached == NOT_SET) {
-    cached = groups[0] = bensonAliveBlack();
-  }
-  return cached;
-}
-
-uint64_t pointsWhite() {
-  uint64_t cached = groups[1];
-  assert(cached != NOT_SET);
-  return cached;
 }
 
 /* The four points around <p>, not including <p>. */
@@ -58,11 +43,11 @@ Node play(int p) const {
   return Node(*this).swapAndPlay(p);
 }
 
-void Node::swapAndPlay(int pos) {
+void Node::swapAndPlay(Groups &groups, int pos) {
   swapped = !swapped;
   std::swap(stoneBlack, stoneWhite);
-  groups[1] = groups[0];
-  groups[0] = NOT_SET;
+  pWhite = pBlack;
+  pBlack = -1;
   
   assert(!(koPos && nPass));
   if (pos == PASS) {
@@ -94,14 +79,14 @@ void Node::swapAndPlay(int pos) {
               newGid = gid;
             } else {
               isSimple = false;
-              releaseGid(gid);
+              groups.release(gid);
             }
           }
         } else if (isWhite(p)) {
           uint64_t g = groups[gid];
           if (libsOfGroup(g) == 1) {
             capture |= g & stoneWhite;
-            releaseGid(gid);
+            groups.release(gid);
           }
         }
       }

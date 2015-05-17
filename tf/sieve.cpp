@@ -26,7 +26,8 @@ inline int set(int &a, int x) {
   return prev;
 }
 
-unsigned modinv1(unsigned n, int p) {
+unsigned modinv1(u64 step, int p) {
+  unsigned n = step % p;
   int d = p;
   int prevX = 1;
   int x = 0;
@@ -38,7 +39,7 @@ unsigned modinv1(unsigned n, int p) {
   return (prevX >= 0) ? prevX : (prevX + p);
 }
 
-unsigned modinv(int step, int p) {
+unsigned modinv(u64 step, unsigned p) {
   int n = step % p;
   int q = p / n;
   int d = p - q * n;
@@ -57,7 +58,7 @@ unsigned modinv(int step, int p) {
 
 unsigned invTab[ASIZE(primeDelta)];
 
-void initInvTab(int step) {
+void initInvTab(u64 step) {
   unsigned prev = 0;
   unsigned *out = invTab;
   for (unsigned delta : primeDelta) {
@@ -83,10 +84,11 @@ int step(int ii, int p) {
 #define BIT(p) ((unsigned)(1ull << i##p))
 #define STEP(p) i##p = step(i##p, p)
 #define INIT(p) int i##p = bitToClear(q, p, modinv(s, p))
-#define REPEAT_P32(w, s) w(3)s w(5)s w(7)s w(11)s w(13)s w(17)s w(19)s w(23)s w(29)s w(31)
+// w(3)s w(5)s
+#define REPEAT_P32(w, s) w(7)s w(11)s w(13)s w(17)s w(19)s w(23)s w(29)s w(31)
 #define REPEAT_P64(w, s) w(37)s w(41)s w(43)s w(47)s w(53)s w(59)s w(61)
 
-void sieve(unsigned q, unsigned s, unsigned *pw, unsigned *end) {
+void sieve(u128 q, u64 s, unsigned *words, unsigned nWords) {
   unsigned m3  = 0x49249249;
   unsigned m5  = 0x42108421;
   unsigned m7  = 0x10204081;
@@ -101,20 +103,20 @@ void sieve(unsigned q, unsigned s, unsigned *pw, unsigned *end) {
   REPEAT_P32(INIT, ;);
   REPEAT_P64(INIT, ;);
   
-  for (; pw < end; ++pw) {
+  for (unsigned *pw = words, *end = words + nWords; pw < end; ++pw) {
     *pw = REPEAT_P32(BITS, |) | REPEAT_P64(BIT, |);
     REPEAT_P32(STEP, ;);
     REPEAT_P64(STEP, ;);
   }
 
-  unsigned p = 0;
+  unsigned prime = 0;
   for (unsigned info : invTab) {
-    p += (info >> 24);
+    prime += (info >> 24);
     unsigned inv = info & 0xffffff;
-    unsigned btc = bitToClear(q, p, inv);
-    while (btc < NBITS) {
+    unsigned btc = bitToClear(q, prime, inv);
+    while (btc < (nWords << 3)) {
       words[btc >> 5] |= (1 << (btc & 31));
-      btc += p;
+      btc += prime;
     }
   }  
 }
@@ -143,46 +145,49 @@ std::vector<unsigned> mapPrimes(const std::vector<unsigned> &bitPos, unsigned q,
 }
 
 // whether 2 * k * p + 1 == 1 or 7 modulo 8.
-bool q1or7mod8(unsigned p, u64 k) {
-  return !(k & 3) || ((k & 3) + (p & 3) == 4);
+bool q1or7mod8(unsigned exp, u64 c) {
+  return !(c & 3) || ((c & 3) + (exp & 3) == 4);
 }
 
 // whether 2 * k * p + 1 != 0 modulo prime
-bool notMultiple(unsigned p, unsigned k, unsigned prime) {
+bool notMultiple(unsigned exp, unsigned c, unsigned prime) {
   // return (((k + k) % prime) * (p % prime) + 1) % prime != 0;
-  unsigned kk = k % prime;
-  return !kk || ((p % prime) * kk * 2 + 1) % prime != 0;
-  
   // return ((p % prime) * 2 * (u64)k + 1) % prime != 0;
+  return !c || (2 * c * (u64) exp + 1) % prime;
 }
 
-bool acceptClass(unsigned p, unsigned c) {
-  return q1or7mod8(p, c) && notMultiple(p, c, 3) && notMultiple(p, c, 5);
+bool acceptClass(unsigned exp, unsigned c) {
+  return q1or7mod8(exp, c) && notMultiple(exp, c, 3) && notMultiple(exp, c, 5);
 }
 
 int main() {
+  /*
   unsigned q = 1000001;
   unsigned s = 2;
   initInvTab(s);
-  sieve(q, s, words, words + NWORDS);
+  sieve(q, s, words, NWORDS);
   auto bitPos = extract(words, words + NWORDS);
   auto primes = mapPrimes(bitPos, q, s);
   for (unsigned p : primes) {
     printf("%d\n", p);
   }
+  */
 
-  /*
-  const unsigned p = 119904229;
+  const unsigned exp = 119904229;
   int startPow2 = 67;
-  u64 auxK = (((u128) 1) << (startPow2 - 1)) / p;
-  u64 k0 = auxK - auxK % NCLASS;
+  u64 auxK = (((u128) 1) << (startPow2 - 1)) / exp;
+  u64 k0  = auxK - auxK % NCLASS;
+  u128 q0 = 2 * exp * (u128) k0 + 1;
   // u64 repeat = auxK / NCLASS + 1;
+  u64 step = 2 * NCLASS * (u64) exp;
+  initInvTab(step);
   for (int c = 0; c <= NCLASS; ++c) {
-    if (accept(p, c)) {
-      sieve();
+    if (acceptClass(exp, c)) {
+      sieve(q0 + c, step, words, NWORDS);
+      auto bits = extract(words, words + NWORDS);
+      printf("%3d: %lu\n", c, bits.size());
     }
   }
-  */
 }
 
 void print(std::vector<int> &primes) {
