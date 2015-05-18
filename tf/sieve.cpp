@@ -1,3 +1,5 @@
+// Copyright (c) Mihai Preda, 2015.
+
 #include <stdio.h>
 #include <assert.h>
 #include <vector>
@@ -6,19 +8,12 @@ typedef unsigned char byte;
 typedef unsigned long long u64;
 typedef __uint128_t u128;
 
+#define ASIZE(a) (sizeof(a) / sizeof(a[0]))
+#define BITS_TO_WORDS(b) (((b) - 1) / 32  + 1)
+
 byte primeDelta[] = {
 #include "p1M.txt"
 };
-
-#define ASIZE(a) (sizeof(a) / sizeof(a[0]))
-
-#define NCLASS (4 * 3 * 5)
-
-#define NBITS 500000
-
-#define NWORDS ((NBITS - 1) / 32 + 1)
-
-unsigned words[NWORDS];
 
 inline int set(int &a, int x) {
   int prev = a;
@@ -56,22 +51,29 @@ unsigned modinv(u64 step, unsigned p) {
   return ret;
 }
 
+unsigned bitToClear(u128 q, unsigned prime, unsigned inv) {
+  unsigned qinv = (unsigned) (q * inv % prime);
+  return qinv ? prime - qinv : 0;
+}
+
 unsigned invTab[ASIZE(primeDelta)];
+unsigned btcTab[ASIZE(primeDelta)];
 
 void initInvTab(u64 step) {
   unsigned prev = 0;
   unsigned *out = invTab;
   for (unsigned delta : primeDelta) {
-    int p = prev + delta;
-    prev = p;
-    unsigned inv = modinv(step, p);
-    *out++ = inv | (delta << 24);
+    *out++ = modinv(step, prev += delta);
   }
 }
 
-unsigned bitToClear(u128 q, unsigned prime, unsigned inv) {
-  unsigned qinv = (unsigned) (q * inv % prime);
-  return qinv ? prime - qinv : 0;
+void initBtcTab(u128 q) {
+  unsigned prev = 0;
+  unsigned *out = btcTab;
+  unsigned *pInv = invTab;
+  for (unsigned delta : primeDelta) {
+    *out++ = bitToClear(q, prev += delta, *pInv++);    
+  }
 }
 
 int step(int ii, int p) {
@@ -83,15 +85,18 @@ int step(int ii, int p) {
 // #define BIT(p) ((i##p < 32) ? (1 << i##p) : 0)
 #define BIT(p) ((unsigned)(1ull << i##p))
 #define STEP(p) i##p = step(i##p, p)
-#define INIT(p) int i##p = bitToClear(q, p, modinv(s, p))
-// w(3)s w(5)s
-#define REPEAT_P32(w, s) w(7)s w(11)s w(13)s w(17)s w(19)s w(23)s w(29)s w(31)
-#define REPEAT_P64(w, s) w(37)s w(41)s w(43)s w(47)s w(53)s w(59)s w(61)
+#define INIT(p) int i##p = *pBtc++
+#define SAVE_BTC(p) *pBtc++ = i##p
+// bitToClear(q, p, modinv(s, p))
+// w(3)s w(5)s w(7)s 
+#define REPEAT_00_32(w, s) w(11)s w(13)s w(17)s w(19)s w(23)s w(29)s w(31)
+#define REPEAT_32_64(w, s) w(37)s w(41)s w(43)s w(47)s w(53)s w(59)s w(61)
+#define REPEAT(w, s) REPEAT_00_32(w, s)s REPEAT_32_64(w, s)
 
-void sieve(u128 q, u64 s, unsigned *words, unsigned nWords) {
-  unsigned m3  = 0x49249249;
-  unsigned m5  = 0x42108421;
-  unsigned m7  = 0x10204081;
+void sieve(u64 s, unsigned *words, unsigned nWords) {
+  // unsigned m3  = 0x49249249;
+  // unsigned m5  = 0x42108421;
+  // unsigned m7  = 0x10204081;
   unsigned m11 = 0x00400801;
   unsigned m13 = 0x04002001;
   unsigned m17 = 0x00020001;
@@ -99,32 +104,36 @@ void sieve(u128 q, u64 s, unsigned *words, unsigned nWords) {
   unsigned m23 = 0x00800001;
   unsigned m29 = 0x20000001;
   unsigned m31 = 0x80000001;
-
-  REPEAT_P32(INIT, ;);
-  REPEAT_P64(INIT, ;);
-  
+  unsigned *pBtc;
+  pBtc = btcTab;
+  REPEAT(INIT, ;); // REPEAT_P32(INIT, ;); REPEAT_P64(INIT, ;);
   for (unsigned *pw = words, *end = words + nWords; pw < end; ++pw) {
-    *pw = REPEAT_P32(BITS, |) | REPEAT_P64(BIT, |);
-    REPEAT_P32(STEP, ;);
-    REPEAT_P64(STEP, ;);
+    *pw = REPEAT_00_32(BITS, |) | REPEAT_32_64(BIT, |);
+    REPEAT(STEP, ;);
   }
-
-  unsigned prime = 0;
-  for (unsigned info : invTab) {
-    prime += (info >> 24);
-    unsigned inv = info & 0xffffff;
-    unsigned btc = bitToClear(q, prime, inv);
-    while (btc < (nWords << 3)) {
+  pBtc = btcTab;
+  REPEAT(SAVE_BTC, ;);
+  
+  unsigned skip = 14;
+  pBtc = btcTab + skip;
+  unsigned prime = 61;
+  unsigned nBits = nWords * 32;
+  unsigned *wEnd = words + nWords;
+  for (byte *pDelta = primeDelta + skip, *end = primeDelta + ASIZE(primeDelta); pDelta < end; ++pDelta) {
+    prime += *pDelta;
+    unsigned btc = *pBtc;
+    while (btc < nBits) {
       words[btc >> 5] |= (1 << (btc & 31));
       btc += prime;
     }
-  }  
+    *pBtc++ = btc - nBits;
+  }
 }
 
-std::vector<unsigned> extract(unsigned *pw, unsigned *end) {
+std::vector<unsigned> extract(unsigned *pw, unsigned nWords) {
   std::vector<unsigned> ret;
   int bitPos = 0;
-  for (; pw < end; ++pw, bitPos += 32) {
+  for (unsigned *end = pw + nWords; pw < end; ++pw, bitPos += 32) {
     unsigned bits = ~*pw;
     while (bits) {
       int i = __builtin_ctz(bits);
@@ -157,37 +166,47 @@ bool notMultiple(unsigned exp, unsigned c, unsigned prime) {
 }
 
 bool acceptClass(unsigned exp, unsigned c) {
-  return q1or7mod8(exp, c) && notMultiple(exp, c, 3) && notMultiple(exp, c, 5);
+  return q1or7mod8(exp, c) && notMultiple(exp, c, 3) && notMultiple(exp, c, 5)
+    && notMultiple(exp, c, 7);
 }
 
-int main() {
-  /*
-  unsigned q = 1000001;
-  unsigned s = 2;
-  initInvTab(s);
-  sieve(q, s, words, NWORDS);
-  auto bitPos = extract(words, words + NWORDS);
-  auto primes = mapPrimes(bitPos, q, s);
-  for (unsigned p : primes) {
-    printf("%d\n", p);
-  }
-  */
+#define NCLASS (4 * 3 * 5 * 7)
+#define MAX_WORDS (16 * 1024)
+#define MAX_BITS (MAX_WORDS << 5)
+unsigned words[MAX_WORDS];
 
+int main() {
   const unsigned exp = 119904229;
   int startPow2 = 67;
-  u64 auxK = (((u128) 1) << (startPow2 - 1)) / exp;
-  u64 k0  = auxK - auxK % NCLASS;
-  u128 q0 = 2 * exp * (u128) k0 + 1;
-  // u64 repeat = auxK / NCLASS + 1;
+  const u64 beginK = ((((u128) 1) << (startPow2 - 1)) - 1) / exp + 1;
+  const u64 endK = beginK + 4000000000ll;
+  // u64 endK   = (((u128) 1) << startPow2) / exp;
+  printf("Initial beginK %llu endK %llu\n", beginK, endK);
+  unsigned classMod = beginK % NCLASS;
   u64 step = 2 * NCLASS * (u64) exp;
   initInvTab(step);
+  // u64 k0 = beginK - classMod;
+  u64 total = 0;
   for (int c = 0; c <= NCLASS; ++c) {
     if (acceptClass(exp, c)) {
-      sieve(q0 + c, step, words, NWORDS);
-      auto bits = extract(words, words + NWORDS);
-      printf("%3d: %lu\n", c, bits.size());
+      u64 k = beginK + ((c < classMod) ? (NCLASS - classMod + c) : (c - classMod));
+      u128 q = 2 * exp * (u128) k + 1;
+      initBtcTab(q);
+      int primesInClass = 0;
+      while (k < endK) {          
+        u64 nK = (endK - beginK - 1) / NCLASS + 1;
+        unsigned nWords = (MAX_BITS < nK ) ? MAX_WORDS : BITS_TO_WORDS(nK);
+        sieve(step, words, nWords);
+        auto bits = extract(words, nWords); // use NCLASS
+        primesInClass += bits.size();
+        // printf("%3d: %lu\n", c, bits.size());
+        k += NCLASS * 32 * nWords; 
+      }
+      printf("class %d primes %d\n", c, primesInClass);
+      total += primesInClass;
     }
   }
+  printf("total %llu\n", total);
 }
 
 void print(std::vector<int> &primes) {
@@ -206,6 +225,36 @@ void print(std::vector<int> &primes) {
 }
 
 /*
+    if (btc < nBits) {
+      unsigned *pw = words + (btc >> 5);
+      int bitPos = btc & 31;
+      int wordStep = (prime >> 5) + 1;
+      int bitStep = prime - (wordStep << 5);
+      do {
+        *pw |= (1 << bitPos);
+        pw += wordStep;
+        bitPos += bitStep;
+        if (bitPos < 0) {
+          --pw;
+          bitPos += 32;
+        }
+      } while (pw < wEnd);
+      *pBtc++ = ((pw - words) << 5) + bitPos - nBits;
+    } else {
+      *pBtc++ = btc - nBits;
+    }
+
+
+  unsigned q = 1000001;
+  unsigned s = 2;
+  initInvTab(s);
+  sieve(q, s, words, NWORDS);
+  auto bitPos = extract(words, words + NWORDS);
+  auto primes = mapPrimes(bitPos, q, s);
+  for (unsigned p : primes) {
+    printf("%d\n", p);
+  }
+
 u128 makeQinv(unsigned exp, u64 k, unsigned inv) {
   return 2 * exp * (u64) inv * (u128) k + inv;
 }
@@ -233,9 +282,7 @@ unsigned bitToClearSlow(unsigned exp, u64 k, unsigned prime, unsigned inv) {
   unsigned qmod = (2 * kmod * (u64) exp + 1) % prime;
   return (prime - qmod) * (u64)inv % prime;
 }
-*/
 
-/*
 int smallPrimes[] = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61};
 int primes1K[] = {
    67,    71, 
