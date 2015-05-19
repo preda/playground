@@ -4,9 +4,7 @@
 #include <assert.h>
 #include <vector>
 
-typedef unsigned char byte;
-typedef unsigned long long u64;
-typedef __uint128_t u128;
+#include "common.h"
 
 #define ASIZE(a) (sizeof(a) / sizeof(a[0]))
 #define BITS_TO_WORDS(b) (((b) - 1) / 32  + 1)
@@ -151,23 +149,6 @@ std::vector<unsigned> mapPrimes(const std::vector<unsigned> &bitPos, unsigned q,
     ret.push_back(q + pos * s);
   }
   return ret;
-}
-
-// whether 2 * k * p + 1 == 1 or 7 modulo 8.
-bool q1or7mod8(unsigned exp, u64 c) {
-  return !(c & 3) || ((c & 3) + (exp & 3) == 4);
-}
-
-// whether 2 * k * p + 1 != 0 modulo prime
-bool notMultiple(unsigned exp, unsigned c, unsigned prime) {
-  // return (((k + k) % prime) * (p % prime) + 1) % prime != 0;
-  // return ((p % prime) * 2 * (u64)k + 1) % prime != 0;
-  return !c || (2 * c * (u64) exp + 1) % prime;
-}
-
-bool acceptClass(unsigned exp, unsigned c) {
-  return q1or7mod8(exp, c) && notMultiple(exp, c, 3) && notMultiple(exp, c, 5)
-    && notMultiple(exp, c, 7);
 }
 
 #define NCLASS (4 * 3 * 5 * 7)

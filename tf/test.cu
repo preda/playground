@@ -5,14 +5,12 @@
 #include <assert.h>
 #include <sys/time.h>
 
+#include "common.h"
+
 #define THREADS_PER_BLOCK 1024
 #define BLOCKS_PER_GRID 64
 
 // #define assert(x) 
-
-typedef unsigned long long u64;
-typedef unsigned short u16;
-typedef __uint128_t u128;
 
 struct U2 { unsigned a, b; };
 struct U3 { unsigned a, b, c; };
@@ -255,16 +253,20 @@ __managed__ u64 deviceFactor;
 __managed__ unsigned deviceClasses[NTHREADS];
 __managed__ U3 out;
 
-// #define NCLASS (4 * 3 * 5 * 7 * 11 * 13 * 17 * 19 * 23)
-#define NCLASS (4 * 3 * 5 * 7 * 11 * 13 * 17 * 19 * 23)
+__managed__ byte primeDelta[] = {
+#include "p1M.txt"
+};
 
-__global__ void tf(unsigned p, u64 k0, unsigned *classes, int repeat) {
+#define NCLASS (4 * 3 * 5 * 7)
+// * 11 * 13 * 17 * 19 * 23)
+
+__global__ void tf(unsigned exp, u64 k0, unsigned *classes, int repeat) {
   unsigned id = blockIdx.x * blockDim.x + threadIdx.x;
   unsigned c = deviceClasses[id];
   if (c == 0xffffffff) { return; }
   u64 k = k0 + c;
   for (int i = repeat; i > 0; --i) {
-    if (isFactor(p, k)) {
+    if (isFactor(exp, k)) {
       printf("%d found factor %llu\n", id, k);
       deviceFactor = k;
       break;
@@ -293,26 +295,6 @@ bool launch(unsigned p, u64 k0, int t, unsigned *classes, int repeat) {
   return false;
 }
 
-// whether 2 * k * p + 1 == 1 or 7 modulo 8.
-extern inline bool q1or7mod8(unsigned p, u64 k) {
-  return !(k & 3) || ((k & 3) + (p & 3) == 4);
-}
-
-// whether 2 * k * p + 1 != 0 modulo prime
-extern inline bool notMultiple(unsigned p, unsigned k, unsigned prime) {
-  // return (((k + k) % prime) * (p % prime) + 1) % prime != 0;
-  unsigned kk = k % prime;
-  return !kk || ((p % prime) * kk * 2 + 1) % prime != 0;
-  
-  // return ((p % prime) * 2 * (u64)k + 1) % prime != 0;
-}
-
-static bool accept(unsigned p, unsigned k) {
-  return q1or7mod8(p, k) && notMultiple(p, k, 3) && notMultiple(p, k, 5) && notMultiple(p, k, 7)
-    && notMultiple(p, k, 11) && notMultiple(p, k, 13) && notMultiple(p, k, 17)
-    && notMultiple(p, k, 19) && notMultiple(p, k, 23);
-}
-
 int findFactor(unsigned p, u64 k0, int repeat) {
   u64 timeStart = timeMillis();
   u64 time1 = timeStart;
@@ -321,26 +303,21 @@ int findFactor(unsigned p, u64 k0, int repeat) {
   int t = 0;
   int c = 0;
   int nLaunch = 0;
-  for (; c <= NCLASS - 4; c += 4) {
-    if (accept(p, c))     { classes[t++] = c; }
-    if (accept(p, c + 1)) { classes[t++] = c; }
-    if (accept(p, c + 2)) { classes[t++] = c; }
-    if (accept(p, c + 3)) { classes[t++] = c; }
-    
-    if (t >= NTHREADS) {
-      accepted += NTHREADS;
-      t = 0;
-      ++nLaunch;
-      if (launch(p, k0, NTHREADS, classes, repeat)) { return -1; }
-      if (!(nLaunch & 0xf)) {
-        u64 time2 = timeMillis();
-        printf("%8u: %u ms\n", c, (unsigned)(time2 - time1));
-        time1 = time2;
+  for (; c < NCLASS; ++c) {
+    if (acceptClass(p, c)) {
+      classes[t++] = c;
+      if (t >= NTHREADS) {
+        accepted += NTHREADS;
+        t = 0;
+        ++nLaunch;
+        if (launch(p, k0, NTHREADS, classes, repeat)) { return -1; }
+        if (!(nLaunch & 0xf)) {
+          u64 time2 = timeMillis();
+          printf("%8u: %u ms\n", c, (unsigned)(time2 - time1));
+          time1 = time2;
+        }
       }
     }
-  }
-  for (; c < NCLASS; c++) {
-    if (accept(p, c)) { classes[t++] = c; }
   }
   accepted += t;
   launch(p, k0, t, classes, repeat);
