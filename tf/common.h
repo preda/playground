@@ -1,7 +1,10 @@
-typedef unsigned long long u64;
-typedef unsigned short u16;
-typedef __uint128_t u128;
 typedef unsigned char byte;
+typedef unsigned short u16;
+typedef unsigned u32;
+typedef unsigned long long u64;
+typedef __uint128_t u128;
+
+#define ASIZE(a) (sizeof(a) / sizeof(a[0]))
 
 // whether 2 * c * p + 1 == 1 or 7 modulo 8.
 bool q1or7mod8(unsigned exp, u64 c) {
@@ -15,16 +18,7 @@ bool notMultiple(unsigned exp, unsigned c, unsigned prime) {
 
 bool acceptClass(unsigned exp, unsigned c) {
   return q1or7mod8(exp, c) && notMultiple(exp, c, 3) && notMultiple(exp, c, 5) && notMultiple(exp, c, 7);
-  /*
-    && notMultiple(p, k, 11) && notMultiple(p, k, 13) && notMultiple(p, k, 17)
-    && notMultiple(p, k, 19) && notMultiple(p, k, 23);
-  */
 }
-
-
-
-
-
 
 /*
 // whether 2 * k * p + 1 != 0 modulo prime

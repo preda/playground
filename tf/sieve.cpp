@@ -6,7 +6,6 @@
 
 #include "common.h"
 
-#define ASIZE(a) (sizeof(a) / sizeof(a[0]))
 #define BITS_TO_WORDS(b) (((b) - 1) / 32  + 1)
 
 byte primeDelta[] = {
