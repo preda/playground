@@ -308,8 +308,22 @@ __device__ u16 bitToClear(u32 exp, u64 k, u16 prime) {
 #define THREADS_PER_BLOCK 1024
 
 __managed__ u16 classTab[NGOODCLASS];
-__device__ u16 btcTab[NGOODCLASS][ASIZE(primes)];
+__device__ u16 classBtcTab[NGOODCLASS][ASIZE(primes)];
+__device__ u16 classBtcSmall[NGOODCLASS][14];
 
+// 3 times 64bit modulo, very expensive!
+__device__ int bitToClear(u32 exp, u64 k, u32 prime, u32 inv) {
+  u32 kmod = k % prime;
+  u32 qmod = (kmod * (u64) (exp << 1) + 1) % prime;
+  return (prime - qmod) * (u64) inv % prime;
+}
+
+__device__ u16 classBtc(u32 exp, u16 c, u16 prime, u16 inv) {
+  u16 qInv = (c * (u64) (exp << 1) + 1) * inv % prime;
+  u16 btc = qInv ? (prime - qInv) : qInv;
+  assert(btc == bitToClear(exp, c, prime, inv));
+  return btc;
+}
 __global__ void __launch_bounds__(128) initBtcTab(u32 exp) {
   u64 step = 2 * NCLASS * (u64) exp;
   int id = ID;
@@ -318,31 +332,37 @@ __global__ void __launch_bounds__(128) initBtcTab(u32 exp) {
   assert(inv == modInv32(step, prime));
   // #pragma unroll 4
   for (int i = 0; i < NGOODCLASS; ++i) {
-    u16 c = classTab[i];
-    u16 qInv = (c * (u64) (exp << 1) + 1) * inv % prime;
-    u16 btc = qInv ? (prime - qInv) : qInv;
-    assert(btc == bitToClear(exp, c, prime, inv));
-    btcTab[i][id] = btc;
+    classBtcTab[i][id] = classBtc(exp, classTab[i], prime, inv);
   }
+  u16 smallPrimes[] = {11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61};
+  if (id < ASIZE(smallPrimes)) {
+    prime = smallPrimes[id];
+    inv = modInv16(step, prime);
+    for (int i = 0; i < NGOODCLASS; ++i) {
+      classBtcSmall[i][id] = classBtc(exp, classTab[i], prime, inv);
+    }
+  }
+}
+
+__device__ int bumpBtc(int btc, u64 delta, u16 prime) {
+  return ((btc -= delta % prime) < 0) ? (btc + prime) : btc; 
 }
 
 #define REPEAT_32(w, s) w(11)s w(13)s w(17)s w(19)s w(23)s w(29)s w(31)
 #define REPEAT_64(w, s) w(37)s w(41)s w(43)s w(47)s w(53)s w(59)s w(61)
 #define REPEAT(w, s) REPEAT_32(w, s)s REPEAT_64(w, s)
 
-__global__ void tf(u32 exp, u64 k0) {
+__global__ void tf(u32 exp, int cid, u64 bitPos) {
 #define WORK_THREADS (THREADS_PER_BLOCK - 32)
 #define WORDS_PER_THREAD ((NWORDS + WORK_THREADS - 1) / WORK_THREADS) 
   __shared__ unsigned words[NWORDS];
   u32 localWords[WORDS_PER_THREAD] = {0xffffffff};
-
   int tid = threadIdx.x;
-
-  int c = classTab[blockIdx.x];
-  u64 k = k0 + c;
+  int c = classTab[cid];
+  u16 *btcTab = classBtcTab[cid];
 
   if (tid < 32) {
-#define INIT(p) int i##p = bitToClear(exp, k, p, 0)
+#define INIT(p) int i##p = bumpBtc(classBtc(exp, c, prime, inv)bitPos + (tid * 32), p)
     REPEAT(INIT, ;);
   
     unsigned m11 = 0x00400801;
