@@ -300,7 +300,7 @@ __device__ int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); 
 
 __global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, u64 kEnd) {
   __shared__ u32 words[NWORDS];
-#define LOCAL_WORDS ((NWORDS + WORK_THREADS - 1) / WORK_THREADS) 
+#define LOCAL_WORDS ((NWORDS + WORK_THREADS - 1) / WORK_THREADS)
   u32 localWords[LOCAL_WORDS];
   localWords[0] = 0;
   u32 *localEnd = localWords;
@@ -309,10 +309,13 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, u64 
   const int cid = blockIdx.x;
   const int c = classTab[cid];
   u32 * const btcTab = classBtcTab[cid];
-  u64 kBlock = k0 + c; // + (tid - SIEVE_THREADS) * (32 * NCLASS);
+  u64 kBlock = k0 + c + (tid - SIEVE_THREADS) * (32 * NCLASS);
   bool shouldExit = false;
+  int round = 0;
+  u32 timeSieve, timeTest, timeCopy;
   
   while (kBlock < kEnd && !shouldExit) {
+    u32 time0 = clock();
     if (tid < SIEVE_THREADS) {
       u32 *btcp = btcTab + tid;
       for (const u32 *p = primes + tid, *end = primes + ASIZE(primes); p < end; p += SIEVE_THREADS, btcp += SIEVE_THREADS) {
@@ -324,10 +327,11 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, u64 
         } while (btc < NBITS);
         *btcp = btc - NBITS;
       }
+      timeSieve = clock() - time0;
     } else {
       u32 *p = localWords;
       u32 bits = *p;
-      u64 kWord = kBlock + (tid - SIEVE_THREADS) * (32 * NCLASS);
+      u64 kWord = kBlock;
       while (true) {
         while (!bits) {
           kWord += WORK_THREADS * (32 * NCLASS);
@@ -343,20 +347,110 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, u64 
     }
   out:
     __syncthreads();
+    u32 tmp = clock();
+    timeTest = tmp - time0;
+    time0 = tmp;
+    
     shouldExit = foundFactor;
+    int pops = 0;
     if (tid >= SIEVE_THREADS) {
       u32 *out = localWords;
       for (u32 *p = words + (tid - SIEVE_THREADS), *end = words + NWORDS; p < end; p += WORK_THREADS, ++out) {
-        *out = ~*p;
+        u32 tmp = ~*p;
         *p = 0;
+        *out = tmp;
+        pops += __popc(tmp);
       }
       localEnd = out;
     }
     __syncthreads();
+    timeCopy = clock() - time0;
+    if (!tid) {
+      printf("class %d round %d sieve %u\n", cid, round, timeSieve);
+    } else if (tid == SIEVE_THREADS) {
+      printf("class %d round %d test %u copy %u pops %d\n", cid, round, timeTest, timeCopy, pops);
+    }
+    
     kBlock += NWORDS * 32 * NCLASS;
+    ++round;
   }
 }
 
+void initClasses(u32 exp) {
+  int nClass = 0;
+  for (int c = 0; c < NCLASS; ++c) {
+    if (acceptClass(exp, c)) {
+      classTab[nClass++] = (u16) c;
+    }
+  }
+  assert(nClass == NGOODCLASS);
+}
+
+u64 calculateK(u32 exp, int bits) {
+  u64 k = (((u128) 1) << (bits - 1)) / exp;
+  return k - k % NCLASS;
+}
+
+int main() {
+  const u32 exp = 119904229;
+  const u64 step = 2 * NCLASS * (u64) exp;
+  int startPow2 = 67;
+  const u64 k0   = calculateK(exp, startPow2);
+  const u64 kEnd = calculateK(exp, startPow2 + 1);
+  initClasses(exp);
+  printf("exp %u k0 %llu kEnd %llu\n", exp, k0, kEnd);
+  
+  // cudaSetDevice(1);
+  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
+  initBtcTab<<<51, 128>>>(exp, k0, step);
+  tf<<<NGOODCLASS, THREADS_PER_BLOCK>>>(exp, k0, kEnd);
+  cudaDeviceSynchronize();
+  // cudaError_t err = cudaGetLastError();
+  printf("CUDA says: %s\n", cudaGetErrorString(cudaGetLastError()));
+  if (foundFactor) {
+    printf("Found factor %llu\n", foundFactor);
+  }
+  cudaDeviceReset();
+}
+
+/*
+struct Test { unsigned p; u64 k; };
+
+#include "tests.inc"
+
+__global__ void test(unsigned p, u64 k) {
+  U3 q = makeQ(p, k);
+  testOut = expMod(p, q);
+}
+
+static void selfTest() {
+  int n = sizeof(tests) / sizeof(tests[0]);
+  for (Test *t = tests, *end = tests + n; t < end; ++t) {
+    unsigned p = t->p;
+    u64 k = t->k;
+    int shift = __builtin_clz(p);
+    assert(shift < 27);
+    p <<= shift;
+    // printf("p %u k %llu m: ", t->p, t->k); print(m);
+    test<<<1, 1>>>(p, k);
+    cudaDeviceSynchronize();
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+      printf("CUDA error: %s\n", cudaGetErrorString(err));
+      break;
+    } else {
+      if (testOut.a != 1 || testOut.b || testOut.c) {
+        printf("ERROR %10u %20llu m ", t->p, t->k); print(m); print(out);
+        break;
+      } else {
+        // printf("OK\n");
+      }
+    }
+  }
+}
+*/
+
+/*
 bool launch(unsigned p, u64 k0, int t, unsigned *classes, int repeat) {
   cudaDeviceSynchronize();
   cudaError_t err = cudaGetLastError();
@@ -407,75 +501,7 @@ int findFactor(unsigned p, u64 k0, int repeat) {
   printf("%8u: %u ms; total %llu\n", c, (unsigned)(time2 - time1), time2 - timeStart);
   return accepted;
 }
-
-int main() {
-  // cudaSetDevice(1);
-  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
-  
-  const unsigned exp = 119904229;
-  int nClass = 0;
-  // u16 classes[NGOODCLASS];
-  for (int c = 0; c < NCLASS; ++c) {
-    if (acceptClass(exp, c)) {
-      // classes[nClass++] = (u16) c;
-      classTab[nClass++] = (u16) c;
-    }
-  }
-  assert(nClass == NGOODCLASS);
-  
-  // printf("%s\n", cudaGetErrorString(cudaGetLastError()));
-
-  u64 step = 2 * NCLASS * (u64) exp;
-  int startPow2 = 67;
-  u64 auxK = (((u128) 1) << (startPow2 - 1)) / exp;
-  u64 k0 = auxK - auxK % NCLASS;
-  initBtcTab<<<51, 128>>>(exp, k0, step);
-  int repeat = (int) (auxK / NCLASS) + 1;
-  printf("exp %u K0 %llu threads %d classes %d repeat %d classes %d\n",
-         exp, k0, THREADS_PER_GRID, NCLASS, repeat, nClass);
-  // tf<<<nClass, THREADS_PER_BLOCK>>>(exp, k0);
-
-  cudaDeviceSynchronize();
-  cudaDeviceReset();
-  // int accepted = findFactor(p, k0, repeat);
-  // printf("accepted %d (%f%%)\n", accepted, accepted/(float)NCLASS*100);
-}
-
-struct Test { unsigned p; u64 k; };
-
-#include "tests.inc"
-
-__global__ void test(unsigned p, u64 k) {
-  U3 q = makeQ(p, k);
-  testOut = expMod(p, q);
-}
-
-static void selfTest() {
-  int n = sizeof(tests) / sizeof(tests[0]);
-  for (Test *t = tests, *end = tests + n; t < end; ++t) {
-    unsigned p = t->p;
-    u64 k = t->k;
-    int shift = __builtin_clz(p);
-    assert(shift < 27);
-    p <<= shift;
-    // printf("p %u k %llu m: ", t->p, t->k); print(m);
-    test<<<1, 1>>>(p, k);
-    cudaDeviceSynchronize();
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess) {
-      printf("CUDA error: %s\n", cudaGetErrorString(err));
-      break;
-    } else {
-      if (testOut.a != 1 || testOut.b || testOut.c) {
-        printf("ERROR %10u %20llu m ", t->p, t->k); print(m); print(out);
-        break;
-      } else {
-        // printf("OK\n");
-      }
-    }
-  }
-}
-
+*/
 
     /*    
     u32 *pw = words + tid;
@@ -576,16 +602,3 @@ __device__ u16 classBtc(u32 exp, u16 c, u16 prime, u16 inv) {
   return btc;
 }
 */
-
-
-/*
-__device__ u32 *extractBits(u32 *out, u32 bits, int bitBase) {
-  while (bits) {
-    int bit = bfind(bits);
-    bits &= ~(1<<bit);
-    *out++ = bitBase + bit;
-  }
-  return out;
-}
-*/
-
