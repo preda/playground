@@ -245,7 +245,7 @@ __device__ static bool isFactor(unsigned p, u64 k) {
 }
 
 __device__ const u32 primes[] = {
-#include "primes.inc"
+#include "primes-1M.inc"
 };
 
 #define NCLASS     (4 * 3 * 5 * 7)
@@ -269,7 +269,7 @@ __device__ u32 modInv32(u64 step, u32 prime) {
 
 #define ID (blockIdx.x * blockDim.x + threadIdx.x)
 #define BLOCKS_PER_GRID 64
-#define THREADS_PER_BLOCK 512
+#define THREADS_PER_BLOCK (512)
 #define SIEVE_THREADS 32
 #define WORK_THREADS (THREADS_PER_BLOCK - SIEVE_THREADS)
 #define THREADS_PER_GRID (THREADS_PER_BLOCK * BLOCKS_PER_GRID)
@@ -309,25 +309,25 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, u64 
   const int cid = blockIdx.x;
   const int c = classTab[cid];
   u32 * const btcTab = classBtcTab[cid];
-  u64 kBlock = k0 + c + (tid - SIEVE_THREADS) * (32 * NCLASS);
+  u64 kBlock = k0 + c + (tid - SIEVE_THREADS) * (32 * NCLASS) - NWORDS * 32 * NCLASS;
   bool shouldExit = false;
   int round = 0;
-  u32 timeSieve, timeTest, timeCopy;
+  // u32 timeSieve, timeTest, timeCopy;
   
-  while (kBlock < kEnd && !shouldExit) {
-    u32 time0 = clock();
+  while (kBlock < kEnd && !shouldExit && round < 100) {
+    // u32 time0 = clock();
     if (tid < SIEVE_THREADS) {
       u32 *btcp = btcTab + tid;
       for (const u32 *p = primes + tid, *end = primes + ASIZE(primes); p < end; p += SIEVE_THREADS, btcp += SIEVE_THREADS) {
         int prime = *p;
         int btc = *btcp;
-        do {
+        while (btc < NBITS) {
           atomicOr(words + (btc >> 5), 1 << (btc & 0x1f));
           btc += prime;
-        } while (btc < NBITS);
+        }
         *btcp = btc - NBITS;
       }
-      timeSieve = clock() - time0;
+      // timeSieve = clock() - time0;
     } else {
       u32 *p = localWords;
       u32 bits = *p;
@@ -347,9 +347,11 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, u64 
     }
   out:
     __syncthreads();
+    /*
     u32 tmp = clock();
     timeTest = tmp - time0;
     time0 = tmp;
+    */
     
     shouldExit = foundFactor;
     int pops = 0;
@@ -364,13 +366,14 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, u64 
       localEnd = out;
     }
     __syncthreads();
+    /*
     timeCopy = clock() - time0;
     if (!tid) {
-      printf("class %d round %d sieve %u\n", cid, round, timeSieve);
+      printf("class %d round %d sieve %u\n", cid, round, (timeSieve >> 10));
     } else if (tid == SIEVE_THREADS) {
-      printf("class %d round %d test %u copy %u pops %d\n", cid, round, timeTest, timeCopy, pops);
+      printf("class %d round %d test %u copy %u pops %d\n", cid, round, (timeTest >> 10), (timeCopy >> 10), pops);
     }
-    
+    */
     kBlock += NWORDS * 32 * NCLASS;
     ++round;
   }
@@ -391,7 +394,14 @@ u64 calculateK(u32 exp, int bits) {
   return k - k % NCLASS;
 }
 
+#define CUDA_CHECK_ERR  err = cudaGetLastError(); if (err) { printf("CUDA error: %s\n", cudaGetErrorString(err)); return; }
+
 int main() {
+  cudaError_t err;
+  // cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
+  // cudaSetDevice(1);
+  CUDA_CHECK_ERR;
+  
   const u32 exp = 119904229;
   const u64 step = 2 * NCLASS * (u64) exp;
   int startPow2 = 67;
@@ -400,13 +410,23 @@ int main() {
   initClasses(exp);
   printf("exp %u k0 %llu kEnd %llu\n", exp, k0, kEnd);
   
-  // cudaSetDevice(1);
-  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
-  initBtcTab<<<51, 128>>>(exp, k0, step);
+
+
+#define BTC_THREADS 1024
+#define BTC_BLOCKS (ASIZE(primes) / BTC_THREADS)
+  assert(ASIZE(primes) % BTC_THREADS == 0);
+  u64 t1 = timeMillis();
+  initBtcTab<<<BTC_BLOCKS, BTC_THREADS>>>(exp, k0, step);
+  cudaDeviceSynchronize();
+  u64 t2 = timeMillis();
+  printf("initBtcTab: blocks %lu time %llu\n", BTC_BLOCKS, (t2 - t1));
+  CUDA_CHECK_ERR;
+  //return;
   tf<<<NGOODCLASS, THREADS_PER_BLOCK>>>(exp, k0, kEnd);
   cudaDeviceSynchronize();
-  // cudaError_t err = cudaGetLastError();
-  printf("CUDA says: %s\n", cudaGetErrorString(cudaGetLastError()));
+  u64 t3 = timeMillis();
+  printf("tf time %llu\n", (t3 - t2));
+  CUDA_CHECK_ERR;
   if (foundFactor) {
     printf("Found factor %llu\n", foundFactor);
   }
