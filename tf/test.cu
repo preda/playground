@@ -1,13 +1,27 @@
 // Copyright (c) Mihai Preda, 2015.
 
-// #include <cuda.h>
+#include "common.h"
 #include <stdio.h>
 #include <assert.h>
 #include <sys/time.h>
 
-#include "common.h"
+#define THREADS_PER_BLOCK 512
+#define NCLASS     (4 * 3 * 5 * 7 * 11)
+#define NGOODCLASS (2 * 2 * 4 * 6 * 10)
 
-// #define assert(x) 
+#define SIEVE_THREADS 32
+#define WORK_THREADS (THREADS_PER_BLOCK - SIEVE_THREADS)
+#define NWORDS (12 * 1024)
+#define NBITS (NWORDS << 5)
+#define NPRIMES (ASIZE(primes))
+
+__device__ const u32 primes[] = {
+#include "primes-512k.inc"
+};
+
+__managed__ u64 foundFactor;
+__managed__ u16 classTab[NGOODCLASS];
+__device__ u32 classBtcTab[NGOODCLASS][NPRIMES];
 
 struct U2 { unsigned a, b; };
 struct U3 { unsigned a, b, c; };
@@ -74,6 +88,17 @@ __device__ static U3 add(U3 x, U3 y) {
   asm("add.cc.u32  %0, %3, %6;"
       "addc.cc.u32 %1, %4, %7;"
       "addc.u32    %2, %5, %8;"
+      : "=r"(a), "=r"(b), "=r"(c)
+      : "r"(x.a), "r"(x.b), "r"(x.c),
+        "r"(y.a), "r"(y.b), "r"(y.c));
+  return (U3) {a, b, c};
+}
+
+__device__ static U3 sub(U3 x, U3 y) {
+  unsigned a, b, c;
+  asm("sub.cc.u32  %0, %3, %6;"
+      "subc.cc.u32 %1, %4, %7;"
+      "subc.u32    %2, %5, %8;"
       : "=r"(a), "=r"(b), "=r"(c)
       : "r"(x.a), "r"(x.b), "r"(x.c),
         "r"(y.a), "r"(y.b), "r"(y.c));
@@ -150,6 +175,7 @@ __device__ static U6 square(U3 x) {
       "madc.hi.u32    %3, %9, %9, 0;"
       : "=r"(c), "=r"(d), "=r"(e), "=r"(f)
       : "r"(ab2.c), "r"(ab2.d), "r"(abc.a), "r"(abc.b), "r"(abc.c), "r"(x.c));
+  assert(!(f & 0xc0000000));
   return (U6) {ab2.a, ab2.b, c, d, e, f};
 }
 
@@ -159,10 +185,23 @@ INLINE U6 makeU6(U3 x) { return (U6) {x.a, x.b, x.c, 0, 0, 0}; }
 INLINE U6 makeU6(U4 x) { return (U6) {x.a, x.b, x.c, x.d, 0, 0}; }
 INLINE U6 makeU6(U5 x) { return (U6) {x.a, x.b, x.c, x.d, x.e, 0}; }
 INLINE U2 makeU2(u64 x) { return (U2) {(unsigned) x, (unsigned) (x >> 32)}; }
+__device__ U3 negative(U3 x) {
+  return (U3) {-x.a, ~x.b + (!x.a), ~x.c + (!x.a && !x.b)};
+}
+__device__ bool ge(U3 x, U3 y) {
+  return (x.c > y.c)
+    || (x.c == y.c && x.b > y.b)
+    || (x.c == y.c && x.b == y.b && x.a >= y.a);
+}
 
 __device__ static U3 shl(U3 x, int n) {
   assert(n >= 0 && n < 32 && !(x.c >> (32 - n)));
   return (U3) {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n)};
+}
+
+__device__ static U3 shr(U3 x, int n) {
+  assert(n >= 0 && n < 32);
+  return (U3) {shr(x.a, x.b, n), shr(x.b, x.c, n), x.c >> n};
 }
 
 __device__ static U4 shl(U4 x, int n) {
@@ -176,6 +215,7 @@ __device__ U3 mod(U4 x, U3 m) {
   int shift = __clz(m.c) - 2;
   assert(shift >= 0);
   m = shl(m, shift);
+  // __syncthreads();
   unsigned R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(m.b, m.c, 3)) + 1);
 
   unsigned n = mulhi(x.d, R);
@@ -204,6 +244,7 @@ __device__ static unsigned mprime0(U3 m) {
 // See https://www.cosic.esat.kuleuven.be/publications/article-144.pdf
 // Returns x * U^-1 mod m
 __device__ static U3 montRed(U6 x, U3 m, unsigned mp0) {
+  assert(!(x.f & 0xc0000000));
   unsigned t = x.a * mp0;
   U4 f = mul(m, t);
   x = add(x, makeU6(f));
@@ -216,42 +257,58 @@ __device__ static U3 montRed(U6 x, U3 m, unsigned mp0) {
   f = mul(m, t);
   x = add(x, shl2w(f));
   assert(!x.a && !x.b && !x.c);
+  assert(!(x.f & 0xc0000000));
   return (U3) {x.d, x.e, x.f};
 }
 
 // returns 2^p % m
-__device__ static U3 expMod(unsigned p, U3 m) {
+__device__ U3 expModOld(u32 exp, U3 m) {
   unsigned mp0 = mprime0(m);
 
-  U3 a = mod((U4){0, 0, 0, (1 << (p >> 27))}, m);
-  for (p <<= 5; p; p += p) {
+  U3 a = mod((U4){0, 0, 0, (1 << (exp >> 27))}, m);
+  for (exp <<= 5; exp; exp += exp) {
     // print(a);
     a = montRed(square(a), m, mp0);
-    if (p & 0x80000000) { a = shl(a, 1); }
+    if (exp & 0x80000000) { a = shl(a, 1); }
   }
   return montRed(makeU6(a), m, mp0);
 }
 
+__device__ U3 simpleMod(U3 m) {
+  int s = __clz(m.c);
+  m = shl(m, s);
+  U3 a = negative(m);
+  assert(!(a.c & 0x80000000));
+  return (a.c & 0x40000000) ? sub(a, ge(a, m) ? m : shr(m, 1)) : a;
+}
+
+__device__ U3 expModNew(u32 exp, U3 m) {
+  unsigned mp0 = mprime0(m);
+  U3 a = simpleMod(m);
+  assert(!(a.c & 0xc0000000));
+  do {
+    a = montRed(square(a), m, mp0);
+    if (exp & 0x80000000) { a = shl(a, 1); }
+    exp += exp;
+  } while (exp);
+  return montRed(makeU6(a), m, mp0);
+}
+
 // return 2 * k * p + 1 as U3
-__device__ static U3 makeQ(unsigned p, u64 k) {
+__device__ U3 makeQ(unsigned p, u64 k) {
   return add(mul(makeU2(k), p + p), (U3){1, 0, 0});
 }
 
 // returns whether (2*k*p + 1) is a factor of (2^p - 1)
-__device__ static bool isFactor(unsigned p, u64 k) {
-  U3 q = makeQ(p, k);
-  U3 r = expMod(p, q);
+__device__ bool isFactor(u32 exp, u32 flushedExp, u64 k) {
+  U3 q = makeQ(exp, k);
+  U3 r = expModNew(flushedExp, q);
+#ifndef NDEBUG
+  U3 r2 = expModOld(exp, q);
+#endif
+  assert(r.a == r2.a && r.b == r2.b && r.c == r2.c);
   return r.a == 1 && !r.b && !r.c;
 }
-
-__device__ const u32 primes[] = {
-#include "primes-1M.inc"
-};
-
-#define NCLASS     (4 * 3 * 5 * 7)
-#define NGOODCLASS (2 * 2 * 4 * 6)
-#define NWORDS (12 * 1024)
-#define NBITS (NWORDS << 5)
 
 __device__ u32 modInv32(u64 step, u32 prime) {
   int n = step % prime;
@@ -268,16 +325,6 @@ __device__ u32 modInv32(u64 step, u32 prime) {
 }
 
 #define ID (blockIdx.x * blockDim.x + threadIdx.x)
-#define BLOCKS_PER_GRID 64
-#define THREADS_PER_BLOCK (512)
-#define SIEVE_THREADS 32
-#define WORK_THREADS (THREADS_PER_BLOCK - SIEVE_THREADS)
-#define THREADS_PER_GRID (THREADS_PER_BLOCK * BLOCKS_PER_GRID)
-
-__managed__ u64 foundFactor;
-__managed__ U3 testOut;
-__managed__ u16 classTab[NGOODCLASS];
-__device__ u32 classBtcTab[NGOODCLASS][ASIZE(primes)];
 
 // 3 times 64bit modulo, very expensive!
 __device__ int bitToClear(u32 exp, u64 k, u32 prime, u32 inv) {
@@ -285,6 +332,8 @@ __device__ int bitToClear(u32 exp, u64 k, u32 prime, u32 inv) {
   u32 qmod = (kmod * (u64) (exp << 1) + 1) % prime;
   return (prime - qmod) * (u64) inv % prime;
 }
+
+__device__ int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
 
 __global__ void __launch_bounds__(1024) initBtcTab(u32 exp, u64 k0, u64 step) {
   for (const u32 *p = primes + ID, *end = primes + ASIZE(primes); p < end; p += gridDim.x * blockDim.x) {
@@ -296,9 +345,7 @@ __global__ void __launch_bounds__(1024) initBtcTab(u32 exp, u64 k0, u64 step) {
   }
 }
 
-__device__ int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
-
-__global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, u64 kEnd) {
+__global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, u64 kEnd, int c0) {
   __shared__ u32 words[NWORDS];
 #define LOCAL_WORDS ((NWORDS + WORK_THREADS - 1) / WORK_THREADS)
   u32 localWords[LOCAL_WORDS];
@@ -306,8 +353,9 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, u64 
   u32 *localEnd = localWords;
   
   const int tid = threadIdx.x;
-  const int cid = blockIdx.x;
+  const int cid = c0 + blockIdx.x;
   const int c = classTab[cid];
+  const u32 flushedExp = exp << __clz(exp);
   u32 * const btcTab = classBtcTab[cid];
   u64 kBlock = k0 + c + (tid - SIEVE_THREADS) * (32 * NCLASS) - NWORDS * 32 * NCLASS;
   bool shouldExit = false;
@@ -340,7 +388,7 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, u64 
         }
         int bit = bfind(bits);
         bits &= ~(1 << bit);
-        if (isFactor(exp, kWord + bit * NCLASS)) {
+        if (isFactor(exp, flushedExp, kWord + bit * NCLASS)) {
           foundFactor = kWord + bit * NCLASS;
         }
       }
@@ -398,7 +446,7 @@ u64 calculateK(u32 exp, int bits) {
 
 int main() {
   cudaError_t err;
-  // cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
+  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
   // cudaSetDevice(1);
   CUDA_CHECK_ERR;
   
@@ -410,11 +458,9 @@ int main() {
   initClasses(exp);
   printf("exp %u k0 %llu kEnd %llu\n", exp, k0, kEnd);
   
-
-
 #define BTC_THREADS 1024
-#define BTC_BLOCKS (ASIZE(primes) / BTC_THREADS)
-  assert(ASIZE(primes) % BTC_THREADS == 0);
+#define BTC_BLOCKS (NPRIMES / BTC_THREADS)
+  assert(NPRIMES % BTC_THREADS == 0);
   u64 t1 = timeMillis();
   initBtcTab<<<BTC_BLOCKS, BTC_THREADS>>>(exp, k0, step);
   cudaDeviceSynchronize();
@@ -422,203 +468,20 @@ int main() {
   printf("initBtcTab: blocks %lu time %llu\n", BTC_BLOCKS, (t2 - t1));
   CUDA_CHECK_ERR;
   //return;
-  tf<<<NGOODCLASS, THREADS_PER_BLOCK>>>(exp, k0, kEnd);
-  cudaDeviceSynchronize();
+#define BLOCKS 64
+  assert(NGOODCLASS % BLOCKS == 0);
   u64 t3 = timeMillis();
-  printf("tf time %llu\n", (t3 - t2));
+  for (int cid = 0; cid < NGOODCLASS; cid += BLOCKS) {
+    tf<<<BLOCKS, THREADS_PER_BLOCK>>>(exp, k0, kEnd, cid);
+    cudaDeviceSynchronize();
+    u64 t4 = timeMillis();
+    printf("class %d time %llu\n", cid, (t4 - t3));
+    t3 = t4;
+  }
+  printf("TF: %llu\n", (t3 - t2));
   CUDA_CHECK_ERR;
   if (foundFactor) {
     printf("Found factor %llu\n", foundFactor);
   }
-  cudaDeviceReset();
+  // cudaDeviceReset();
 }
-
-/*
-struct Test { unsigned p; u64 k; };
-
-#include "tests.inc"
-
-__global__ void test(unsigned p, u64 k) {
-  U3 q = makeQ(p, k);
-  testOut = expMod(p, q);
-}
-
-static void selfTest() {
-  int n = sizeof(tests) / sizeof(tests[0]);
-  for (Test *t = tests, *end = tests + n; t < end; ++t) {
-    unsigned p = t->p;
-    u64 k = t->k;
-    int shift = __builtin_clz(p);
-    assert(shift < 27);
-    p <<= shift;
-    // printf("p %u k %llu m: ", t->p, t->k); print(m);
-    test<<<1, 1>>>(p, k);
-    cudaDeviceSynchronize();
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess) {
-      printf("CUDA error: %s\n", cudaGetErrorString(err));
-      break;
-    } else {
-      if (testOut.a != 1 || testOut.b || testOut.c) {
-        printf("ERROR %10u %20llu m ", t->p, t->k); print(m); print(out);
-        break;
-      } else {
-        // printf("OK\n");
-      }
-    }
-  }
-}
-*/
-
-/*
-bool launch(unsigned p, u64 k0, int t, unsigned *classes, int repeat) {
-  cudaDeviceSynchronize();
-  cudaError_t err = cudaGetLastError();
-  if (err != cudaSuccess) {
-    printf("CUDA error: %s\n", cudaGetErrorString(err));
-    return true;
-  }
-  if (foundFactor) {
-    printf("factor %llu\n", foundFactor);
-    return true;
-  }
-  memcpy(classTab, classes, t * sizeof(unsigned));
-  if (t < THREADS_PER_GRID) {
-    printf("Tail %d\n", t);
-    memset(classTab + t, 0xff, (THREADS_PER_GRID - t) * sizeof(unsigned));
-  }
-  tf<<<BLOCKS_PER_GRID, THREADS_PER_BLOCK>>>(p, k0, k0);
-  return false;
-}
-
-int findFactor(unsigned p, u64 k0, int repeat) {
-  u64 timeStart = timeMillis();
-  u64 time1 = timeStart;
-  unsigned classes[THREADS_PER_GRID];
-  int accepted = 0;
-  int t = 0;
-  int c = 0;
-  int nLaunch = 0;
-  for (; c < NCLASS; ++c) {
-    if (acceptClass(p, c)) {
-      classes[t++] = c;
-      if (t >= THREADS_PER_GRID) {
-        accepted += THREADS_PER_GRID;
-        t = 0;
-        ++nLaunch;
-        if (launch(p, k0, THREADS_PER_GRID, classes, repeat)) { return -1; }
-        if (!(nLaunch & 0xf)) {
-          u64 time2 = timeMillis();
-          printf("%8u: %u ms\n", c, (unsigned)(time2 - time1));
-          time1 = time2;
-        }
-      }
-    }
-  }
-  accepted += t;
-  launch(p, k0, t, classes, repeat);
-  u64 time2 = timeMillis(); time1 = time2;
-  printf("%8u: %u ms; total %llu\n", c, (unsigned)(time2 - time1), time2 - timeStart);
-  return accepted;
-}
-*/
-
-    /*    
-    u32 *pw = words + tid;
-    int popCount = 0;
-    for (u32 *p = words + tid, *end = words + NWORDS; p < end; p += THREADS_PER_BLOCK) {
-      u32 w = ~*p;
-      *p = w;
-      popCount += __popc(w);
-    }
-    __syncthreads();
-    u32 save = *words;
-    u32 *countp = words;
-    u32 *outPos = words + atomicAdd(countp, popCount);
-    __syncthreads();
-    *words = save;
-    for (u32 *p = words + tid, *end = words + NWORDS; p < end; p += THREADS_PER_BLOCK) {
-      u32 w = *p;
-      extractBits(out, *p, ((p - words) << 5));
-    }
-    __syncthreads();
-  }
-  
-      while (bits) {
-        int bit = bfind(bits);
-        bits &= ~(1<<bit);
-        *outPos++ = bitBase + bit;
-      }
-      */  
-  
-  /*
-  unsigned c = classTab[id];
-  if (c == 0xffffffff) { return; }
-  u64 k = k0 + c;
-  for (int i = repeat; i > 0; --i) {
-    if (isFactor(exp, k)) {
-      printf("%d found factor %llu\n", id, k);
-      deviceFactor = k;
-      break;
-    }
-    k += NCLASS;
-  }
-  */
-
-
-/*
-__device__ int bumpBtc(int btc, u64 delta, u16 prime) {
-  return ((btc -= delta % prime) < 0) ? (btc + prime) : btc; 
-}
-
-#define REPEAT_32(w, s) w(11)s w(13)s w(17)s w(19)s w(23)s w(29)s w(31)
-#define REPEAT_64(w, s) w(37)s w(41)s w(43)s w(47)s w(53)s w(59)s w(61)
-#define REPEAT(w, s) REPEAT_32(w, s)s REPEAT_64(w, s)
-*/
-
-/*
-__device__ u16 invTab[ASIZE(primes)];
-__global__ void initInvTab(u64 step) {
-  int id = ID;
-  u16 prime = primes[id];
-  u16 inv = modInv16(step, prime);
-  assert(inv == modInv32(step, prime));
-  invTab[id] = inv;
-}
-*/
-
-/*
-__device__ u16 modInv16(u64 step, u16 prime) {
-  u16 n = step % prime;
-  u16 q = prime / n;
-  u16 d = prime - q * n;
-  int x = -q;
-  int prevX = 1;
-  while (d) {
-    q = n / d;
-    { u16 save = d; d = n - q * d; n = save;         }
-    { int save = x; x = prevX - q * x; prevX = save; }
-  }
-  return (prevX >= 0) ? prevX : (prevX + prime);
-}
-
-__device__ u16 bitToClear(u32 exp, u64 k, u16 prime) {
-  u64 step = 2 * NCLASS * (u64) exp;  
-  u16 inv = modInv16(step, prime);
-  assert(inv == modInv32(step, prime));
-  return bitToClear(exp, k, prime, inv);
-}
-
-__device__ u16 bitToClear(u32 exp, u64 k, u16 prime, u16 inv) {
-  u16 kmod = k % prime;
-  u16 qmod = ((exp << 1) * (u64) kmod + 1) % prime;
-  return (prime - qmod) * (u32) inv % prime;
-}
-
-__device__ u16 classBtc(u32 exp, u16 c, u16 prime, u16 inv) {
-  u16 qInv = (c * (u64) (exp << 1) + 1) * inv % prime;
-  u16 btc = qInv ? (prime - qInv) : qInv;
-  assert(btc == bitToClear(exp, c, prime, inv));
-  return btc;
-}
-*/

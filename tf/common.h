@@ -17,7 +17,8 @@ bool notMultiple(unsigned exp, unsigned c, unsigned prime) {
 }
 
 bool acceptClass(unsigned exp, unsigned c) {
-  return q1or7mod8(exp, c) && notMultiple(exp, c, 3) && notMultiple(exp, c, 5) && notMultiple(exp, c, 7);
+  return q1or7mod8(exp, c) && notMultiple(exp, c, 3) && notMultiple(exp, c, 5)
+    && notMultiple(exp, c, 7) && notMultiple(exp, c, 11);
 }
 
 /*

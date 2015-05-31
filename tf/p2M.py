@@ -6,8 +6,9 @@ import pyprimes
 #print(f)
 
 n = 0
-#(1047139 + 1)
-for p in pyprimes.primes(11, 65536):
+#1047139
+#1047157
+for p in pyprimes.primes(13, 512 * 1024):
     print("%d, " % p, end='')
     n += 1
     if n >= 1024:
