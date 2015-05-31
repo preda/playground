@@ -215,7 +215,6 @@ __device__ U3 mod(U4 x, U3 m) {
   int shift = __clz(m.c) - 2;
   assert(shift >= 0);
   m = shl(m, shift);
-  // __syncthreads();
   unsigned R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(m.b, m.c, 3)) + 1);
 
   unsigned n = mulhi(x.d, R);
@@ -227,17 +226,36 @@ __device__ U3 mod(U4 x, U3 m) {
   return (U3) {x.a, x.b, x.c};
 }
 
-// Compute mp0 such that: (unsigned) (m * mp0) == 0xffffffff; using variant extended euclidian algorithm.
-__device__ static unsigned mprime0(U3 m) {
-  unsigned m0 = shr(m.a, m.b, 1) + 1;
-  unsigned u = m0;
-  unsigned v = 0x80000000;
-  #pragma unroll 1
-  for (int i = 0; i < 31; ++i) {
+/*
+__device__ U3 mod2(U5 x, U3 m) {
+  assert(m.c);
+  int shift = __clz(m.c) - 2;
+  assert(shift >= 0);
+  m = shl(m, shift);
+  unsigned R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(m.b, m.c, 3)) + 1);
+
+  unsigned n = mulhi(x.e, R);
+  x = sub(x, shl(mul(m, n), 3));
+  assert(!(x.d & 0xfffffff0));
+  n = mulhi(shl(x.c, x.d, 28), R) >> 25;
+  x = sub(x, mul(m, n));
+  assert(!x.d);
+  return (U3) {x.a, x.b, x.c};
+}
+*/
+
+// Compute mp0 such that: (unsigned) (m * mp0) == 0xffffffff, using extended binary euclidian algorithm.
+// See http://www.ucl.ac.uk/~ucahcjm/combopt/ext_gcd_python_programs.pdf
+// m must be odd.
+__device__ static unsigned mprime0(unsigned m) {
+  m = (m >> 1) + 1;
+  unsigned u = m;
+  unsigned v = m << 31; 
+  for (int i = 0; i < 30; ++i) {
+    u = (u >> 1) + ((u & 1) ? m : 0);
     v = shr(v, u, 1);
-    u = (u >> 1) + ((u & 1) ? m0 : 0);
   }
-  return v;
+  return v | 1;
 }
 
 // Montgomery Reduction
@@ -262,9 +280,23 @@ __device__ static U3 montRed(U6 x, U3 m, unsigned mp0) {
 }
 
 // returns 2^p % m
-__device__ U3 expModOld(u32 exp, U3 m) {
-  unsigned mp0 = mprime0(m);
+__device__ U3 expMod(u32 exp, U3 m) {
+  assert(exp & 0x80000000);
+  unsigned mp0 = mprime0(m.a);
 
+  U3 a = mod((U4){0, 0, 0, (1 << (exp >> 27))}, m);
+  for (exp <<= 5; exp; exp += exp) {
+    a = montRed(square(a), m, mp0);
+    if (exp & 0x80000000) { a = shl(a, 1); }
+  }
+  return montRed(makeU6(a), m, mp0);
+}
+
+/*
+__device__ U3 expMod2(u32 exp, U3 m) {
+  unsigned mp0 = mprime0(m);
+  int sh = exp >> 25;
+  assert(sh >= 64 && sh < 128);
   U3 a = mod((U4){0, 0, 0, (1 << (exp >> 27))}, m);
   for (exp <<= 5; exp; exp += exp) {
     // print(a);
@@ -273,6 +305,7 @@ __device__ U3 expModOld(u32 exp, U3 m) {
   }
   return montRed(makeU6(a), m, mp0);
 }
+*/
 
 __device__ U3 simpleMod(U3 m) {
   int s = __clz(m.c);
@@ -283,7 +316,7 @@ __device__ U3 simpleMod(U3 m) {
 }
 
 __device__ U3 expModNew(u32 exp, U3 m) {
-  unsigned mp0 = mprime0(m);
+  unsigned mp0 = mprime0(m.a);
   U3 a = simpleMod(m);
   assert(!(a.c & 0xc0000000));
   do {
@@ -302,9 +335,9 @@ __device__ U3 makeQ(unsigned p, u64 k) {
 // returns whether (2*k*p + 1) is a factor of (2^p - 1)
 __device__ bool isFactor(u32 exp, u32 flushedExp, u64 k) {
   U3 q = makeQ(exp, k);
-  U3 r = expModNew(flushedExp, q);
+  U3 r = expMod(flushedExp, q);
 #ifndef NDEBUG
-  U3 r2 = expModOld(exp, q);
+  U3 r2 = expModNew(flushedExp, q);
 #endif
   assert(r.a == r2.a && r.b == r2.b && r.c == r2.c);
   return r.a == 1 && !r.b && !r.c;
