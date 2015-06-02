@@ -121,12 +121,11 @@ __device__ static U4 mul(U3 x, unsigned n) {
   unsigned a, b, c, d;
   asm(
       "mul.hi.u32     %1, %4, %7;"
-      "mul.lo.u32     %0, %4, %7;"
-      "mad.lo.cc.u32  %1, %5, %7, %1;"
       "mul.lo.u32     %2, %6, %7;"
-      "mul.hi.u32     %3, %6, %7;"
+      "mad.lo.cc.u32  %1, %5, %7, %1;"
+      "mul.lo.u32     %0, %4, %7;"
       "madc.hi.cc.u32 %2, %5, %7, %2;"
-      "addc.u32       %3, %3, 0;"
+      "madc.hi.u32    %3, %6, %7, 0;"
       : "=r"(a), "=r"(b), "=r"(c), "=r"(d)
       : "r"(x.a), "r"(x.b), "r"(x.c), "r"(n));
   return (U4) {a, b, c, d};
@@ -480,71 +479,3 @@ int main() {
   }
   // cudaDeviceReset();
 }
-
-
-/*
-__device__ U4 square(u32 xa, u32 xb) {
-  assert(!(xb & 0x80000000));
-  unsigned a, b, c, d;
-  asm(
-      "mul.hi.u32     %1, %4, %4;",
-      "add.u32        %3, %5, %5;",
-      "mad.lo.cc.u32  %1, %3, %4, %1;",
-      "mul.lo.u32     %2, %5, %5;",
-      "mul.lo.u32     %0, %4, %4;",
-      "madc.hi.cc.u32 %2, %3, %4, %2;",
-      "madc.hi.u32    %3, %5, %5, 0;"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d)
-      : "r"(xa), "r"(xb));
-  return (U4) {a, b, c, d};
-}
-
-__device__ U6 square2(U3 x) {
-  U4 bc2 = square(x.b, x.c);
-  unsigned a, b, c, d, e;
-  asm(
-      "mul.u32.lo     %1, %5, %6;"
-      "mul.u32.hi     %2, %5, %6;"
-      "add.u32        %7, %7, %7;"
-      "add.u32.cc     %1, %1, %1;"
-      "addc.u32.cc    %2, %2, %2;"
-      "madc.u32.hi.cc %3, %5, %7;"
-      "addc.u32       %4, %10, 0;"
-      "mad.u32.hi.cc  %1, %5, %5, %1;"
-      "madc.u32.lo.cc %2, %5, %7, %2;"
-      "addc.u32.cc    %3, %3, %9;"
-      "addc.u32       %4, 0, 0;"
-      "add.u32.cc     %3, %3, %8;"
-      "addc.u32       %4, 0, 0;"
-      // TODO      
-}
-
-__device__ static U6 square(U3 x) {
-  assert(!(x.c & 0x80000000));
-  unsigned a, b, c, d, e, f;
-  asm(
-      "mul.lo.u32      %1, %6, %7;"      // (a * b).lo
-      "mul.hi.u32      %2, %6, %7;"      // (a * b).hi
-      
-      "add.cc.u32      %1, %1, %1;"      // 2 * (a * b).lo
-      "mul.lo.u32      %0, %6, %6;"      // (a * a).lo
-      "addc.cc.u32     %2, %2, %2;"      // 2 * (a * b).hi
-      "add.u32         %5, %8, %8;"      // 2 * c; c < 2^31
-
-      "madc.hi.cc.u32  %3, %7, %7, 0;"   // (b * b).hi
-      "madc.lo.u32     %4, %8, %8, 0;"   // (c * c).lo;
-
-      "mad.hi.cc.u32   %1, %6, %6, %1;"  // (a * a).hi
-      "madc.lo.cc.u32  %2, %7, %7, %2;"  // (b * b).lo
-      "madc.lo.cc.u32  %3, %7, %5, %3;"  // 2 * (b * c).lo
-      "addc.u32        %4, %4, 0;"
-      
-      "mad.lo.cc.u32   %2, %6, %5, %2;"  // 2 * (a * c).lo
-      "madc.hi.cc.u32  %3, %6, %5, %3;"  // 2 * (a * c).hi
-      "madc.hi.cc.u32  %4, %7, %5, %4;"  // 2 * (b * c).hi
-      "madc.hi.u32     %5, %8, %8, 0;"   // (c * c).hi
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e), "=r"(f)
-      : "r"(x.a), "r"(x.b), "r"(x.c));
-  return (U6) {a, b, c, d, e, f};
-}
-*/
