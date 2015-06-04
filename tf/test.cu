@@ -138,19 +138,16 @@ __device__ static U4 mul(U3 x, unsigned n) {
   return (U4) {a, b, c, d};
 }
 
-// return (x*n >> 32) + 1
+// returns (x*n >> 32) + (n ? 1 : 0)
 __device__ U3 mulM(U3 x, u32 n) {
   unsigned a, b, c;
   asm(
-      "set.ne.u32.u32 %0,  0, %6;"
-      "neg.s32        %0, %0;"
-      "mad.hi.u32     %0, %3, %6, %0;"
       "mul.lo.u32     %1, %5, %6;"
-      "mad.lo.cc.u32  %0, %4, %6, %0;"
+      "mad.hi.u32     %0, %3, %6, %7;"
       "madc.hi.cc.u32 %1, %4, %6, %1;"
       "madc.hi.u32    %2, %5, %6, 0;"
       : "=r"(a), "=r"(b), "=r"(c)
-      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(n));
+      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(n), "r"(x.b * n + (n ? 1 : 0)));
   return (U3) {a, b, c};
 }
 
@@ -314,7 +311,7 @@ __device__ static unsigned mprime(unsigned m) {
 // Returns x * U^-1 mod m
 __device__ static U3 montRed(U6 x6, U3 m, unsigned mp) {
   assert(!(x6.f & 0xc0000000));
-  assert(x6.a + (x6.a * mp) == 0);
+  assert(x6.a + (x6.a * mp * m.a) == 0);
   U5 x5 = add((U5) {x6.b, x6.c, x6.d, x6.e, x6.f}, mulM(m, x6.a * mp));
   U4 x4 = add((U4) {x5.b, x5.c, x5.d, x5.e}, mulM(m, x5.a * mp));
   U3 x3 = add((U3) {x4.b, x4.c, x4.d}, mulM(m, x4.a * mp));
@@ -333,10 +330,6 @@ __device__ U3 expMod(u32 exp, U3 m) {
   for (exp <<= 6; exp; exp += exp) {
     U6 a2 = square(a);
     a = montRed(a2, m, mp);
-#ifndef NDEBUG
-    U3 b = montRed1(a2, m, mp);
-    assert(a.a == b.a && a.b == b.b && a.c == b.c);
-#endif
     if (exp & 0x80000000) { a = shl(a, 1); }
   }
   return montRed(makeU6(a), m, mp);
@@ -351,14 +344,6 @@ __device__ U3 makeQ(unsigned p, u64 k) {
 __device__ bool isFactor(u32 exp, u32 flushedExp, u64 k) {
   U3 q = makeQ(exp, k);
   U3 r = expMod(flushedExp, q);
-#ifndef NDEBUG
-  U3 r2 = expMod1(flushedExp, q);
-  if (!(r.a == r2.a && r.b == r2.b && r.c == r2.c)) {
-    printf("m 0x%08x%08x%08x r1 0x%08x%08x%08x r2 0x%08x%08x%08x\n",
-           q.c, q.b, q.a, r.c, r.b, r.a, r2.c, r2.b, r2.a);
-  }
-  assert(r.a == r2.a && r.b == r2.b && r.c == r2.c);
-#endif
   return r.a == 1 && !r.b && !r.c;
 }
 
