@@ -71,20 +71,6 @@ INLINE unsigned shr(unsigned a, unsigned b, int n) {
   return r;
 }
 
-__device__ static U6 add(U6 x, U6 y) {
-  unsigned a, b, c, d, e, f;
-  asm("add.cc.u32  %0, %6,  %12;"
-      "addc.cc.u32 %1, %7,  %13;"
-      "addc.cc.u32 %2, %8,  %14;"
-      "addc.cc.u32 %3, %9,  %15;"
-      "addc.cc.u32 %4, %10, %16;"
-      "addc.u32    %5, %11, %17;"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e), "=r"(f)
-      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(x.e), "r"(x.f),
-        "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d), "r"(y.e), "r"(y.f));
-  return (U6) {a, b, c, d, e, f};
-}
-
 __device__ U5 add(U5 x, U3 y) {
  unsigned a, b, c, d, e;
   asm("add.cc.u32  %0, %5, %10;"
@@ -114,17 +100,6 @@ __device__ static U3 add(U3 x, U3 y) {
   asm("add.cc.u32  %0, %3, %6;"
       "addc.cc.u32 %1, %4, %7;"
       "addc.u32    %2, %5, %8;"
-      : "=r"(a), "=r"(b), "=r"(c)
-      : "r"(x.a), "r"(x.b), "r"(x.c),
-        "r"(y.a), "r"(y.b), "r"(y.c));
-  return (U3) {a, b, c};
-}
-
-__device__ static U3 sub(U3 x, U3 y) {
-  unsigned a, b, c;
-  asm("sub.cc.u32  %0, %3, %6;"
-      "subc.cc.u32 %1, %4, %7;"
-      "subc.u32    %2, %5, %8;"
       : "=r"(a), "=r"(b), "=r"(c)
       : "r"(x.a), "r"(x.b), "r"(x.c),
         "r"(y.a), "r"(y.b), "r"(y.c));
@@ -227,24 +202,6 @@ __device__ static U6 square(U3 x) {
   return (U6) {ab2.a, ab2.b, c, d, e, f};
 }
 
-// square 80bit -> 160bit
-__device__ static U5 square80(U3 x) {
-  assert(!(x.c & 0xffff0000));
-  U2 ab = {x.a, x.b};
-  U4 ab2 = square(ab);
-  U3 abc = mul(ab, x.c + x.c);
-  
-  unsigned c, d, e;
-  asm(
-      "add.cc.u32  %0, %3, %5;"
-      "addc.cc.u32 %1, %4, %6;"
-      "madc.lo.u32 %2, %8, %8, %7;"
-      : "=r"(c), "=r"(d), "=r"(e)
-      : "r"(ab2.c), "r"(ab2.d), "r"(abc.a), "r"(abc.b), "r"(abc.c), "r"(x.c));
-  return (U5) {ab2.a, ab2.b, c, d, e};
-}
-
-
 INLINE U5 shl1w(U4 x)  { return (U5) {0, x.a, x.b, x.c, x.d}; }
 INLINE U6 shl2w(U4 x)  { return (U6) {0, 0, x.a, x.b, x.c, x.d}; }
 INLINE U6 makeU6(U3 x) { return (U6) {x.a, x.b, x.c, 0, 0, 0}; }
@@ -265,13 +222,6 @@ __device__ static U3 shl(U3 x, int n) {
   assert(n >= 0 && n < 32 && !(x.c >> (32 - n)));
   return (U3) {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n)};
 }
-
-/*
-__device__ static U3 shr(U3 x, int n) {
-  assert(n >= 0 && n < 32);
-  return (U3) {shr(x.a, x.b, n), shr(x.b, x.c, n), x.c >> n};
-}
-*/
 
 __device__ static U4 shl(U4 x, int n) {
   // assert(n >= 0 && n < 32 && !(x.d >> (32 - n)));
@@ -362,81 +312,34 @@ __device__ static unsigned mprime(unsigned m) {
 // Montgomery Reduction
 // See https://www.cosic.esat.kuleuven.be/publications/article-144.pdf
 // Returns x * U^-1 mod m
-__device__ static U3 montRed1(U6 x, U3 m, unsigned mp0) {
-  assert(!(x.f & 0xc0000000));
-  unsigned t = x.a * mp0;
-  U4 f = mul(m, t);
-  x = add(x, makeU6(f));
-  assert(!x.a);
-  t = x.b * mp0;
-  f = mul(m, t);
-  x = add(x, makeU6(shl1w(f)));
-  assert(!x.b);
-  t = x.c * mp0;
-  f = mul(m, t);
-  x = add(x, shl2w(f));
-  assert(!x.a && !x.b && !x.c);
-  assert(!(x.f & 0xc0000000));
-  return (U3) {x.d, x.e, x.f};
-}
-
 __device__ static U3 montRed(U6 x6, U3 m, unsigned mp) {
   assert(!(x6.f & 0xc0000000));
-  U5 x5 = (U5) {x6.b, x6.c, x6.d, x6.e, x6.f};
-  x5 = add(x5, mulM(m, x6.a * mp));
-  U4 x4 = (U4) {x5.b, x5.c, x5.d, x5.e};
-  x4 = add(x4, mulM(m, x5.a * mp));
-  U3 x3 = (U3) {x4.b, x4.c, x4.d};
-  x3 = add(x3, mulM(m, x4.a * mp));
+  assert(x6.a + (x6.a * mp) == 0);
+  U5 x5 = add((U5) {x6.b, x6.c, x6.d, x6.e, x6.f}, mulM(m, x6.a * mp));
+  U4 x4 = add((U4) {x5.b, x5.c, x5.d, x5.e}, mulM(m, x5.a * mp));
+  U3 x3 = add((U3) {x4.b, x4.c, x4.d}, mulM(m, x4.a * mp));
   assert(!(x3.c & 0xc0000000));
   return x3;
 }
 
 // returns 2^exp % m
-__device__ U3 expMod1(u32 exp, U3 m) {
+__device__ U3 expMod(u32 exp, U3 m) {
   assert(exp & 0x80000000);
-  unsigned mp0 = mprime(m.a);
-
-  int sh = exp >> 27;
-  assert(sh >= 16 && sh < 32);
-  U3 a = modx((U4){0, 0, 0, 1 << sh}, m);
-  for (exp <<= 5; exp; exp += exp) {
-    a = montRed(square(a), m, mp0);
-    if (exp & 0x80000000) { a = shl(a, 1); }
-  }
-  return montRed(makeU6(a), m, mp0);
-}
-
-// returns 2^exp % m
-__device__ U3 expMod2(u32 exp, U3 m) {
-  assert(exp & 0x80000000);
-  unsigned mp0 = mprime(m.a);
+  unsigned mp = mprime(m.a);
 
   int sh = exp >> 26;
   assert(sh >= 32 && sh < 64);
   U3 a = mod((U5){0, 0, 0, 0, 1 << (sh - 32)}, m);
   for (exp <<= 6; exp; exp += exp) {
     U6 a2 = square(a);
-    a = montRed(a2, m, mp0);
+    a = montRed(a2, m, mp);
 #ifndef NDEBUG
-    U3 b = montRed1(a2, m, mp0);
+    U3 b = montRed1(a2, m, mp);
     assert(a.a == b.a && a.b == b.b && a.c == b.c);
 #endif
     if (exp & 0x80000000) { a = shl(a, 1); }
   }
-  return montRed(makeU6(a), m, mp0);
-}
-
-__device__ U3 expMod3(u32 exp, U3 m) {
-  assert(exp & 0x80000000);
-  int sh = exp >> 25;
-  assert(sh >= 64 && sh < 128);
-  U3 a = mod((U4){0, 0, 1 << (sh - 64), 1 << (sh - 96)}, m);
-  for (exp <<= 7; exp; exp += exp) {
-    a = mod(square80(a), m);
-    if (exp & 0x80000000) { a = shl(a, 1); }
-  }
-  return a; // TODO: final mod.
+  return montRed(makeU6(a), m, mp);
 }
 
 // return 2 * k * p + 1 as U3
@@ -447,7 +350,7 @@ __device__ U3 makeQ(unsigned p, u64 k) {
 // returns whether (2*k*p + 1) is a factor of (2^p - 1)
 __device__ bool isFactor(u32 exp, u32 flushedExp, u64 k) {
   U3 q = makeQ(exp, k);
-  U3 r = expMod2(flushedExp, q);
+  U3 r = expMod(flushedExp, q);
 #ifndef NDEBUG
   U3 r2 = expMod1(flushedExp, q);
   if (!(r.a == r2.a && r.b == r2.b && r.c == r2.c)) {
@@ -591,7 +494,7 @@ u64 calculateK(u32 exp, int bits) {
   return k - k % NCLASS;
 }
 
-#define CUDA_CHECK_ERR  err = cudaGetLastError(); if (err) { printf("CUDA error: %s\n", cudaGetErrorString(err)); return; }
+#define CUDA_CHECK_ERR  err = cudaGetLastError(); if (err) { printf("CUDA error: %s\n", cudaGetErrorString(err)); return 0; }
 
 int main() {
   cudaError_t err;
@@ -633,4 +536,25 @@ int main() {
     printf("Found factor %llu\n", foundFactor);
   }
   // cudaDeviceReset();
+  return 0;
 }
+
+/*
+__device__ static U3 montRed1(U6 x, U3 m, unsigned mp) {
+  assert(!(x.f & 0xc0000000));
+  unsigned t = x.a * mp;
+  U4 f = mul(m, t);
+  x = add(x, makeU6(f));
+  assert(!x.a);
+  t = x.b * mp;
+  f = mul(m, t);
+  x = add(x, makeU6(shl1w(f)));
+  assert(!x.b);
+  t = x.c * mp;
+  f = mul(m, t);
+  x = add(x, shl2w(f));
+  assert(!x.a && !x.b && !x.c);
+  assert(!(x.f & 0xc0000000));
+  return (U3) {x.d, x.e, x.f};
+}
+*/
