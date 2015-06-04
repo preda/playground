@@ -170,7 +170,6 @@ __device__ static U4 square(U2 x) {
 }
 
 __device__ static U6 square(U3 x) {
-  // assert(!(x.c & 0xffff8000));
   U2 ab = {x.a, x.b};
   U4 ab2 = square(ab);
   U3 abc = mul(ab, x.c + x.c);
@@ -187,6 +186,24 @@ __device__ static U6 square(U3 x) {
   assert(!(f & 0xc0000000));
   return (U6) {ab2.a, ab2.b, c, d, e, f};
 }
+
+// square 80bit -> 160bit
+__device__ static U5 square80(U3 x) {
+  assert(!(x.c & 0xffff0000));
+  U2 ab = {x.a, x.b};
+  U4 ab2 = square(ab);
+  U3 abc = mul(ab, x.c + x.c);
+  
+  unsigned c, d, e;
+  asm(
+      "add.cc.u32  %0, %3, %5;"
+      "addc.cc.u32 %1, %4, %6;"
+      "madc.lo.u32 %2, %8, %8, %7;"
+      : "=r"(c), "=r"(d), "=r"(e)
+      : "r"(ab2.c), "r"(ab2.d), "r"(abc.a), "r"(abc.b), "r"(abc.c), "r"(x.c));
+  return (U5) {ab2.a, ab2.b, c, d, e};
+}
+
 
 INLINE U5 shl1w(U4 x)  { return (U5) {0, x.a, x.b, x.c, x.d}; }
 INLINE U6 shl2w(U4 x)  { return (U6) {0, 0, x.a, x.b, x.c, x.d}; }
@@ -288,15 +305,6 @@ __device__ U3 mod(U5 x, U3 m) {
   return (U3) {x.c, x.d, x.e};
 }
 
-  /*
-  U4 sx = x;
-  if (x.d & 0xfffffffc) {
-    printf("0x%08x%08x%08x%08x 0x%08x%08x%08x%08x 0x%08x%08x%08x %08x %08x\n",
-           sx.d, sx.c, sx.b, sx.a, x.d, x.c, x.b, x.a, m.c, m.b, m.a, R, n);
-  }
-  */
-
-
 // Compute m' such that: (unsigned) (m * m') == 0xffffffff, using extended binary euclidian algorithm.
 // See http://www.ucl.ac.uk/~ucahcjm/combopt/ext_gcd_python_programs.pdf
 // m must be odd.
@@ -333,11 +341,13 @@ __device__ static U3 montRed(U6 x, U3 m, unsigned mp0) {
 }
 
 // returns 2^exp % m
-__device__ U3 expMod(u32 exp, U3 m) {
+__device__ U3 expMod1(u32 exp, U3 m) {
   assert(exp & 0x80000000);
   unsigned mp0 = mprime(m.a);
 
-  U3 a = modx((U4){0, 0, 0, (1 << (exp >> 27))}, m);
+  int sh = exp >> 27;
+  assert(sh >= 16 && sh < 32);
+  U3 a = modx((U4){0, 0, 0, 1 << sh}, m);
   for (exp <<= 5; exp; exp += exp) {
     a = montRed(square(a), m, mp0);
     if (exp & 0x80000000) { a = shl(a, 1); }
@@ -345,29 +355,31 @@ __device__ U3 expMod(u32 exp, U3 m) {
   return montRed(makeU6(a), m, mp0);
 }
 
+// returns 2^exp % m
 __device__ U3 expMod2(u32 exp, U3 m) {
   assert(exp & 0x80000000);
   unsigned mp0 = mprime(m.a);
 
   int sh = exp >> 26;
-  U3 a2 = modx((U4){0, 0, 0, (1 << (exp >> 27))}, m);
-  U3 a = mod((U5){0, 0, 0, 1 << sh, 1 << (sh - 32)}, m);
+  assert(sh >= 32 && sh < 64);
+  U3 a = mod((U5){0, 0, 0, 0, 1 << (sh - 32)}, m);
   for (exp <<= 6; exp; exp += exp) {
     a = montRed(square(a), m, mp0);
     if (exp & 0x80000000) { a = shl(a, 1); }
   }
-  U3 r = montRed(makeU6(a), m, mp0);
-  return r;  
-  /*
-  exp <<= 5;
-  a2 = montRed(square(a2), m, mp0);
-  if (exp & 0x80000000) { a2 = shl(a2, 1); }
+  return montRed(makeU6(a), m, mp0);
+}
 
-  U3 r2 = montRed(makeU6(a2), m, mp0);
-  /*
-  printf("m 0x%08x%08x%08x r1 0x%08x%08x%08x r2 0x%08x%08x%08x\n",
-         m.c, m.b, m.a, r.c, r.b, r.a, r2.c, r2.b, r2.a);
-  */
+__device__ U3 expMod3(u32 exp, U3 m) {
+  assert(exp & 0x80000000);
+  int sh = exp >> 25;
+  assert(sh >= 64 && sh < 128);
+  U3 a = mod((U4){0, 0, 1 << (sh - 64), 1 << (sh - 96)}, m);
+  for (exp <<= 7; exp; exp += exp) {
+    a = mod(square80(a), m);
+    if (exp & 0x80000000) { a = shl(a, 1); }
+  }
+  return a; // TODO: final mod.
 }
 
 // return 2 * k * p + 1 as U3
@@ -378,9 +390,9 @@ __device__ U3 makeQ(unsigned p, u64 k) {
 // returns whether (2*k*p + 1) is a factor of (2^p - 1)
 __device__ bool isFactor(u32 exp, u32 flushedExp, u64 k) {
   U3 q = makeQ(exp, k);
-  U3 r = expMod2(flushedExp, q);
+  U3 r = expMod3(flushedExp, q);
 #ifndef NDEBUG
-  U3 r2 = expMod(flushedExp, q);
+  U3 r2 = expMod1(flushedExp, q);
   if (!(r.a == r2.a && r.b == r2.b && r.c == r2.c)) {
     printf("m 0x%08x%08x%08x r1 0x%08x%08x%08x r2 0x%08x%08x%08x\n",
            q.c, q.b, q.a, r.c, r.b, r.a, r2.c, r2.b, r2.a);
