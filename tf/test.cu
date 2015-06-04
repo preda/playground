@@ -53,7 +53,9 @@ INLINE __host__ void print(U6 a) {
   printf("0x%08x%08x%08x%08x%08x%08x\n", a.f, a.e, a.d, a.c, a.b, a.a);
 }
 
+#ifdef NDEBUG
 #define print(x)
+#endif
 
 // Funnel shift left.
 INLINE unsigned shl(unsigned a, unsigned b, int n) {
@@ -117,6 +119,12 @@ __device__ static U4 sub(U4 x, U4 y) {
   return (U4) {a, b, c, d};
 }
 
+// return x - (y << 32)
+__device__ U5 subShl1w(U5 x, U4 y) {
+  U4 t = sub((U4) {x.b, x.c, x.d, x.e}, y);
+  return (U5) {x.a, t.a, t.b, t.c, t.d};
+}
+
 __device__ static U4 mul(U3 x, unsigned n) {
   unsigned a, b, c, d;
   asm(
@@ -162,6 +170,7 @@ __device__ static U4 square(U2 x) {
 }
 
 __device__ static U6 square(U3 x) {
+  // assert(!(x.c & 0xffff8000));
   U2 ab = {x.a, x.b};
   U4 ab2 = square(ab);
   U3 abc = mul(ab, x.c + x.c);
@@ -171,8 +180,8 @@ __device__ static U6 square(U3 x) {
       "add.cc.u32  %0, %4, %6;"
       "addc.cc.u32 %1, %5, %7;"
       "mul.hi.u32  %3, %9, %9;"
-      "madc.lo.u32 %2, %9, %9, %8;"
-      // "addc.u32       %3, %3, 0;"
+      "madc.lo.cc.u32 %2, %9, %9, %8;"
+      "addc.u32       %3, %3, 0;"
       : "=r"(c), "=r"(d), "=r"(e), "=r"(f)
       : "r"(ab2.c), "r"(ab2.d), "r"(abc.a), "r"(abc.b), "r"(abc.c), "r"(x.c));
   assert(!(f & 0xc0000000));
@@ -182,8 +191,9 @@ __device__ static U6 square(U3 x) {
 INLINE U5 shl1w(U4 x)  { return (U5) {0, x.a, x.b, x.c, x.d}; }
 INLINE U6 shl2w(U4 x)  { return (U6) {0, 0, x.a, x.b, x.c, x.d}; }
 INLINE U6 makeU6(U3 x) { return (U6) {x.a, x.b, x.c, 0, 0, 0}; }
-INLINE U6 makeU6(U4 x) { return (U6) {x.a, x.b, x.c, x.d, 0, 0}; }
+INLINE U5 makeU5(U4 x) { return (U5) {x.a, x.b, x.c, x.d, 0}; }
 INLINE U6 makeU6(U5 x) { return (U6) {x.a, x.b, x.c, x.d, x.e, 0}; }
+INLINE U6 makeU6(U4 x) { return makeU6(makeU5(x)); }
 INLINE U2 makeU2(u64 x) { return (U2) {(unsigned) x, (unsigned) (x >> 32)}; }
 __device__ U3 negative(U3 x) {
   return (U3) {-x.a, ~x.b + (!x.a), ~x.c + (!x.a && !x.b)};
@@ -199,17 +209,24 @@ __device__ static U3 shl(U3 x, int n) {
   return (U3) {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n)};
 }
 
+/*
 __device__ static U3 shr(U3 x, int n) {
   assert(n >= 0 && n < 32);
   return (U3) {shr(x.a, x.b, n), shr(x.b, x.c, n), x.c >> n};
 }
+*/
 
 __device__ static U4 shl(U4 x, int n) {
-  assert(n >= 0 && n < 32 && !(x.d >> (32 - n)));
+  // assert(n >= 0 && n < 32 && !(x.d >> (32 - n)));
   return (U4) {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n), shl(x.c, x.d, n)};
 }
 
-// Relaxed modulo: result < 2^96. m >= 2^64 && m < 2^94.
+__device__ U5 shl(U5 x, int n) {
+  assert(n >= 0 && n < 32 && !(x.e >> (32 - n)));
+  U4 t = shl((U4) {x.a, x.b, x.c, x.d}, n);
+  return (U5) {t.a, t.b, t.c, t.d, shl(x.d, x.e, n)};
+}
+
 __device__ U3 mod(U4 x, U3 m) {
   assert(m.c);
   assert(!(m.c & 0x80000000));
@@ -226,23 +243,59 @@ __device__ U3 mod(U4 x, U3 m) {
   assert(!x.d);
   return (U3) {x.a, x.b, x.c};
 }
-/*
-__device__ U3 mod(U5 x, U3 m) {
+
+__device__ U3 modx(U4 x, U3 m) {
   assert(m.c);
+  assert(!(m.c & 0x80000000));
   int shift = __clz(m.c) - 2;
   assert(shift >= 0);
   m = shl(m, shift);
   unsigned R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(m.b, m.c, 3)) + 1);
+  // unsigned R = 0x7fffffff00000001 / shl(m.b, m.c, 2);
+
+
+  unsigned n = mulhi(x.d, R);
+  x = sub(x, shl(mul(m, n), 3));
+  assert(!(x.d & 0xfffffffc));
+  n = mulhi(shl(x.c, x.d, 28), R) >> 25;
+  x = sub(x, mul(m, n));
+  assert(!x.d);
+  return (U3) {x.a, x.b, x.c};
+}
+
+__device__ U3 mod(U5 x, U3 m) {
+  assert(m.c);
+  int shift = __clz(m.c) + 1;
+  assert(shift >= 18);
+  unsigned R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(m.b, m.c, shift)) + 1);
   unsigned n;
   
   n = mulhi(x.e, R);
-  x = sub(x, shl1w(shl(mul(m, n), 3)));
-  assert(!(x.e & 0xfffffffc));
+  x = subShl1w(x, shl(mul(m, n), shift));
+  assert(!(x.e & 0xfffffff0));
+  x = shl(x, 28);
   
-  n = mulhi(shl(x.d, x.e, 30), R);
-  x = sub(x, shl(mul(m, n), 
+  n = mulhi(x.e, R);
+  x = subShl1w(x, shl(mul(m, n), shift));
+  assert(!(x.e & 0xfffffff0));
+  x = shl(x, 28);
+  
+  n = mulhi(x.e, R) & 0xffffffc0;
+  x = subShl1w(x, shl(mul(m, n), shift));
+  assert((!(x.e & 0xffffff80)));
+  x = shl(x, 8);
+  assert(!(x.e & 0xffff8000));
+  return (U3) {x.c, x.d, x.e};
 }
-*/
+
+  /*
+  U4 sx = x;
+  if (x.d & 0xfffffffc) {
+    printf("0x%08x%08x%08x%08x 0x%08x%08x%08x%08x 0x%08x%08x%08x %08x %08x\n",
+           sx.d, sx.c, sx.b, sx.a, x.d, x.c, x.b, x.a, m.c, m.b, m.a, R, n);
+  }
+  */
+
 
 // Compute m' such that: (unsigned) (m * m') == 0xffffffff, using extended binary euclidian algorithm.
 // See http://www.ucl.ac.uk/~ucahcjm/combopt/ext_gcd_python_programs.pdf
@@ -279,17 +332,42 @@ __device__ static U3 montRed(U6 x, U3 m, unsigned mp0) {
   return (U3) {x.d, x.e, x.f};
 }
 
-// returns 2^p % m
+// returns 2^exp % m
 __device__ U3 expMod(u32 exp, U3 m) {
   assert(exp & 0x80000000);
   unsigned mp0 = mprime(m.a);
 
-  U3 a = mod((U4){0, 0, 0, (1 << (exp >> 27))}, m);
+  U3 a = modx((U4){0, 0, 0, (1 << (exp >> 27))}, m);
   for (exp <<= 5; exp; exp += exp) {
     a = montRed(square(a), m, mp0);
     if (exp & 0x80000000) { a = shl(a, 1); }
   }
   return montRed(makeU6(a), m, mp0);
+}
+
+__device__ U3 expMod2(u32 exp, U3 m) {
+  assert(exp & 0x80000000);
+  unsigned mp0 = mprime(m.a);
+
+  int sh = exp >> 26;
+  U3 a2 = modx((U4){0, 0, 0, (1 << (exp >> 27))}, m);
+  U3 a = mod((U5){0, 0, 0, 1 << sh, 1 << (sh - 32)}, m);
+  for (exp <<= 6; exp; exp += exp) {
+    a = montRed(square(a), m, mp0);
+    if (exp & 0x80000000) { a = shl(a, 1); }
+  }
+  U3 r = montRed(makeU6(a), m, mp0);
+  return r;  
+  /*
+  exp <<= 5;
+  a2 = montRed(square(a2), m, mp0);
+  if (exp & 0x80000000) { a2 = shl(a2, 1); }
+
+  U3 r2 = montRed(makeU6(a2), m, mp0);
+  /*
+  printf("m 0x%08x%08x%08x r1 0x%08x%08x%08x r2 0x%08x%08x%08x\n",
+         m.c, m.b, m.a, r.c, r.b, r.a, r2.c, r2.b, r2.a);
+  */
 }
 
 // return 2 * k * p + 1 as U3
@@ -300,7 +378,15 @@ __device__ U3 makeQ(unsigned p, u64 k) {
 // returns whether (2*k*p + 1) is a factor of (2^p - 1)
 __device__ bool isFactor(u32 exp, u32 flushedExp, u64 k) {
   U3 q = makeQ(exp, k);
-  U3 r = expMod(flushedExp, q);
+  U3 r = expMod2(flushedExp, q);
+#ifndef NDEBUG
+  U3 r2 = expMod(flushedExp, q);
+  if (!(r.a == r2.a && r.b == r2.b && r.c == r2.c)) {
+    printf("m 0x%08x%08x%08x r1 0x%08x%08x%08x r2 0x%08x%08x%08x\n",
+           q.c, q.b, q.a, r.c, r.b, r.a, r2.c, r2.b, r2.a);
+  }
+  assert(r.a == r2.a && r.b == r2.b && r.c == r2.c);
+#endif
   return r.a == 1 && !r.b && !r.c;
 }
 
