@@ -5,6 +5,12 @@
 #include <assert.h>
 #include <sys/time.h>
 
+u64 timeMillis() {
+  struct timeval tv;
+  gettimeofday(&tv, 0);
+  return tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
+
 #define THREADS_PER_BLOCK 512
 #define NCLASS     (4 * 3 * 5 * 7 * 11)
 #define NGOODCLASS (2 * 2 * 4 * 6 * 10)
@@ -23,56 +29,28 @@ __managed__ u64 foundFactor;
 __managed__ u16 classTab[NGOODCLASS];
 __device__ u32 classBtcTab[NGOODCLASS][NPRIMES];
 
-struct U2 { unsigned a, b; };
-struct U3 { unsigned a, b, c; };
-struct U4 { unsigned a, b, c, d; };
-struct U5 { unsigned a, b, c, d, e; };
-struct U6 { unsigned a, b, c, d, e, f; };
-
-u64 timeMillis() {
-  struct timeval tv;
-  gettimeofday(&tv, 0);
-  return tv.tv_sec * 1000 + tv.tv_usec / 1000;
-}
-
-#define INLINE extern inline __device__
-
-INLINE __host__ void print(U3 a) {
-  printf("0x%08x%08x%08x\n", a.c, a.b, a.a);
-}
-
-INLINE __host__ void print(U4 a) {
-  printf("0x%08x%08x%08x%08x\n", a.d, a.c, a.b, a.a);
-}
-
-INLINE __host__ void print(U5 a) {
-  printf("0x%08x%08x%08x%08x%08x\n", a.e, a.d, a.c, a.b, a.a);
-}
-
-INLINE __host__ void print(U6 a) {
-  printf("0x%08x%08x%08x%08x%08x%08x\n", a.f, a.e, a.d, a.c, a.b, a.a);
-}
-
-#ifdef NDEBUG
-#define print(x)
-#endif
+struct U2 { u32 a, b; };
+struct U3 { u32 a, b, c; };
+struct U4 { u32 a, b, c, d; };
+struct U5 { u32 a, b, c, d, e; };
+struct U6 { u32 a, b, c, d, e, f; };
 
 // Funnel shift left.
-INLINE unsigned shl(unsigned a, unsigned b, int n) {
-  unsigned r;
+__device__ u32 shl(u32 a, u32 b, int n) {
+  u32 r;
   asm("shf.l.wrap.b32 %0, %1, %2, %3;" : "=r"(r) : "r"(a), "r"(b), "r"(n));
   return r;
 }
 
 // Funnel shift right.
-INLINE unsigned shr(unsigned a, unsigned b, int n) {
-  unsigned r;
+__device__ u32 shr(u32 a, u32 b, int n) {
+  u32 r;
   asm("shf.r.wrap.b32 %0, %1, %2, %3;" : "=r"(r) : "r"(a), "r"(b), "r"(n));
   return r;
 }
 
 __device__ U5 add(U5 x, U3 y) {
- unsigned a, b, c, d, e;
+ u32 a, b, c, d, e;
   asm("add.cc.u32  %0, %5, %10;"
       "addc.cc.u32 %1, %6, %11;"
       "addc.cc.u32 %2, %7, %12;"
@@ -85,7 +63,7 @@ __device__ U5 add(U5 x, U3 y) {
 }
 
 __device__ U4 add(U4 x, U3 y) {
- unsigned a, b, c, d;
+ u32 a, b, c, d;
   asm("add.cc.u32  %0, %4, %8;"
       "addc.cc.u32 %1, %5, %9;"
       "addc.cc.u32 %2, %6, %10;"
@@ -95,8 +73,8 @@ __device__ U4 add(U4 x, U3 y) {
   return (U4) {a, b, c, d};
 }
 
-__device__ static U3 add(U3 x, U3 y) {
-  unsigned a, b, c;
+__device__ U3 add(U3 x, U3 y) {
+  u32 a, b, c;
   asm("add.cc.u32  %0, %3, %6;"
       "addc.cc.u32 %1, %4, %7;"
       "addc.u32    %2, %5, %8;"
@@ -107,7 +85,7 @@ __device__ static U3 add(U3 x, U3 y) {
 }
 
 __device__ static U4 sub(U4 x, U4 y) {
-  unsigned a, b, c, d;
+  u32 a, b, c, d;
   asm("sub.cc.u32  %0, %4, %8;"
       "subc.cc.u32 %1, %5, %9;"
       "subc.cc.u32 %2, %6, %10;"
@@ -124,8 +102,8 @@ __device__ U5 subShl1w(U5 x, U4 y) {
   return (U5) {x.a, t.a, t.b, t.c, t.d};
 }
 
-__device__ static U4 mul(U3 x, unsigned n) {
-  unsigned a, b, c, d;
+__device__ static U4 mul(U3 x, u32 n) {
+  u32 a, b, c, d;
   asm(
       "mul.hi.u32     %1, %4, %7;"
       "mul.lo.u32     %2, %6, %7;"
@@ -140,7 +118,7 @@ __device__ static U4 mul(U3 x, unsigned n) {
 
 // returns (x*n >> 32) + (n ? 1 : 0)
 __device__ U3 mulM(U3 x, u32 n) {
-  unsigned a, b, c;
+  u32 a, b, c;
   asm(
       "mul.lo.u32     %1, %5, %6;"
       "mad.hi.u32     %0, %3, %6, %7;"
@@ -151,8 +129,8 @@ __device__ U3 mulM(U3 x, u32 n) {
   return (U3) {a, b, c};
 }
 
-__device__ static U3 mul(U2 x, unsigned n) {
-  unsigned a, b, c;
+__device__ static U3 mul(U2 x, u32 n) {
+  u32 a, b, c;
   asm(
       "mul.hi.u32     %1, %3, %5;"
       "mul.lo.u32     %0, %3, %5;"
@@ -164,7 +142,7 @@ __device__ static U3 mul(U2 x, unsigned n) {
 }
 
 __device__ static U4 square(U2 x) {
-  unsigned a, b, c, d;
+  u32 a, b, c, d;
   asm(
       "mul.lo.u32     %1, %4, %5;"
       "mul.hi.u32     %2, %4, %5;"
@@ -186,7 +164,7 @@ __device__ static U6 square(U3 x) {
   U4 ab2 = square(ab);
   U3 abc = mul(ab, x.c + x.c);
   
-  unsigned c, d, e, f;
+  u32 c, d, e, f;
   asm(
       "add.cc.u32  %0, %4, %6;"
       "addc.cc.u32 %1, %5, %7;"
@@ -199,13 +177,13 @@ __device__ static U6 square(U3 x) {
   return (U6) {ab2.a, ab2.b, c, d, e, f};
 }
 
-INLINE U5 shl1w(U4 x)  { return (U5) {0, x.a, x.b, x.c, x.d}; }
-INLINE U6 shl2w(U4 x)  { return (U6) {0, 0, x.a, x.b, x.c, x.d}; }
-INLINE U6 makeU6(U3 x) { return (U6) {x.a, x.b, x.c, 0, 0, 0}; }
-INLINE U5 makeU5(U4 x) { return (U5) {x.a, x.b, x.c, x.d, 0}; }
-INLINE U6 makeU6(U5 x) { return (U6) {x.a, x.b, x.c, x.d, x.e, 0}; }
-INLINE U6 makeU6(U4 x) { return makeU6(makeU5(x)); }
-INLINE U2 makeU2(u64 x) { return (U2) {(unsigned) x, (unsigned) (x >> 32)}; }
+__device__ U5 shl1w(U4 x)  { return (U5) {0, x.a, x.b, x.c, x.d}; }
+__device__ U6 shl2w(U4 x)  { return (U6) {0, 0, x.a, x.b, x.c, x.d}; }
+__device__ U6 makeU6(U3 x) { return (U6) {x.a, x.b, x.c, 0, 0, 0}; }
+__device__ U5 makeU5(U4 x) { return (U5) {x.a, x.b, x.c, x.d, 0}; }
+__device__ U6 makeU6(U5 x) { return (U6) {x.a, x.b, x.c, x.d, x.e, 0}; }
+__device__ U6 makeU6(U4 x) { return makeU6(makeU5(x)); }
+__device__ U2 makeU2(u64 x) { return (U2) {(u32) x, (u32) (x >> 32)}; }
 __device__ U3 negative(U3 x) {
   return (U3) {-x.a, ~x.b + (!x.a), ~x.c + (!x.a && !x.b)};
 }
@@ -231,48 +209,13 @@ __device__ U5 shl(U5 x, int n) {
   return (U5) {t.a, t.b, t.c, t.d, shl(x.d, x.e, n)};
 }
 
-__device__ U3 mod(U4 x, U3 m) {
-  assert(m.c);
-  assert(!(m.c & 0x80000000));
-  int shift = __clz(m.c) - 2;
-  assert(shift >= 0);
-  m = shl(m, shift);
-  unsigned R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(m.b, m.c, 3)) + 1);
-
-  unsigned n = mulhi(x.d, R);
-  x = sub(x, shl(mul(m, n), 3));
-  assert(!(x.d & 0xfffffffc));
-  n = mulhi(shl(x.c, x.d, 28), R) >> 25;
-  x = sub(x, mul(m, n));
-  assert(!x.d);
-  return (U3) {x.a, x.b, x.c};
-}
-
-__device__ U3 modx(U4 x, U3 m) {
-  assert(m.c);
-  assert(!(m.c & 0x80000000));
-  int shift = __clz(m.c) - 2;
-  assert(shift >= 0);
-  m = shl(m, shift);
-  unsigned R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(m.b, m.c, 3)) + 1);
-  // unsigned R = 0x7fffffff00000001 / shl(m.b, m.c, 2);
-
-
-  unsigned n = mulhi(x.d, R);
-  x = sub(x, shl(mul(m, n), 3));
-  assert(!(x.d & 0xfffffffc));
-  n = mulhi(shl(x.c, x.d, 28), R) >> 25;
-  x = sub(x, mul(m, n));
-  assert(!x.d);
-  return (U3) {x.a, x.b, x.c};
-}
-
 __device__ U3 mod(U5 x, U3 m) {
   assert(m.c);
   int shift = __clz(m.c) + 1;
   assert(shift >= 18);
-  unsigned R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(m.b, m.c, shift)) + 1);
-  unsigned n;
+  u32 R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(m.b, m.c, shift)) + 1);
+  // u32 R = 0x7fffffff00000001ULL / shl(m.b, m.c, shift - 1);
+  u32 n;
   
   n = mulhi(x.e, R);
   x = subShl1w(x, shl(mul(m, n), shift));
@@ -292,13 +235,13 @@ __device__ U3 mod(U5 x, U3 m) {
   return (U3) {x.c, x.d, x.e};
 }
 
-// Compute m' such that: (unsigned) (m * m') == 0xffffffff, using extended binary euclidian algorithm.
+// Compute m' such that: (u32) (m * m') == 0xffffffff, using extended binary euclidian algorithm.
 // See http://www.ucl.ac.uk/~ucahcjm/combopt/ext_gcd_python_programs.pdf
 // m must be odd.
-__device__ static unsigned mprime(unsigned m) {
+__device__ static u32 mprime(u32 m) {
   m = (m >> 1) + 1;
-  unsigned u = m;
-  unsigned v = m << 31; 
+  u32 u = m;
+  u32 v = m << 31; 
   for (int i = 0; i < 30; ++i) {
     u = (u >> 1) + ((u & 1) ? m : 0);
     v = shr(v, u, 1);
@@ -309,7 +252,7 @@ __device__ static unsigned mprime(unsigned m) {
 // Montgomery Reduction
 // See https://www.cosic.esat.kuleuven.be/publications/article-144.pdf
 // Returns x * U^-1 mod m
-__device__ static U3 montRed(U6 x6, U3 m, unsigned mp) {
+__device__ static U3 montRed(U6 x6, U3 m, u32 mp) {
   assert(!(x6.f & 0xc0000000));
   assert(x6.a + (x6.a * mp * m.a) == 0);
   U5 x5 = add((U5) {x6.b, x6.c, x6.d, x6.e, x6.f}, mulM(m, x6.a * mp));
@@ -322,7 +265,7 @@ __device__ static U3 montRed(U6 x6, U3 m, unsigned mp) {
 // returns 2^exp % m
 __device__ U3 expMod(u32 exp, U3 m) {
   assert(exp & 0x80000000);
-  unsigned mp = mprime(m.a);
+  u32 mp = mprime(m.a);
 
   int sh = exp >> 26;
   assert(sh >= 32 && sh < 64);
@@ -336,7 +279,7 @@ __device__ U3 expMod(u32 exp, U3 m) {
 }
 
 // return 2 * k * p + 1 as U3
-__device__ U3 makeQ(unsigned p, u64 k) {
+__device__ U3 makeQ(u32 p, u64 k) {
   return add(mul(makeU2(k), p + p), (U3){1, 0, 0});
 }
 
@@ -523,23 +466,3 @@ int main() {
   // cudaDeviceReset();
   return 0;
 }
-
-/*
-__device__ static U3 montRed1(U6 x, U3 m, unsigned mp) {
-  assert(!(x.f & 0xc0000000));
-  unsigned t = x.a * mp;
-  U4 f = mul(m, t);
-  x = add(x, makeU6(f));
-  assert(!x.a);
-  t = x.b * mp;
-  f = mul(m, t);
-  x = add(x, makeU6(shl1w(f)));
-  assert(!x.b);
-  t = x.c * mp;
-  f = mul(m, t);
-  x = add(x, shl2w(f));
-  assert(!x.a && !x.b && !x.c);
-  assert(!(x.f & 0xc0000000));
-  return (U3) {x.d, x.e, x.f};
-}
-*/
