@@ -1,16 +1,21 @@
 // Copyright (c) Mihai Preda, 2015.
 
-#include "common.h"
 #include <stdio.h>
 #include <assert.h>
 #include <sys/time.h>
 
-u64 timeMillis() {
-  struct timeval tv;
-  gettimeofday(&tv, 0);
-  return tv.tv_sec * 1000 + tv.tv_usec / 1000;
-}
+typedef unsigned short u16;
+typedef unsigned u32;
+typedef unsigned long long u64;
+typedef __uint128_t u128;
 
+struct U2 { u32 a, b; };
+struct U3 { u32 a, b, c; };
+struct U4 { u32 a, b, c, d; };
+struct U5 { u32 a, b, c, d, e; };
+struct U6 { u32 a, b, c, d, e, f; };
+
+#define ASIZE(a) (sizeof(a) / sizeof(a[0]))
 #define THREADS_PER_BLOCK 512
 #define NCLASS     (4 * 3 * 5 * 7 * 11)
 #define NGOODCLASS (2 * 2 * 4 * 6 * 10)
@@ -21,6 +26,27 @@ u64 timeMillis() {
 #define NBITS (NWORDS << 5)
 #define NPRIMES (ASIZE(primes))
 
+// whether 2 * c * p + 1 == 1 or 7 modulo 8.
+bool q1or7mod8(unsigned exp, u64 c) {
+  return !(c & 3) || ((c & 3) + (exp & 3) == 4);
+}
+
+// whether 2 * k * p + 1 != 0 modulo prime
+bool notMultiple(unsigned exp, unsigned c, unsigned prime) {
+  return !c || (2 * c * (u64) exp + 1) % prime;
+}
+
+bool acceptClass(unsigned exp, unsigned c) {
+  return q1or7mod8(exp, c) && notMultiple(exp, c, 3) && notMultiple(exp, c, 5)
+    && notMultiple(exp, c, 7) && notMultiple(exp, c, 11);
+}
+
+u64 timeMillis() {
+  struct timeval tv;
+  gettimeofday(&tv, 0);
+  return tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
+
 __device__ const u32 primes[] = {
 #include "primes-512k.inc"
 };
@@ -28,12 +54,6 @@ __device__ const u32 primes[] = {
 __managed__ u64 foundFactor;
 __managed__ u16 classTab[NGOODCLASS];
 __device__ u32 classBtcTab[NGOODCLASS][NPRIMES];
-
-struct U2 { u32 a, b; };
-struct U3 { u32 a, b, c; };
-struct U4 { u32 a, b, c, d; };
-struct U5 { u32 a, b, c, d, e; };
-struct U6 { u32 a, b, c, d, e, f; };
 
 // Funnel shift left.
 __device__ u32 shl(u32 a, u32 b, int n) {
