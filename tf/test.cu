@@ -85,6 +85,30 @@ __device__ static U6 add(U6 x, U6 y) {
   return (U6) {a, b, c, d, e, f};
 }
 
+__device__ U5 add(U5 x, U3 y) {
+ unsigned a, b, c, d, e;
+  asm("add.cc.u32  %0, %5, %10;"
+      "addc.cc.u32 %1, %6, %11;"
+      "addc.cc.u32 %2, %7, %12;"
+      "addc.cc.u32 %3, %8, 0;"
+      "addc.u32    %4, %9, 0;"
+      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e)
+      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(x.e),
+        "r"(y.a), "r"(y.b), "r"(y.c));
+  return (U5) {a, b, c, d, e};
+}
+
+__device__ U4 add(U4 x, U3 y) {
+ unsigned a, b, c, d;
+  asm("add.cc.u32  %0, %4, %8;"
+      "addc.cc.u32 %1, %5, %9;"
+      "addc.cc.u32 %2, %6, %10;"
+      "addc.u32    %3, %7, 0;"
+      : "=r"(a), "=r"(b), "=r"(c), "=r"(d)
+      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(y.a), "r"(y.b), "r"(y.c));
+  return (U4) {a, b, c, d};
+}
+
 __device__ static U3 add(U3 x, U3 y) {
   unsigned a, b, c;
   asm("add.cc.u32  %0, %3, %6;"
@@ -137,6 +161,22 @@ __device__ static U4 mul(U3 x, unsigned n) {
       : "=r"(a), "=r"(b), "=r"(c), "=r"(d)
       : "r"(x.a), "r"(x.b), "r"(x.c), "r"(n));
   return (U4) {a, b, c, d};
+}
+
+// return (x*n >> 32) + 1
+__device__ U3 mulM(U3 x, u32 n) {
+  unsigned a, b, c;
+  asm(
+      "set.ne.u32.u32 %0,  0, %6;"
+      "neg.s32        %0, %0;"
+      "mad.hi.u32     %0, %3, %6, %0;"
+      "mul.lo.u32     %1, %5, %6;"
+      "mad.lo.cc.u32  %0, %4, %6, %0;"
+      "madc.hi.cc.u32 %1, %4, %6, %1;"
+      "madc.hi.u32    %2, %5, %6, 0;"
+      : "=r"(a), "=r"(b), "=r"(c)
+      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(n));
+  return (U3) {a, b, c};
 }
 
 __device__ static U3 mul(U2 x, unsigned n) {
@@ -322,7 +362,7 @@ __device__ static unsigned mprime(unsigned m) {
 // Montgomery Reduction
 // See https://www.cosic.esat.kuleuven.be/publications/article-144.pdf
 // Returns x * U^-1 mod m
-__device__ static U3 montRed(U6 x, U3 m, unsigned mp0) {
+__device__ static U3 montRed1(U6 x, U3 m, unsigned mp0) {
   assert(!(x.f & 0xc0000000));
   unsigned t = x.a * mp0;
   U4 f = mul(m, t);
@@ -338,6 +378,18 @@ __device__ static U3 montRed(U6 x, U3 m, unsigned mp0) {
   assert(!x.a && !x.b && !x.c);
   assert(!(x.f & 0xc0000000));
   return (U3) {x.d, x.e, x.f};
+}
+
+__device__ static U3 montRed(U6 x6, U3 m, unsigned mp) {
+  assert(!(x6.f & 0xc0000000));
+  U5 x5 = (U5) {x6.b, x6.c, x6.d, x6.e, x6.f};
+  x5 = add(x5, mulM(m, x6.a * mp));
+  U4 x4 = (U4) {x5.b, x5.c, x5.d, x5.e};
+  x4 = add(x4, mulM(m, x5.a * mp));
+  U3 x3 = (U3) {x4.b, x4.c, x4.d};
+  x3 = add(x3, mulM(m, x4.a * mp));
+  assert(!(x3.c & 0xc0000000));
+  return x3;
 }
 
 // returns 2^exp % m
@@ -364,7 +416,12 @@ __device__ U3 expMod2(u32 exp, U3 m) {
   assert(sh >= 32 && sh < 64);
   U3 a = mod((U5){0, 0, 0, 0, 1 << (sh - 32)}, m);
   for (exp <<= 6; exp; exp += exp) {
-    a = montRed(square(a), m, mp0);
+    U6 a2 = square(a);
+    a = montRed(a2, m, mp0);
+#ifndef NDEBUG
+    U3 b = montRed1(a2, m, mp0);
+    assert(a.a == b.a && a.b == b.b && a.c == b.c);
+#endif
     if (exp & 0x80000000) { a = shl(a, 1); }
   }
   return montRed(makeU6(a), m, mp0);
@@ -390,7 +447,7 @@ __device__ U3 makeQ(unsigned p, u64 k) {
 // returns whether (2*k*p + 1) is a factor of (2^p - 1)
 __device__ bool isFactor(u32 exp, u32 flushedExp, u64 k) {
   U3 q = makeQ(exp, k);
-  U3 r = expMod3(flushedExp, q);
+  U3 r = expMod2(flushedExp, q);
 #ifndef NDEBUG
   U3 r2 = expMod1(flushedExp, q);
   if (!(r.a == r2.a && r.b == r2.b && r.c == r2.c)) {
