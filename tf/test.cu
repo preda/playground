@@ -42,9 +42,12 @@ struct U6 { u32 a, b, c, d, e, f; };
 
 #define ASIZE(a) (sizeof(a) / sizeof(a[0]))
 
-#define THREADS_PER_BLOCK 512
+// Threads per block, doing sieving and factor-testing.
+#define THREADS_PER_BLOCK (512 + 128)
 // How many threads do sieving, out of THREADS_PER_BLOCK.
-#define SIEVE_THREADS 32
+#define SIEVE_THREADS 128
+// Threads for doing the BTC init, done only once per exponent, at the beginning.
+#define BTC_THREADS 1024
 
 // How many words of shared memory to use for sieving.
 #define NWORDS (12 * 1024)
@@ -61,6 +64,11 @@ struct U6 { u32 a, b, c, d, e, f; };
 #define NPRIMES (ASIZE(primes))
 // Out of NCLASS, how many classes pass acceptClass().
 #define NGOODCLASS (2 * 2 * 4 * 6 * 10)
+// How many blocks for BTC init.
+#define BTC_BLOCKS (NPRIMES / BTC_THREADS)
+// Block for sieving+testing.
+#define BLOCKS 32
+
 
 // Returns whether 2 * c * exp + 1 is 1 or 7 modulo 8.
 // Any Marsenne factor must be of this form. See http://www.mersenne.org/various/math.php
@@ -86,7 +94,7 @@ u64 timeMillis() {
 }
 
 __device__ const u32 primes[] = {
-#include "primes-512k.inc"
+#include "primes-1M.inc"
 };
 
 __managed__ u64 foundFactor;  // If a factor k is found, save it here.
@@ -386,7 +394,7 @@ __global__ void __launch_bounds__(1024) initBtcTab(u32 exp, u64 k0) {
   }
 }
 
-__global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, u64 kEnd, int c0) {
+__global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, int c0, int nRounds) {
   __shared__ u32 words[NWORDS];
 #define LOCAL_WORDS ((NWORDS + WORK_THREADS - 1) / WORK_THREADS)
   u32 localWords[LOCAL_WORDS];
@@ -400,10 +408,9 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, u64 
   u32 * const btcTab = classBtcTab[cid];
   u64 kBlock = k0 + c + (tid - SIEVE_THREADS) * (32 * NCLASS) - NWORDS * 32 * NCLASS;
   bool shouldExit = false;
-  int round = 0;
   // u32 timeSieve, timeTest, timeCopy;
-  
-  while (kBlock < kEnd && !shouldExit && round < 100) {
+
+  for (int round = 0; round < nRounds && !shouldExit; ++round) {
     // u32 time0 = clock();
     if (tid < SIEVE_THREADS) {
       u32 *btcp = btcTab + tid;
@@ -424,7 +431,7 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, u64 
       while (true) {
         while (!bits) {
           kWord += WORK_THREADS * (32 * NCLASS);
-          if (++p >= localEnd || kWord >= kEnd) { goto out; }
+          if (++p >= localEnd /*|| kWord >= kEnd*/) { goto out; }
           bits = *p;
         }
         int bit = bfind(bits);
@@ -443,16 +450,16 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, u64 
     */
     
     shouldExit = foundFactor;
-    int pops = 0;
+    // int pops = 0;
     if (tid >= SIEVE_THREADS) {
-      u32 *out = localWords;
-      for (u32 *p = words + (tid - SIEVE_THREADS), *end = words + NWORDS; p < end; p += WORK_THREADS, ++out) {
-        u32 tmp = ~*p;
+      localEnd = localWords;
+      // u32 *out = localWords;
+      for (u32 *p = words + (tid - SIEVE_THREADS), *end = words + NWORDS; p < end; p += WORK_THREADS) {
+        u32 save = ~*p;
         *p = 0;
-        *out = tmp;
-        pops += __popc(tmp);
+        *localEnd++ = save;
+        // pops += __popc(save);
       }
-      localEnd = out;
     }
     __syncthreads();
     /*
@@ -463,8 +470,7 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, u64 
       printf("class %d round %d test %u copy %u pops %d\n", cid, round, (timeTest >> 10), (timeCopy >> 10), pops);
     }
     */
-    kBlock += NWORDS * 32 * NCLASS;
-    ++round;
+    kBlock += NBITS * NCLASS;
   }
 }
 
@@ -479,40 +485,45 @@ void initClasses(u32 exp) {
 }
 
 u64 calculateK(u32 exp, int bits) {
-  u64 k = (((u128) 1) << (bits - 1)) / exp;
-  return k - k % NCLASS;
+  return (((u128) 1) << (bits - 1)) / exp;
+  // return k - k % NCLASS;
 }
 
 #define CUDA_CHECK_ERR  err = cudaGetLastError(); if (err) { printf("CUDA error: %s\n", cudaGetErrorString(err)); return 0; }
 
 int main() {
+  assert(NPRIMES % BTC_THREADS == 0);
+  assert(NGOODCLASS % BLOCKS == 0);
+  
   cudaError_t err;
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
   // cudaSetDevice(1);
   CUDA_CHECK_ERR;
   
   const u32 exp = 119904229;
-  int startPow2 = 67;
-  const u64 k0   = calculateK(exp, startPow2);
-  const u64 kEnd = calculateK(exp, startPow2 + 1);
   initClasses(exp);
-  printf("exp %u k0 %llu kEnd %llu\n", exp, k0, kEnd);
+
+  int startPow2 = 67;
+  u64 kStart = calculateK(exp, startPow2);
+  u64 kEnd   = calculateK(exp, startPow2 + 1);
+  u64 k0Start = kStart - (kStart % NCLASS);
+  u64 k0End   = kEnd + (NCLASS - (kEnd % NCLASS)) % NCLASS;
+  u64 perRound = NBITS * NCLASS;
+  u64 rounds = (kEnd - k0Start + (perRound - 1)) / perRound;
+
+  printf("exp %u kStart %llu kEnd %llu k0Start %llu k0End %llu, %llu rounds %llu\n",
+         exp, kStart, kEnd, k0Start, k0End, (k0Start + rounds * perRound), rounds);
   
-#define BTC_THREADS 1024
-#define BTC_BLOCKS (NPRIMES / BTC_THREADS)
-  assert(NPRIMES % BTC_THREADS == 0);
   u64 t1 = timeMillis();
-  initBtcTab<<<BTC_BLOCKS, BTC_THREADS>>>(exp, k0);
+  initBtcTab<<<BTC_BLOCKS, BTC_THREADS>>>(exp, k0Start);
   cudaDeviceSynchronize();
   u64 t2 = timeMillis();
-  printf("initBtcTab: blocks %lu time %llu\n", BTC_BLOCKS, (t2 - t1));
+  printf("initBtcTab with %lu blocks: %llu ms\n", BTC_BLOCKS, (t2 - t1));
   CUDA_CHECK_ERR;
-  //return;
-#define BLOCKS 64
-  assert(NGOODCLASS % BLOCKS == 0);
+
   u64 t3 = timeMillis();
   for (int cid = 0; cid < NGOODCLASS; cid += BLOCKS) {
-    tf<<<BLOCKS, THREADS_PER_BLOCK>>>(exp, k0, kEnd, cid);
+    tf<<<BLOCKS, THREADS_PER_BLOCK>>>(exp, k0Start, cid, rounds);
     cudaDeviceSynchronize();
     u64 t4 = timeMillis();
     printf("class %d time %llu\n", cid, (t4 - t3));
