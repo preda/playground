@@ -53,7 +53,7 @@ struct U6 { u32 a, b, c, d, e, f; };
 #define NWORDS (12 * 1024)
 
 // Must update acceptClass() when changing these.
-#define NCLASS     (4 * 3 * 5 * 7 * 11)
+#define NCLASS     (4 * 3 * 5 * 7 * 11 * 13)
 
 // Derived values below.
 // How many threads do "modular exponentiation" to test factor candidates.
@@ -63,7 +63,7 @@ struct U6 { u32 a, b, c, d, e, f; };
 // Number of pre-computed primes for sieving.
 #define NPRIMES (ASIZE(primes))
 // Out of NCLASS, how many classes pass acceptClass().
-#define NGOODCLASS (2 * 2 * 4 * 6 * 10)
+#define NGOODCLASS (2 * 2 * 4 * 6 * 10 * 12)
 // How many blocks for BTC init.
 #define BTC_BLOCKS (NPRIMES / BTC_THREADS)
 // Block for sieving+testing.
@@ -84,7 +84,7 @@ bool notMultiple(u32 exp, u32 c, unsigned prime) {
 bool acceptClass(u32 exp, u32 c) {
   // Keep in sync with NCLASS
   return q1or7mod8(exp, c) && notMultiple(exp, c, 3) && notMultiple(exp, c, 5)
-    && notMultiple(exp, c, 7) && notMultiple(exp, c, 11);
+    && notMultiple(exp, c, 7) && notMultiple(exp, c, 11) && notMultiple(exp, c, 13);
 }
 
 u64 timeMillis() {
@@ -94,7 +94,7 @@ u64 timeMillis() {
 }
 
 __device__ const u32 primes[] = {
-#include "primes-1M.inc"
+#include "primes-1M-17.inc"
 };
 
 __managed__ u64 foundFactor;  // If a factor k is found, save it here.
@@ -103,7 +103,8 @@ __managed__ u16 classTab[NGOODCLASS];  // The class value for each "good" class.
 // BTC means "bit to clear", the first bit position to clear in the big bit block when sieving.
 // Keeps the BTC for each prime, for each good class. The BTC is updated during sieving.
 // This is the bulk of the GPU [global] memory usage.
-__device__ u32 classBtcTab[NGOODCLASS][NPRIMES];
+// __device__ u32 classBtcTab[NGOODCLASS][NPRIMES];
+__device__ u32 invTab[NPRIMES];
 
 // Funnel shift left.
 __device__ u32 shl(u32 a, u32 b, int n) {
@@ -164,6 +165,19 @@ __device__ static U4 sub(U4 x, U4 y) {
       : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d),
         "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d));
   return (U4) {a, b, c, d};
+}
+
+__device__ static U5 sub(U5 x, U5 y) {
+  u32 a, b, c, d, e;
+  asm("sub.cc.u32  %0, %5, %10;"
+      "subc.cc.u32 %1, %6, %11;"
+      "subc.cc.u32 %2, %7, %12;"
+      "subc.cc.u32 %3, %8, %13;"
+      "subc.u32    %4, %9, %14;"
+      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e)
+      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(x.e),
+        "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d), "r"(y.e));
+  return (U5) {a, b, c, d, e};
 }
 
 // returns x - (y << 32)
@@ -275,30 +289,26 @@ __device__ U5 shl(U5 x, int n) {
 
 __device__ U3 mod(U5 x, U3 m) {
   assert(m.c);
-  int shift = __clz(m.c) + 1;
-  assert(shift >= 18);
-  // R is an approximation from below of 2^64 / (m << shift).
-  u32 R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(m.b, m.c, shift)) + 1);
-  // A faster but lower-quality approximation of the same.
-  // u32 R = 0x7fffffff00000001ULL / shl(m.b, m.c, shift - 1);
-  
-  u32 n;  
-  n = mulhi(x.e, R);
-  x = subShl1w(x, shl(mul(m, n), shift));
-  assert(!(x.e & 0xfffffff0));
-  x = shl(x, 28);
-  
-  n = mulhi(x.e, R);
-  x = subShl1w(x, shl(mul(m, n), shift));
-  assert(!(x.e & 0xfffffff0));
-  x = shl(x, 28);
-  
-  n = mulhi(x.e, R) & 0xffffffc0;
-  x = subShl1w(x, shl(mul(m, n), shift));
-  assert((!(x.e & 0xffffff80)));
-  x = shl(x, 8);
-  assert(!(x.e & 0xffff8000));
-  return (U3) {x.c, x.d, x.e};
+  int sh = __clz(m.c) + 1;
+  if (sh > 26) {
+    m = shl(m, sh - 26);
+    sh = 26;
+  }
+  assert(sh >= 3 && sh <= 26);
+  u32 R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(m.b, m.c, sh)) + 1);
+  u32 n = mulhi(x.e, R);
+  U4 t = sub((U4) {x.b, x.c, x.d, x.e}, shl(mul(m, n), sh));
+  x = (U5){x.a, t.a, t.b, t.c, t.d};
+  assert(!(x.e & 0xfffffff8));
+  n = mulhi(shl(x.d, x.e, 29), R);
+  U5 mn = shl(makeU5(mul(m, n)), sh + 3);
+  x = sub(x, mn);
+  assert(!x.e && !(x.d & 0xffffffc0));
+  n = mulhi(shl(x.c, x.d, 26), R) >> (26 - sh);
+  t = sub((U4) {x.a, x.b, x.c, x.d}, mul(m, n));
+  assert(!t.d);
+  assert(!(t.c >> (35 - sh)));
+  return (U3) {t.a, t.b, t.c};
 }
 
 // Compute m' such that: (u32) (m * m') == 0xffffffff, using extended binary euclidian algorithm.
@@ -383,14 +393,16 @@ __device__ int bitToClear(u32 exp, u64 k, u32 prime, u32 inv) {
 __device__ int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
 
 // Initializes the classBtcTab array in GPU memory.
-__global__ void __launch_bounds__(1024) initBtcTab(u32 exp, u64 k0) {
+__global__ void __launch_bounds__(1024) initInvTab(u32 exp, u64 k0) {
   const u64 step = 2 * NCLASS * (u64) exp;
-  for (const u32 *p = primes + ID, *end = primes + ASIZE(primes); p < end; p += gridDim.x * blockDim.x) {
-    u32 prime = *p;
+  for (const u32 *p = primes + ID, *end = primes + NPRIMES; p < end; p += gridDim.x * blockDim.x) {
+    invTab[p - primes] = modInv32(step, *p);
+    /*
     u32 inv = modInv32(step, prime);
     for (int i = 0; i < NGOODCLASS; ++i) {
       classBtcTab[i][p - primes] = bitToClear(exp, k0 + classTab[i], prime, inv);
     }
+    */
   }
 }
 
@@ -405,23 +417,25 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, int 
   const int cid = c0 + blockIdx.x;
   const int c = classTab[cid];
   const u32 flushedExp = exp << __clz(exp);
-  u32 * const btcTab = classBtcTab[cid];
-  u64 kBlock = k0 + c + (tid - SIEVE_THREADS) * (32 * NCLASS) - NWORDS * 32 * NCLASS;
+  // u32 * const btcTab = classBtcTab[cid];
+  u64 kBlock = k0 + c + (tid - SIEVE_THREADS) * (32 * NCLASS) - NBITS * (u64) NCLASS;
   bool shouldExit = false;
   // u32 timeSieve, timeTest, timeCopy;
 
   for (int round = 0; round < nRounds && !shouldExit; ++round) {
     // u32 time0 = clock();
     if (tid < SIEVE_THREADS) {
-      u32 *btcp = btcTab + tid;
-      for (const u32 *p = primes + tid, *end = primes + ASIZE(primes); p < end; p += SIEVE_THREADS, btcp += SIEVE_THREADS) {
+      // u32 *btcp = btcTab + tid;
+      for (const u32 *p = primes + tid, *end = primes + NPRIMES, *invp = invTab; p < end;
+           p += SIEVE_THREADS, invp += SIEVE_THREADS) {
         int prime = *p;
-        int btc = *btcp;
+        int btc = bitToClear(exp, k0 + c, prime, *invp);
+        // int btc = *btcp;
         while (btc < NBITS) {
           atomicOr(words + (btc >> 5), 1 << (btc & 0x1f));
           btc += prime;
         }
-        *btcp = btc - NBITS;
+        // *btcp = btc - NBITS;
       }
       // timeSieve = clock() - time0;
     } else {
@@ -470,7 +484,7 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k0, int 
       printf("class %d round %d test %u copy %u pops %d\n", cid, round, (timeTest >> 10), (timeCopy >> 10), pops);
     }
     */
-    kBlock += NBITS * NCLASS;
+    kBlock += NBITS * (u64) NCLASS;
   }
 }
 
@@ -508,14 +522,14 @@ int main() {
   u64 kEnd   = calculateK(exp, startPow2 + 1);
   u64 k0Start = kStart - (kStart % NCLASS);
   u64 k0End   = kEnd + (NCLASS - (kEnd % NCLASS)) % NCLASS;
-  u64 perRound = NBITS * NCLASS;
+  u64 perRound = NBITS * (u64) NCLASS;
   u64 rounds = (kEnd - k0Start + (perRound - 1)) / perRound;
 
   printf("exp %u kStart %llu kEnd %llu k0Start %llu k0End %llu, %llu rounds %llu\n",
          exp, kStart, kEnd, k0Start, k0End, (k0Start + rounds * perRound), rounds);
   
   u64 t1 = timeMillis();
-  initBtcTab<<<BTC_BLOCKS, BTC_THREADS>>>(exp, k0Start);
+  initInvTab<<<BTC_BLOCKS, BTC_THREADS>>>(exp, k0Start);
   cudaDeviceSynchronize();
   u64 t2 = timeMillis();
   printf("initBtcTab with %lu blocks: %llu ms\n", BTC_BLOCKS, (t2 - t1));
@@ -528,6 +542,7 @@ int main() {
     u64 t4 = timeMillis();
     printf("class %d time %llu\n", cid, (t4 - t3));
     t3 = t4;
+    CUDA_CHECK_ERR;
   }
   printf("TF: %llu\n", (t3 - t2));
   CUDA_CHECK_ERR;
@@ -537,3 +552,42 @@ int main() {
   // cudaDeviceReset();
   return 0;
 }
+
+
+/*
+  // if (x.d & 0xffffffc0) { printf("%08x%08x%08x%08x%08x %08x%08x%08x %u %d\n", s.e, s.d, s.c, s.b, s.a, m.c, m.b, m.a, n, sh); }
+  // if (t.d) { printf("%08x%08x%08x%08x %08x%08x%08x %u %d\n", x.d, x.c, x.b, x.a, m.c, m.b, m.a, n, sh); }
+  
+  __device__ U3 mod(U5 x, U3 m) {
+  assert(m.c);
+  int shift = __clz(m.c) + 1;
+  assert(shift >= 18);
+  // R is an approximation from below of 2^64 / (m << shift).
+  u32 R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(m.b, m.c, shift)) + 1);
+  // A faster but lower-quality approximation of the same.
+  // u32 R = 0x7fffffff00000001ULL / shl(m.b, m.c, shift - 1);
+  
+  u32 n;  
+  n = mulhi(x.e, R);
+  x = subShl1w(x, shl(mul(m, n), shift));
+  assert(!(x.e & 0xfffffff0));
+  x = shl(x, 28);
+  
+  n = mulhi(x.e, R);
+  x = subShl1w(x, shl(mul(m, n), shift));
+  assert(!(x.e & 0xfffffff0));
+  x = shl(x, 28);
+  
+  n = mulhi(x.e, R) & 0xffffffc0;
+  U5 s = x;
+  x = subShl1w(x, shl(mul(m, n), shift));
+  if (x.e & 0xffffff80) {
+    printf("%08x%08x%08x%08x%08x %08x%08x%08x%08x%08x %08x%08x%08x %08x %08x\n",
+           s.e, s.d, s.c, s.b, s.a, x.e, x.d, x.c, x.b, x.a, m.c, m.b, m.a, R, n);
+  }
+  assert((!(x.e & 0xffffff80)));
+  x = shl(x, 8);
+  assert(!(x.e & 0xffff8000));
+  return (U3) {x.c, x.d, x.e};
+}
+*/
