@@ -42,6 +42,11 @@
 
 // Must update acceptClass() when changing these.
 #define NCLASS     (4 * 3 * 5 * 7 * 11 * 13)
+// Out of NCLASS, how many classes pass acceptClass().
+#define NGOODCLASS (2 * 2 * 4 * 6 * 10 * 12)
+
+// Blocks for sieving+testing.
+#define BLOCKS 64
 
 // Derived values below.
 // How many threads do "modular exponentiation" to test factor candidates.
@@ -50,13 +55,8 @@
 #define NBITS (NWORDS << 5)
 // Number of pre-computed primes for sieving.
 #define NPRIMES (ASIZE(primes))
-// Out of NCLASS, how many classes pass acceptClass().
-#define NGOODCLASS (2 * 2 * 4 * 6 * 10 * 12)
 // How many blocks for BTC init.
 #define BTC_BLOCKS (NPRIMES / BTC_THREADS)
-// Block for sieving+testing.
-#define BLOCKS 64
-
 
 // Returns whether 2 * c * exp + 1 is 1 or 7 modulo 8.
 // Any Marsenne factor must be of this form. See http://www.mersenne.org/various/math.php
@@ -144,11 +144,12 @@ __device__ U6 square(U3 x) {
   return (U6) {ab2.a, ab2.b, c, d, e, f};
 }
 
-__device__ U6 _U6(U3 x) { return (U6) {x.a, x.b, x.c, 0, 0, 0}; }
-__device__ U5 _U5(U4 x) { return (U5) {x.a, x.b, x.c, x.d, 0}; }
-__device__ U6 _U6(U5 x) { return (U6) {x.a, x.b, x.c, x.d, x.e, 0}; }
-__device__ U6 _U6(U4 x) { return _U6(_U5(x)); }
-__device__ U2 _U2(u64 x) { return (U2) {(u32) x, (u32) (x >> 32)}; }
+__device__ U5 modStep(U5 t, U3 m, u32 R, int sh, int bits) {
+  u32 n = mulhi(shl(t.c, t.d, 32 - bits), R);
+  t = (U5){0, t.a, t.b, t.c, t.d} - (_U5(m * n) << (sh + bits));
+  assert(!t.e && !(t.d & (0xfffffff8 << bits)));
+  return t;
+}
 
 __device__ U3 modShl3w(U4 x, U3 m) {
   assert(m.c && !(m.c & 0xc0000000));
@@ -164,19 +165,11 @@ __device__ U3 modShl3w(U4 x, U3 m) {
   x -= (m * n) << sh;
   assert(!(x.d & 0xfffffff8));
   U5 t = _U5(x);
-  
-  n = mulhi(shl(t.c, t.d, 29), R);
-  t = (U5){0, t.a, t.b, t.c, t.d} - (_U5(m * n) << (sh + 3));
-  assert(!t.e && !(t.d & 0xffffffc0));
-  
-  n = mulhi(shl(t.c, t.d, 26), R);
-  t = (U5){0, t.a, t.b, t.c, t.d} - (_U5(m * n) << (sh + 6));
-  assert(!t.e && !(t.d & 0xfffffe00));
-  
-  n = mulhi(shl(t.c, t.d, 23), R);
-  t = (U5){0, t.a, t.b, t.c, t.d} - (_U5(m * n) << (sh + 9));
-  assert(!t.e && !(t.d & 0xfffff000));
 
+  t = modStep(t, m, R, sh, 3);
+  t = modStep(t, m, R, sh, 6);
+  t = modStep(t, m, R, sh, 9);
+  
   n = mulhi(shl(t.c, t.d, 20), R) >> (20 - sh);
   x = (U4){t.a, t.b, t.c, t.d} - m * n;
   assert(!x.d && !(x.c >> (35 - sh)));

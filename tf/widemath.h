@@ -31,7 +31,7 @@ __device__ U5 operator+(U5 x, U3 y) {
 }
 
 __device__ U4 operator+(U4 x, U3 y) {
- u32 a, b, c, d;
+  u32 a, b, c, d;
   asm("add.cc.u32  %0, %4, %8;"
       "addc.cc.u32 %1, %5, %9;"
       "addc.cc.u32 %2, %6, %10;"
