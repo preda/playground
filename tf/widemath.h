@@ -11,6 +11,12 @@ struct U4 { u32 a, b, c, d; };
 struct U5 { u32 a, b, c, d, e; };
 struct U6 { u32 a, b, c, d, e, f; };
 
+__device__ U6 _U6(U3 x)  { return (U6) {x.a, x.b, x.c, 0, 0, 0}; }
+__device__ U5 _U5(U4 x)  { return (U5) {x.a, x.b, x.c, x.d, 0}; }
+__device__ U6 _U6(U5 x)  { return (U6) {x.a, x.b, x.c, x.d, x.e, 0}; }
+__device__ U6 _U6(U4 x)  { return _U6(_U5(x)); }
+__device__ U2 _U2(u64 x) { return (U2) {(u32) x, (u32) (x >> 32)}; }
+
 __device__ U5 operator+(U5 x, U3 y) {
  u32 a, b, c, d, e;
   asm("add.cc.u32  %0, %5, %10;"
@@ -46,7 +52,7 @@ __device__ U3 operator+(U3 x, U3 y) {
   return (U3) {a, b, c};
 }
 
-__device__ static U4 operator-(U4 x, U4 y) {
+__device__ U4 operator-(U4 x, U4 y) {
   u32 a, b, c, d;
   asm("sub.cc.u32  %0, %4, %8;"
       "subc.cc.u32 %1, %5, %9;"
@@ -58,7 +64,7 @@ __device__ static U4 operator-(U4 x, U4 y) {
   return (U4) {a, b, c, d};
 }
 
-__device__ static U5 operator-(U5 x, U5 y) {
+__device__ U5 operator-(U5 x, U5 y) {
   u32 a, b, c, d, e;
   asm("sub.cc.u32  %0, %5, %10;"
       "subc.cc.u32 %1, %6, %11;"
@@ -70,6 +76,8 @@ __device__ static U5 operator-(U5 x, U5 y) {
         "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d), "r"(y.e));
   return (U5) {a, b, c, d, e};
 }
+
+__device__ void operator-=(U4 &x, U4 y) { x = x - y; }
 
 // 4 MULs.
 __device__ U3 operator*(U2 x, u32 n) {
@@ -102,3 +110,33 @@ __device__ U4 operator*(U3 x, u32 n) {
 __device__ U5 shr1w(U6 x) { return (U5) {x.b, x.c, x.d, x.e, x.f}; }
 __device__ U4 shr1w(U5 x) { return (U4) {x.b, x.c, x.d, x.e}; }
 __device__ U3 shr1w(U4 x) { return (U3) {x.b, x.c, x.d}; }
+
+// Funnel shift left.
+__device__ u32 shl(u32 a, u32 b, int n) {
+  u32 r;
+  asm("shf.l.wrap.b32 %0, %1, %2, %3;" : "=r"(r) : "r"(a), "r"(b), "r"(n));
+  return r;
+}
+
+// Funnel shift right.
+__device__ u32 shr(u32 a, u32 b, int n) {
+  u32 r;
+  asm("shf.r.wrap.b32 %0, %1, %2, %3;" : "=r"(r) : "r"(a), "r"(b), "r"(n));
+  return r;
+}
+
+__device__ U3 operator<<(U3 x, int n) {
+  assert(n >= 0 && n < 32 && !(x.c >> (32 - n)));
+  return (U3) {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n)};
+}
+
+__device__ U4 operator<<(U4 x, int n) {
+  // assert(n >= 0 && n < 32 && !(x.d >> (32 - n)));
+  return (U4) {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n), shl(x.c, x.d, n)};
+}
+
+__device__ U5 operator<<(U5 x, int n) {
+  assert(n >= 0 && n < 32 && !(x.e >> (32 - n)));
+  U4 t = (U4) {x.a, x.b, x.c, x.d} << n;
+  return (U5) {t.a, t.b, t.c, t.d, shl(x.d, x.e, n)};
+}

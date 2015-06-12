@@ -91,20 +91,6 @@ __managed__ u16 classTab[NGOODCLASS];  // The class value for each "good" class.
 // BTC means "bit to clear", the first bit position to clear in the big bit block when sieving.
 __device__ u32 invTab[NPRIMES];
 
-// Funnel shift left.
-__device__ u32 shl(u32 a, u32 b, int n) {
-  u32 r;
-  asm("shf.l.wrap.b32 %0, %1, %2, %3;" : "=r"(r) : "r"(a), "r"(b), "r"(n));
-  return r;
-}
-
-// Funnel shift right.
-__device__ u32 shr(u32 a, u32 b, int n) {
-  u32 r;
-  asm("shf.r.wrap.b32 %0, %1, %2, %3;" : "=r"(r) : "r"(a), "r"(b), "r"(n));
-  return r;
-}
-
 // returns (x*n >> 32) + (n ? 1 : 0). Used for Montgomery reduction. 5 MULs.
 __device__ U3 mulM(U3 x, u32 n) {
   u32 a, b, c;
@@ -158,53 +144,37 @@ __device__ U6 square(U3 x) {
   return (U6) {ab2.a, ab2.b, c, d, e, f};
 }
 
-__device__ U6 makeU6(U3 x) { return (U6) {x.a, x.b, x.c, 0, 0, 0}; }
-__device__ U5 makeU5(U4 x) { return (U5) {x.a, x.b, x.c, x.d, 0}; }
-__device__ U6 makeU6(U5 x) { return (U6) {x.a, x.b, x.c, x.d, x.e, 0}; }
-__device__ U6 makeU6(U4 x) { return makeU6(makeU5(x)); }
-__device__ U2 makeU2(u64 x) { return (U2) {(u32) x, (u32) (x >> 32)}; }
-
-__device__ U3 shl(U3 x, int n) {
-  assert(n >= 0 && n < 32 && !(x.c >> (32 - n)));
-  return (U3) {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n)};
-}
-
-__device__ U4 shl(U4 x, int n) {
-  // assert(n >= 0 && n < 32 && !(x.d >> (32 - n)));
-  return (U4) {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n), shl(x.c, x.d, n)};
-}
-
-__device__ U5 shl(U5 x, int n) {
-  assert(n >= 0 && n < 32 && !(x.e >> (32 - n)));
-  U4 t = shl((U4) {x.a, x.b, x.c, x.d}, n);
-  return (U5) {t.a, t.b, t.c, t.d, shl(x.d, x.e, n)};
-}
+__device__ U6 _U6(U3 x) { return (U6) {x.a, x.b, x.c, 0, 0, 0}; }
+__device__ U5 _U5(U4 x) { return (U5) {x.a, x.b, x.c, x.d, 0}; }
+__device__ U6 _U6(U5 x) { return (U6) {x.a, x.b, x.c, x.d, x.e, 0}; }
+__device__ U6 _U6(U4 x) { return _U6(_U5(x)); }
+__device__ U2 _U2(u64 x) { return (U2) {(u32) x, (u32) (x >> 32)}; }
 
 __device__ U3 modShl3w(U4 x, U3 m) {
   assert(m.c && !(m.c & 0xc0000000));
   int sh = __clz(m.c) + 1;
   if (sh > 20) {
-    m = shl(m, sh - 20);
+    m = m << (sh - 20);
     sh = 20;
   }
   assert(sh >= 3 && sh <= 20);
   u32 R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(m.b, m.c, sh)) + 1);
   
   u32 n = mulhi(x.d, R);
-  x = x - shl(m * n, sh);
+  x -= (m * n) << sh;
   assert(!(x.d & 0xfffffff8));
-  U5 t = makeU5(x);
+  U5 t = _U5(x);
   
   n = mulhi(shl(t.c, t.d, 29), R);
-  t = (U5){0, t.a, t.b, t.c, t.d} - shl(makeU5(m * n), sh + 3);
+  t = (U5){0, t.a, t.b, t.c, t.d} - (_U5(m * n) << (sh + 3));
   assert(!t.e && !(t.d & 0xffffffc0));
   
   n = mulhi(shl(t.c, t.d, 26), R);
-  t = (U5){0, t.a, t.b, t.c, t.d} - shl(makeU5(m * n), sh + 6);
+  t = (U5){0, t.a, t.b, t.c, t.d} - (_U5(m * n) << (sh + 6));
   assert(!t.e && !(t.d & 0xfffffe00));
   
   n = mulhi(shl(t.c, t.d, 23), R);
-  t = (U5){0, t.a, t.b, t.c, t.d} - shl(makeU5(m * n), sh + 9);
+  t = (U5){0, t.a, t.b, t.c, t.d} - (_U5(m * n) << (sh + 9));
   assert(!t.e && !(t.d & 0xfffff000));
 
   n = mulhi(shl(t.c, t.d, 20), R) >> (20 - sh);
@@ -249,14 +219,14 @@ __device__ U3 expMod(u32 exp, U3 m) {
   u32 mp = mprime(m.a);
   for (exp <<= 7; exp; exp += exp) {
     a = montRed(square(a), m, mp);
-    if (exp & 0x80000000) { a = shl(a, 1); }
+    if (exp & 0x80000000) { a = a << 1; }
   }
-  return montRed(makeU6(a), m, mp);
+  return montRed(_U6(a), m, mp);
 }
 
 // returns whether (2*k*p + 1) is a factor of (2^p - 1)
 __device__ bool isFactor(u32 exp, u32 flushedExp, u64 k) {
-  U3 q = makeU2(k) * (exp + exp) + (U3){1, 0, 0};  // 2 * k * exp + 1 as U3
+  U3 q = _U2(k) * (exp + exp) + (U3){1, 0, 0};  // 2 * k * exp + 1 as U3
   U3 r = expMod(flushedExp, q);
   return r.a == 1 && !r.b && !r.c;  
 }
@@ -481,7 +451,7 @@ __device__ U3 mod(U5 x, U3 m) {
   x = (U5){x.a, t.a, t.b, t.c, t.d};
   assert(!(x.e & 0xfffffff8));
   n = mulhi(shl(x.d, x.e, 29), R);
-  U5 mn = shl(makeU5(mul(m, n)), sh + 3);
+  U5 mn = shl(_U5(mul(m, n)), sh + 3);
   x = sub(x, mn);
   assert(!x.e && !(x.d & 0xffffffc0));
   n = mulhi(shl(x.c, x.d, 26), R) >> (26 - sh);
@@ -501,7 +471,7 @@ __device__ U3 expMod2(u32 exp, U3 m) {
     a = montRed(square(a), m, mp);
     if (exp & 0x80000000) { a = shl(a, 1); }
   }
-  return montRed(makeU6(a), m, mp);
+  return montRed(_U6(a), m, mp);
 }
 #endif
 */
