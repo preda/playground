@@ -26,19 +26,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <sys/time.h>
-
-typedef unsigned short u16;
-typedef unsigned u32;
-typedef unsigned long long u64;
-typedef __uint128_t u128;
-
-// Multi-precision unsigned ints with the given number of words.
-// The least-significant word is "a".
-struct U2 { u32 a, b; };
-struct U3 { u32 a, b, c; };
-struct U4 { u32 a, b, c, d; };
-struct U5 { u32 a, b, c, d, e; };
-struct U6 { u32 a, b, c, d, e, f; };
+#include "widemath.h"
 
 #define ASIZE(a) (sizeof(a) / sizeof(a[0]))
 
@@ -67,7 +55,7 @@ struct U6 { u32 a, b, c, d, e, f; };
 // How many blocks for BTC init.
 #define BTC_BLOCKS (NPRIMES / BTC_THREADS)
 // Block for sieving+testing.
-#define BLOCKS 32
+#define BLOCKS 64
 
 
 // Returns whether 2 * c * exp + 1 is 1 or 7 modulo 8.
@@ -101,9 +89,6 @@ __managed__ u64 foundFactor;  // If a factor k is found, save it here.
 __managed__ u16 classTab[NGOODCLASS];  // The class value for each "good" class.
 
 // BTC means "bit to clear", the first bit position to clear in the big bit block when sieving.
-// Keeps the BTC for each prime, for each good class. The BTC is updated during sieving.
-// This is the bulk of the GPU [global] memory usage.
-// __device__ u32 classBtcTab[NGOODCLASS][NPRIMES];
 __device__ u32 invTab[NPRIMES];
 
 // Funnel shift left.
@@ -118,100 +103,6 @@ __device__ u32 shr(u32 a, u32 b, int n) {
   u32 r;
   asm("shf.r.wrap.b32 %0, %1, %2, %3;" : "=r"(r) : "r"(a), "r"(b), "r"(n));
   return r;
-}
-
-__device__ U5 add(U5 x, U3 y) {
- u32 a, b, c, d, e;
-  asm("add.cc.u32  %0, %5, %10;"
-      "addc.cc.u32 %1, %6, %11;"
-      "addc.cc.u32 %2, %7, %12;"
-      "addc.cc.u32 %3, %8, 0;"
-      "addc.u32    %4, %9, 0;"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e)
-      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(x.e),
-        "r"(y.a), "r"(y.b), "r"(y.c));
-  return (U5) {a, b, c, d, e};
-}
-
-__device__ U4 add(U4 x, U3 y) {
- u32 a, b, c, d;
-  asm("add.cc.u32  %0, %4, %8;"
-      "addc.cc.u32 %1, %5, %9;"
-      "addc.cc.u32 %2, %6, %10;"
-      "addc.u32    %3, %7, 0;"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d)
-      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(y.a), "r"(y.b), "r"(y.c));
-  return (U4) {a, b, c, d};
-}
-
-__device__ U3 add(U3 x, U3 y) {
-  u32 a, b, c;
-  asm("add.cc.u32  %0, %3, %6;"
-      "addc.cc.u32 %1, %4, %7;"
-      "addc.u32    %2, %5, %8;"
-      : "=r"(a), "=r"(b), "=r"(c)
-      : "r"(x.a), "r"(x.b), "r"(x.c),
-        "r"(y.a), "r"(y.b), "r"(y.c));
-  return (U3) {a, b, c};
-}
-
-__device__ static U4 sub(U4 x, U4 y) {
-  u32 a, b, c, d;
-  asm("sub.cc.u32  %0, %4, %8;"
-      "subc.cc.u32 %1, %5, %9;"
-      "subc.cc.u32 %2, %6, %10;"
-      "subc.u32    %3, %7, %11;"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d)
-      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d),
-        "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d));
-  return (U4) {a, b, c, d};
-}
-
-__device__ static U5 sub(U5 x, U5 y) {
-  u32 a, b, c, d, e;
-  asm("sub.cc.u32  %0, %5, %10;"
-      "subc.cc.u32 %1, %6, %11;"
-      "subc.cc.u32 %2, %7, %12;"
-      "subc.cc.u32 %3, %8, %13;"
-      "subc.u32    %4, %9, %14;"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e)
-      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(x.e),
-        "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d), "r"(y.e));
-  return (U5) {a, b, c, d, e};
-}
-
-// returns x - (y << 32)
-__device__ U5 subShl1w(U5 x, U4 y) {
-  U4 t = sub((U4) {x.b, x.c, x.d, x.e}, y);
-  return (U5) {x.a, t.a, t.b, t.c, t.d};
-}
-
-// returns x * n; 4 MULs.
-__device__ U3 mul(U2 x, u32 n) {
-  u32 a, b, c;
-  asm(
-      "mul.hi.u32     %1, %3, %5;"
-      "mul.lo.u32     %0, %3, %5;"
-      "mad.lo.cc.u32  %1, %4, %5, %1;"
-      "madc.hi.u32    %2, %4, %5, 0;"
-      : "=r"(a), "=r"(b), "=r"(c)
-      : "r"(x.a), "r"(x.b), "r"(n));
-  return (U3) {a, b, c};
-}
-
-// returns x * n; 6 MULs.
-__device__ U4 mul(U3 x, u32 n) {
-  u32 a, b, c, d;
-  asm(
-      "mul.hi.u32     %1, %4, %7;"
-      "mul.lo.u32     %2, %6, %7;"
-      "mad.lo.cc.u32  %1, %5, %7, %1;"
-      "mul.lo.u32     %0, %4, %7;"
-      "madc.hi.cc.u32 %2, %5, %7, %2;"
-      "madc.hi.u32    %3, %6, %7, 0;"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d)
-      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(n));
-  return (U4) {a, b, c, d};
 }
 
 // returns (x*n >> 32) + (n ? 1 : 0). Used for Montgomery reduction. 5 MULs.
@@ -251,7 +142,8 @@ __device__ U4 square(U2 x) {
 __device__ U6 square(U3 x) {
   U2 ab = {x.a, x.b};
   U4 ab2 = square(ab);
-  U3 abc = mul(ab, x.c + x.c);
+  // U3 abc = mul(ab, x.c + x.c);
+  U3 abc = ab * (x.c + x.c);
   
   u32 c, d, e, f;
   asm(
@@ -299,24 +191,24 @@ __device__ U3 modShl3w(U4 x, U3 m) {
   u32 R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(m.b, m.c, sh)) + 1);
   
   u32 n = mulhi(x.d, R);
-  x = sub(x, shl(mul(m, n), sh));
+  x = x - shl(m * n, sh);
   assert(!(x.d & 0xfffffff8));
   U5 t = makeU5(x);
   
   n = mulhi(shl(t.c, t.d, 29), R);
-  t = sub((U5){0, t.a, t.b, t.c, t.d}, shl(makeU5(mul(m, n)), sh + 3));
+  t = (U5){0, t.a, t.b, t.c, t.d} - shl(makeU5(m * n), sh + 3);
   assert(!t.e && !(t.d & 0xffffffc0));
   
   n = mulhi(shl(t.c, t.d, 26), R);
-  t = sub((U5){0, t.a, t.b, t.c, t.d}, shl(makeU5(mul(m, n)), sh + 6));
+  t = (U5){0, t.a, t.b, t.c, t.d} - shl(makeU5(m * n), sh + 6);
   assert(!t.e && !(t.d & 0xfffffe00));
   
   n = mulhi(shl(t.c, t.d, 23), R);
-  t = sub((U5){0, t.a, t.b, t.c, t.d}, shl(makeU5(mul(m, n)), sh + 9));
+  t = (U5){0, t.a, t.b, t.c, t.d} - shl(makeU5(m * n), sh + 9);
   assert(!t.e && !(t.d & 0xfffff000));
 
   n = mulhi(shl(t.c, t.d, 20), R) >> (20 - sh);
-  x = sub((U4){t.a, t.b, t.c, t.d}, mul(m, n));
+  x = (U4){t.a, t.b, t.c, t.d} - m * n;
   assert(!x.d && !(x.c >> (35 - sh)));
   return (U3) {x.a, x.b, x.c};
 }
@@ -341,9 +233,9 @@ __device__ static u32 mprime(u32 m) {
 __device__ static U3 montRed(U6 x6, U3 m, u32 mp) {
   assert(!(x6.f & 0xc0000000));
   assert(x6.a + (x6.a * mp * m.a) == 0);
-  U5 x5 = add((U5) {x6.b, x6.c, x6.d, x6.e, x6.f}, mulM(m, x6.a * mp));
-  U4 x4 = add((U4) {x5.b, x5.c, x5.d, x5.e}, mulM(m, x5.a * mp));
-  U3 x3 = add((U3) {x4.b, x4.c, x4.d}, mulM(m, x4.a * mp));
+  U5 x5 = shr1w(x6) + mulM(m, x6.a * mp);
+  U4 x4 = shr1w(x5) + mulM(m, x5.a * mp);
+  U3 x3 = shr1w(x4) + mulM(m, x4.a * mp);
   assert(!(x3.c & 0xc0000000));
   return x3;
 }
@@ -364,7 +256,7 @@ __device__ U3 expMod(u32 exp, U3 m) {
 
 // returns whether (2*k*p + 1) is a factor of (2^p - 1)
 __device__ bool isFactor(u32 exp, u32 flushedExp, u64 k) {
-  U3 q = add(mul(makeU2(k), exp + exp), (U3){1, 0, 0});  // 2 * k * exp + 1 as U3
+  U3 q = makeU2(k) * (exp + exp) + (U3){1, 0, 0};  // 2 * k * exp + 1 as U3
   U3 r = expMod(flushedExp, q);
   return r.a == 1 && !r.b && !r.c;  
 }
