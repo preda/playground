@@ -77,8 +77,6 @@ __device__ U5 operator-(U5 x, U5 y) {
   return (U5) {a, b, c, d, e};
 }
 
-__device__ void operator-=(U4 &x, U4 y) { x = x - y; }
-
 // 4 MULs.
 __device__ U3 operator*(U2 x, u32 n) {
   u32 a, b, c;
@@ -140,3 +138,7 @@ __device__ U5 operator<<(U5 x, int n) {
   U4 t = (U4) {x.a, x.b, x.c, x.d} << n;
   return (U5) {t.a, t.b, t.c, t.d, shl(x.d, x.e, n)};
 }
+
+__device__ void operator-=(U4 &x, U4 y) { x = x - y; }
+
+__device__ void operator<<=(U3 &x, int n) { x = x << n; }
