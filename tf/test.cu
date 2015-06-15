@@ -31,10 +31,10 @@
 #define ASIZE(a) (sizeof(a) / sizeof(a[0]))
 
 // Threads per block, doing sieving and factor-testing.
-#define THREADS_PER_BLOCK 1024
+#define THREADS_PER_BLOCK (512)
 
 // How many words of shared memory to use for sieving.
-#define NWORDS (12 * 1024)
+#define NWORDS (6 * 1024)
 
 // Must update acceptClass() when changing these.
 #define NCLASS     (4 * 3 * 5 * 7 * 11 * 13)
@@ -224,8 +224,6 @@ __device__ u32 modInv32(u64 step, u32 prime) {
   return (prevX >= 0) ? prevX : (prevX + prime);
 }
 
-
-
 // 3 times 64bit modulo, expensive!
 __device__ int bitToClear(u32 exp, u64 k, u32 prime, u32 inv) {
   u32 kmod = k % prime;
@@ -248,15 +246,15 @@ __global__ void __launch_bounds__(1024) initBtcTab(u32 exp, u64 k) {
 // Returns the position of the most significant bit that is set.
 __device__ int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
 
-__global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k) {
+__global__ void __launch_bounds__(THREADS_PER_BLOCK, 4) tf(u32 exp, u32 flushedExp, u64 k) {
   __shared__ u32 words[NWORDS];
   const int tid = threadIdx.x;
-  // const int cid = c0 + blockIdx.x;
-  // const int c = classTab[cid];
-
-  for (const u32 *p = primes + tid; p < primes + NPRIMES; p += THREADS_PER_BLOCK) {
-    int prime = *p;
-    int btcAux = btcTab[p - primes] - (int) (NCLASS * (u64) NBITS * blockIdx.x % prime);
+  for (int i = tid; i < NWORDS; i += THREADS_PER_BLOCK) { words[i] = 0; }
+  __syncthreads();
+  u64 delta = NCLASS * (u64) NBITS * blockIdx.x;
+  for (int i = tid; i < NPRIMES; i += THREADS_PER_BLOCK) {
+    int prime = primes[i];
+    int btcAux = btcTab[i] - (int) (delta % prime);
     int btc = (btcAux < 0) ? btcAux + prime : btcAux;
     while (btc < NBITS) {
       atomicOr(words + (btc >> 5), 1 << (btc & 0x1f));
@@ -264,18 +262,20 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 2) tf(u32 exp, u64 k) {
     }
   }
   __syncthreads();
+  return;
   k += (tid + blockIdx.x * NWORDS) * (u64) (32 * NCLASS);
-  u32 *p = words + tid;
-  u32 bits = ~*p;
-  const u32 flushedExp = exp << __clz(exp);
+  int i = tid;
+  // u32 *p = words + tid;
+  u32 bits = ~words[i];
+  // const u32 flushedExp = exp << __clz(exp);
   while (true) {
     while (!bits) {
-      p += THREADS_PER_BLOCK;
-      if (p >= words + NWORDS) {
-        return;
-      }
-      bits = ~*p;
-      *p = 0;
+      i += THREADS_PER_BLOCK;
+      // p += THREADS_PER_BLOCK;
+      if (i >= NWORDS) { return; }
+      // if (p >= words + NWORDS) { return; }
+      bits = ~words[i];
+      // words[i] = 0;
       k += THREADS_PER_BLOCK * (32 * NCLASS);
     }
     int bit = bfind(bits);
@@ -326,7 +326,8 @@ int main() {
   u64 k0End   = kEnd + (NCLASS - (kEnd % NCLASS)) % NCLASS;
   u64 perRound = NBITS * (u64) NCLASS;
   u64 rounds = (kEnd - k0Start + (perRound - 1)) / perRound;
-
+  u32 flushedExp = exp << __builtin_clz(exp);
+  
   printf("exp %u kStart %llu kEnd %llu k0Start %llu k0End %llu, %llu rounds %llu\n",
          exp, kStart, kEnd, k0Start, k0End, (k0Start + rounds * perRound), rounds);
   
@@ -341,16 +342,15 @@ int main() {
     u64 k = k0Start + c;
     initBtcTab<<<NPRIMES/1024, 1024>>>(exp, k);
     cudaDeviceSynchronize();
-    u64 t2 = timeMillis();
-    tf<<<32*16, THREADS_PER_BLOCK>>>(exp, k);
-    cudaDeviceSynchronize(); CUDA_CHECK_ERR;
-    u64 t3 = timeMillis();
-    printf("%5d: class %d time btc %llu, sieve+test %llu\n", cid, c, t2 - t1, t3 - t2);
-    t1 = t3;
-    if (foundFactor) {
-      printf("Factor K: %llu\n", foundFactor);
-      break;
+    if (foundFactor) { printf("Factor K: %llu\n", foundFactor); break; }
+    if (!(cid & 0xf)) {
+      u64 t2 = timeMillis();
+      printf("%5d: class %5d: %llu\n", cid, c, t2 - t1);
+      t1 = t2;
     }
+    tf<<<32*4, THREADS_PER_BLOCK>>>(exp, flushedExp, k);
+    // cudaDeviceSynchronize(); CUDA_CHECK_ERR;
+
   }
   printf("Total time: %llu ms\n", timeMillis() - t0);
   // cudaDeviceReset();
