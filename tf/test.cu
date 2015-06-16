@@ -256,24 +256,27 @@ __device__ void sieve(int prime, int btc0) {
 }
 */
 
-__global__ void __launch_bounds__(THREADS_PER_BLOCK, 8) tf(u32 exp, u32 flushedExp, u64 k) {
+// #define TID (threadIdx.x)
+
+__global__ void __launch_bounds__(THREADS_PER_BLOCK, 4) tf(u32 exp, u32 flushedExp, u64 k) {
   __shared__ u32 words[NWORDS];
   const int tid = threadIdx.x;
-  for (int i = 0; i < NWORDS / THREADS_PER_BLOCK; ++i) { words[tid + i * THREADS_PER_BLOCK] = 0; }  
+  for (int i = 0; i < NWORDS / THREADS_PER_BLOCK; ++i) { words[tid + i * THREADS_PER_BLOCK] = 0; }
   __syncthreads();
   // u64 delta = NCLASS * (u64) NBITS * blockIdx.x;
   // #pragma unroll
-  for (int i = 0; i < NPRIMES / THREADS_PER_BLOCK; ++i) {
-    int prime = primes[tid + i * THREADS_PER_BLOCK];
-    int btc0 = btcTab[tid + i * THREADS_PER_BLOCK];
-    // sieve(prime, btc0);
-    
+  int prime = primes[tid];
+  int btc0  = btcTab[tid];
+  for (int i = 1; i < NPRIMES / THREADS_PER_BLOCK + 1; ++i) {
     int btcAux = btc0 - (NCLASS * NBITS % prime) * blockIdx.x % prime;
+    btc0  = btcTab[tid + i * THREADS_PER_BLOCK]; 
     int btc = (btcAux < 0) ? btcAux + prime : btcAux;
     while (btc < NBITS) {
       atomicOr(words + (btc >> 5), 1 << (btc & 0x1f));
+      // atomicAnd(words + (btc >> 5), ~(1 << (btc & 0x1f)));
       btc += prime;
     }
+    prime = primes[tid + i * THREADS_PER_BLOCK];
   }
   /*
   for (int i = tid; i < NPRIMES; i += THREADS_PER_BLOCK) {
@@ -287,23 +290,22 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 8) tf(u32 exp, u32 flushedE
   }
   */
   __syncthreads();
-
   /*
-  return;
+  for (int i = 0; i < NWORDS / THREADS_PER_BLOCK; ++i) {
+    words[tid + i * THREADS_PER_BLOCK] = ~words[tid + i * THREADS_PER_BLOCK];
+  }
+  __syncthreads();
+  */
+
   k += (tid + blockIdx.x * NWORDS) * (u64) (32 * NCLASS);
   int i = tid;
-  // u32 *p = words + tid;
   u32 bits = ~words[i];
-  // const u32 flushedExp = exp << __clz(exp);
   while (true) {
     while (!bits) {
       i += THREADS_PER_BLOCK;
-      // p += THREADS_PER_BLOCK;
       if (i >= NWORDS) { return; }
-      // if (p >= words + NWORDS) { return; }
       bits = ~words[i];
-      // words[i] = 0;
-      k += THREADS_PER_BLOCK * (32 * NCLASS);
+      k += THREADS_PER_BLOCK * 32 * NCLASS;
     }
     int bit = bfind(bits);
     bits &= ~(1 << bit);
@@ -311,7 +313,6 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 8) tf(u32 exp, u32 flushedE
       foundFactor = k + bit * NCLASS;      
     }
   }
-  */
 }
 
 int classTab[NGOODCLASS];
