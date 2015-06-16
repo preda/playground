@@ -258,7 +258,10 @@ __device__ void sieve(int prime, int btc0) {
 
 // #define TID (threadIdx.x)
 
-__global__ void __launch_bounds__(THREADS_PER_BLOCK, 4) tf(u32 exp, u32 flushedExp, u64 k) {
+__device__ u32 kTab[128 * 1024 * 1024];
+__managed__ u32 kTabSize;
+
+__global__ void __launch_bounds__(THREADS_PER_BLOCK, 4) tf() {
   __shared__ u32 words[NWORDS];
   const int tid = threadIdx.x;
   for (int i = 0; i < NWORDS / THREADS_PER_BLOCK; ++i) { words[tid + i * THREADS_PER_BLOCK] = 0; }
@@ -297,22 +300,42 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 4) tf(u32 exp, u32 flushedE
   __syncthreads();
   */
 
-  k += (tid + blockIdx.x * NWORDS) * (u64) (32 * NCLASS);
+  int popc = 0;
+  for (int i = 0; i < NWORDS / THREADS_PER_BLOCK; ++i) {
+    u32 w = ~words[tid + i * THREADS_PER_BLOCK];
+    words[tid + i * THREADS_PER_BLOCK] = w;
+    popc += __popc(w);
+  }
+  u32 bits = words[tid];
+  words[0] = 0;
+  __syncthreads();
+  int pos = atomicAdd(words, popc);
+  __syncthreads();
+  if (tid == 0) {
+    words[0] = atomicAdd(&kTabSize, words[0]);
+  }
+  __syncthreads();
+  pos += words[0];
+  
+  u32 delta = (tid + blockIdx.x * NWORDS) * 32;
   int i = tid;
-  u32 bits = ~words[i];
   while (true) {
     while (!bits) {
       i += THREADS_PER_BLOCK;
-      if (i >= NWORDS) { return; }
-      bits = ~words[i];
-      k += THREADS_PER_BLOCK * 32 * NCLASS;
+      if (i >= NWORDS) { goto out; }
+      bits = words[i];
+      delta += THREADS_PER_BLOCK * 32;
     }
     int bit = bfind(bits);
     bits &= ~(1 << bit);
+    kTab[pos++] = delta + bit;
+    /*
     if (isFactor(exp, flushedExp, k + bit * NCLASS)) {
       foundFactor = k + bit * NCLASS;      
     }
+    */
   }
+ out: return;
 }
 
 int classTab[NGOODCLASS];
@@ -364,20 +387,22 @@ int main() {
   initInvTab<<<NPRIMES/1024, 1024>>>(exp);
   cudaDeviceSynchronize();
   printf("initInvTab: %llu ms\n", timeMillis() - t1);
-  
+  kTabSize = 0;
   t1 = timeMillis();
   for (int cid = 0; cid < NGOODCLASS; ++cid) {
     int c = classTab[cid];
     u64 k = k0Start + c;
     initBtcTab<<<NPRIMES/1024, 1024>>>(exp, k);
     cudaDeviceSynchronize();
+    printf("kTab %d\n", kTabSize);
+    kTabSize = 0;
     if (foundFactor) { printf("Factor K: %llu\n", foundFactor); break; }
     if (!(cid & 0xf)) {
       u64 t2 = timeMillis();
       printf("%5d: class %5d: %llu\n", cid, c, t2 - t1);
       t1 = t2;
     }
-    tf<<<32 * 4 * 12 * 1024 / NWORDS, THREADS_PER_BLOCK/*, NWORDS * 4*/>>>(exp, flushedExp, k);
+    tf<<<32 * 4 * 12 * 1024 / NWORDS, THREADS_PER_BLOCK/*, NWORDS * 4*/>>>();
     // cudaDeviceSynchronize(); CUDA_CHECK_ERR;
 
   }
