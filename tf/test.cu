@@ -37,14 +37,9 @@
 #define NWORDS (6 * 1024)
 
 // Must update acceptClass() when changing these.
-#define NCLASS     (4 * 3 * 5 * 7 * 11 * 13)
+#define NCLASS     (4 * 3 * 5 * 7 * 11)
 // Out of NCLASS, how many classes pass acceptClass(). Sync with NCLASS.
-#define NGOODCLASS (2 * 2 * 4 * 6 * 10 * 12)
-
-// Bits for sieving.
-#define NBITS (NWORDS << 5)
-// Number of pre-computed primes for sieving.
-#define NPRIMES (ASIZE(primes))
+#define NGOODCLASS (2 * 2 * 4 * 6 * 10)
 
 // Returns whether 2 * c * exp + 1 is 1 or 7 modulo 8.
 // Any Marsenne factor must be of this form. See http://www.mersenne.org/various/math.php
@@ -53,15 +48,18 @@ bool q1or7mod8(u32 exp, u32 c) {
 }
 
 // whether 2 * c * exp + 1 != 0 modulo prime
-bool notMultiple(u32 exp, u32 c, unsigned prime) {
-  return (2 * c * (u64) exp + 1) % prime;
-}
+bool notMultiple(u32 exp, u32 c, unsigned prime) { return (2 * c * (u64) exp + 1) % prime; }
 
 bool acceptClass(u32 exp, u32 c) {
-  // Keep in sync with NCLASS
-  return q1or7mod8(exp, c) && notMultiple(exp, c, 3) && notMultiple(exp, c, 5)
-    && notMultiple(exp, c, 7) && notMultiple(exp, c, 11) && notMultiple(exp, c, 13);
+#define P(p) notMultiple(exp, c, p)
+  return q1or7mod8(exp, c) && P(3) && P(5) && P(7) && P(11);
+#undef P
 }
+
+// Bits for sieving.
+#define NBITS (NWORDS << 5)
+// Number of pre-computed primes for sieving.
+#define NPRIMES (ASIZE(primes))
 
 u64 timeMillis() {
   struct timeval tv;
@@ -70,7 +68,7 @@ u64 timeMillis() {
 }
 
 __device__ const u32 primes[] = {
-#include "primes-1M-17.inc"
+#include "primes-1M.inc"
 };
 
 __managed__ u64 foundFactor;  // If a factor k is found, save it here.
@@ -246,12 +244,38 @@ __global__ void __launch_bounds__(1024) initBtcTab(u32 exp, u64 k) {
 // Returns the position of the most significant bit that is set.
 __device__ int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
 
-__global__ void __launch_bounds__(THREADS_PER_BLOCK, 4) tf(u32 exp, u32 flushedExp, u64 k) {
+/*extern __shared__ u32 words[];
+//__noinline__
+__device__ void sieve(int prime, int btc0) {
+  int btcAux = btc0 - (int) (NCLASS * (u64) NBITS * blockIdx.x % prime);
+  int btc = (btcAux < 0) ? btcAux + prime : btcAux;
+  while (btc < NBITS) {
+    atomicOr(words + (btc >> 5), 1 << (btc & 0x1f));
+    btc += prime;
+  }
+}
+*/
+
+__global__ void __launch_bounds__(THREADS_PER_BLOCK, 8) tf(u32 exp, u32 flushedExp, u64 k) {
   __shared__ u32 words[NWORDS];
   const int tid = threadIdx.x;
-  for (int i = tid; i < NWORDS; i += THREADS_PER_BLOCK) { words[i] = 0; }
+  for (int i = 0; i < NWORDS / THREADS_PER_BLOCK; ++i) { words[tid + i * THREADS_PER_BLOCK] = 0; }  
   __syncthreads();
-  u64 delta = NCLASS * (u64) NBITS * blockIdx.x;
+  // u64 delta = NCLASS * (u64) NBITS * blockIdx.x;
+  // #pragma unroll
+  for (int i = 0; i < NPRIMES / THREADS_PER_BLOCK; ++i) {
+    int prime = primes[tid + i * THREADS_PER_BLOCK];
+    int btc0 = btcTab[tid + i * THREADS_PER_BLOCK];
+    // sieve(prime, btc0);
+    
+    int btcAux = btc0 - (NCLASS * NBITS % prime) * blockIdx.x % prime;
+    int btc = (btcAux < 0) ? btcAux + prime : btcAux;
+    while (btc < NBITS) {
+      atomicOr(words + (btc >> 5), 1 << (btc & 0x1f));
+      btc += prime;
+    }
+  }
+  /*
   for (int i = tid; i < NPRIMES; i += THREADS_PER_BLOCK) {
     int prime = primes[i];
     int btcAux = btcTab[i] - (int) (delta % prime);
@@ -261,7 +285,10 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 4) tf(u32 exp, u32 flushedE
       btc += prime;
     }
   }
+  */
   __syncthreads();
+
+  /*
   return;
   k += (tid + blockIdx.x * NWORDS) * (u64) (32 * NCLASS);
   int i = tid;
@@ -284,6 +311,7 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 4) tf(u32 exp, u32 flushedE
       foundFactor = k + bit * NCLASS;      
     }
   }
+  */
 }
 
 int classTab[NGOODCLASS];
@@ -348,7 +376,7 @@ int main() {
       printf("%5d: class %5d: %llu\n", cid, c, t2 - t1);
       t1 = t2;
     }
-    tf<<<32*4, THREADS_PER_BLOCK>>>(exp, flushedExp, k);
+    tf<<<32 * 4 * 12 * 1024 / NWORDS, THREADS_PER_BLOCK/*, NWORDS * 4*/>>>(exp, flushedExp, k);
     // cudaDeviceSynchronize(); CUDA_CHECK_ERR;
 
   }
