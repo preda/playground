@@ -281,24 +281,7 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 4) tf() {
     }
     prime = primes[tid + i * THREADS_PER_BLOCK];
   }
-  /*
-  for (int i = tid; i < NPRIMES; i += THREADS_PER_BLOCK) {
-    int prime = primes[i];
-    int btcAux = btcTab[i] - (int) (delta % prime);
-    int btc = (btcAux < 0) ? btcAux + prime : btcAux;
-    while (btc < NBITS) {
-      atomicOr(words + (btc >> 5), 1 << (btc & 0x1f));
-      btc += prime;
-    }
-  }
-  */
   __syncthreads();
-  /*
-  for (int i = 0; i < NWORDS / THREADS_PER_BLOCK; ++i) {
-    words[tid + i * THREADS_PER_BLOCK] = ~words[tid + i * THREADS_PER_BLOCK];
-  }
-  __syncthreads();
-  */
 
   int popc = 0;
   for (int i = 0; i < NWORDS / THREADS_PER_BLOCK; ++i) {
@@ -306,19 +289,36 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 4) tf() {
     words[tid + i * THREADS_PER_BLOCK] = w;
     popc += __popc(w);
   }
+  
   u32 bits = words[tid];
-  words[0] = 0;
-  __syncthreads();
-  int pos = atomicAdd(words, popc);
-  __syncthreads();
-  if (tid == 0) {
-    words[0] = atomicAdd(&kTabSize, words[0]);
+  if (tid < 32) {
+    words[0] = 0;
+    words[1] = 0xffffffff;
   }
   __syncthreads();
-  pos += words[0];
-  
-  u32 delta = (tid + blockIdx.x * NWORDS) * 32;
+  u32 pos = atomicAdd(words, popc | (1 << 20));
+  atomicMin(words + 1, popc);
+  __syncthreads();
+  if (tid == 0) {
+    words[0] = atomicAdd(&kTabSize, words[0] & 0xfffff);
+  }
+  int min = words[1];
+  pos = (pos & 0xfffff) - min * (pos >> 20);
+  __syncthreads();
+  int p = words[0] + tid;
   int i = tid;
+  u32 delta = (tid + blockIdx.x * NWORDS) * 32;
+  do {
+    while (!bits) {
+      bits = words[i += THREADS_PER_BLOCK];
+      delta += THREADS_PER_BLOCK * 32;
+    }
+    int bit = bfind(bits);
+    bits &= ~(1 << bit);
+    kTab[p] = delta + bit;
+    p += THREADS_PER_BLOCK;
+  } while (--min);
+  p += -tid + (int)pos;
   while (true) {
     while (!bits) {
       i += THREADS_PER_BLOCK;
@@ -328,12 +328,7 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 4) tf() {
     }
     int bit = bfind(bits);
     bits &= ~(1 << bit);
-    kTab[pos++] = delta + bit;
-    /*
-    if (isFactor(exp, flushedExp, k + bit * NCLASS)) {
-      foundFactor = k + bit * NCLASS;      
-    }
-    */
+    kTab[p++] = delta + bit;
   }
  out: return;
 }
