@@ -267,10 +267,9 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 4) sieve() {
   const int tid = threadIdx.x;
   for (int i = 0; i < NWORDS / THREADS_PER_BLOCK; ++i) { words[tid + i * THREADS_PER_BLOCK] = 0; }
   __syncthreads();
-  int idx = tid;
-  for (int i = 0; i < NPRIMES / THREADS_PER_BLOCK; ++i, idx += THREADS_PER_BLOCK) {
-    int prime = primes[idx];
-    int btc0  = btcTab[idx];
+  for (int i = tid; i < NPRIMES; i += THREADS_PER_BLOCK) {
+    int prime = primes[i];
+    int btc0  = btcTab[i];
     int btcAux = btc0 - (NCLASS * NBITS % prime) * blockIdx.x % prime;
     int btc = (btcAux < 0) ? btcAux + prime : btcAux;
     while (btc < NBITS) {
@@ -397,9 +396,6 @@ int main() {
     sieve<<<32 * 4 * 12 * 1024 / NWORDS, THREADS_PER_BLOCK/*, NWORDS * 4*/>>>();
     cudaDeviceSynchronize();
     test<<<(kTabSize + 512*N - 1) / (512*N), 512>>>(exp + exp, flushedExp, k);
-    
-    // cudaDeviceSynchronize(); CUDA_CHECK_ERR;
-
   }
   printf("Total time: %llu ms\n", timeMillis() - t0);
   // cudaDeviceReset();
