@@ -267,20 +267,16 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 4) sieve() {
   const int tid = threadIdx.x;
   for (int i = 0; i < NWORDS / THREADS_PER_BLOCK; ++i) { words[tid + i * THREADS_PER_BLOCK] = 0; }
   __syncthreads();
-  // u64 delta = NCLASS * (u64) NBITS * blockIdx.x;
-  // #pragma unroll
-  int prime = primes[tid];
-  int btc0  = btcTab[tid];
-  for (int i = 1; i < NPRIMES / THREADS_PER_BLOCK + 1; ++i) {
+  int idx = tid;
+  for (int i = 0; i < NPRIMES / THREADS_PER_BLOCK; ++i, idx += THREADS_PER_BLOCK) {
+    int prime = primes[idx];
+    int btc0  = btcTab[idx];
     int btcAux = btc0 - (NCLASS * NBITS % prime) * blockIdx.x % prime;
-    btc0  = btcTab[tid + i * THREADS_PER_BLOCK]; 
     int btc = (btcAux < 0) ? btcAux + prime : btcAux;
     while (btc < NBITS) {
       atomicOr(words + (btc >> 5), 1 << (btc & 0x1f));
-      // atomicAnd(words + (btc >> 5), ~(1 << (btc & 0x1f)));
       btc += prime;
     }
-    prime = primes[tid + i * THREADS_PER_BLOCK];
   }
   __syncthreads();
 
