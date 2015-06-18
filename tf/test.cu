@@ -58,6 +58,7 @@ bool acceptClass(u32 exp, u32 c) {
 
 // Bits for sieving.
 #define NBITS (NWORDS << 5)
+
 // Number of pre-computed primes for sieving.
 #define NPRIMES (ASIZE(primes))
 
@@ -244,24 +245,24 @@ __global__ void __launch_bounds__(1024) initBtcTab(u32 exp, u64 k) {
 // Returns the position of the most significant bit that is set.
 __device__ int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
 
-/*extern __shared__ u32 words[];
-//__noinline__
-__device__ void sieve(int prime, int btc0) {
-  int btcAux = btc0 - (int) (NCLASS * (u64) NBITS * blockIdx.x % prime);
-  int btc = (btcAux < 0) ? btcAux + prime : btcAux;
-  while (btc < NBITS) {
-    atomicOr(words + (btc >> 5), 1 << (btc & 0x1f));
-    btc += prime;
-  }
-}
-*/
-
-// #define TID (threadIdx.x)
-
 __device__ u32 kTab[128 * 1024 * 1024];
 __managed__ u32 kTabSize;
 
-__global__ void __launch_bounds__(THREADS_PER_BLOCK, 4) tf() {
+#define N 64
+__global__ void __launch_bounds__(512, 2) test(u32 doubleExp, u32 flushedExp, u64 k) {
+  int id = blockIdx.x * blockDim.x * N + threadIdx.x;
+  for (int i = 0; i < N; ++i, id += blockDim.x) {
+    u32 delta = kTab[id];
+    if (id < kTabSize) {
+      U3 r = expMod(flushedExp, incMul(_U2(k + delta), doubleExp));
+      if (r.a == 1 && !(r.b | r.c)) {
+        foundFactor = k;
+      }
+    }
+  }
+}
+
+__global__ void __launch_bounds__(THREADS_PER_BLOCK, 4) sieve() {
   __shared__ u32 words[NWORDS];
   const int tid = threadIdx.x;
   for (int i = 0; i < NWORDS / THREADS_PER_BLOCK; ++i) { words[tid + i * THREADS_PER_BLOCK] = 0; }
@@ -356,7 +357,7 @@ int main() {
   assert(NPRIMES % 1024 == 0);
   
   cudaError_t err;
-  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
+  // cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
   // cudaSetDevice(1);
   CUDA_CHECK_ERR;
   
@@ -371,12 +372,12 @@ int main() {
   u64 kEnd   = calculateK(exp, startPow2 + 1);
   u64 k0Start = kStart - (kStart % NCLASS);
   u64 k0End   = kEnd + (NCLASS - (kEnd % NCLASS)) % NCLASS;
-  u64 perRound = NBITS * (u64) NCLASS;
-  u64 rounds = (kEnd - k0Start + (perRound - 1)) / perRound;
+  u32 blockSize = NBITS * NCLASS;
+  u32 blocks = (kEnd - k0Start + (blockSize - 1)) / blockSize;
   u32 flushedExp = exp << __builtin_clz(exp);
   
-  printf("exp %u kStart %llu kEnd %llu k0Start %llu k0End %llu, %llu rounds %llu\n",
-         exp, kStart, kEnd, k0Start, k0End, (k0Start + rounds * perRound), rounds);
+  printf("exp %u kStart %llu kEnd %llu k0Start %llu k0End %llu, %llu blocks %u, actual %u\n",
+         exp, kStart, kEnd, k0Start, k0End, (k0Start + blocks * (u64) blockSize), blocks, 512 * 3 * 1024 / NWORDS);
   
   t1 = timeMillis();
   initInvTab<<<NPRIMES/1024, 1024>>>(exp);
@@ -389,7 +390,7 @@ int main() {
     u64 k = k0Start + c;
     initBtcTab<<<NPRIMES/1024, 1024>>>(exp, k);
     cudaDeviceSynchronize();
-    printf("kTab %d\n", kTabSize);
+    // printf("kTab %d\n", kTabSize);
     kTabSize = 0;
     if (foundFactor) { printf("Factor K: %llu\n", foundFactor); break; }
     if (!(cid & 0xf)) {
@@ -397,7 +398,10 @@ int main() {
       printf("%5d: class %5d: %llu\n", cid, c, t2 - t1);
       t1 = t2;
     }
-    tf<<<32 * 4 * 12 * 1024 / NWORDS, THREADS_PER_BLOCK/*, NWORDS * 4*/>>>();
+    sieve<<<32 * 4 * 12 * 1024 / NWORDS, THREADS_PER_BLOCK/*, NWORDS * 4*/>>>();
+    cudaDeviceSynchronize();
+    test<<<(kTabSize + 512*N - 1) / (512*N), 512>>>(exp + exp, flushedExp, k);
+    
     // cudaDeviceSynchronize(); CUDA_CHECK_ERR;
 
   }

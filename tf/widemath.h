@@ -91,6 +91,19 @@ __device__ U3 operator*(U2 x, u32 n) {
   return (U3) {a, b, c};
 }
 
+// compute x * n + 1
+__device__ U3 incMul(U2 x, u32 n) {
+  u32 a, b, c;
+  asm(
+      "mul.hi.u32     %1, %3, %5;"
+      "mad.lo.cc.u32  %0, %3, %5, 1;"
+      "madc.lo.cc.u32 %1, %4, %5, %1;"
+      "madc.hi.u32    %2, %4, %5, 0;"
+      : "=r"(a), "=r"(b), "=r"(c)
+      : "r"(x.a), "r"(x.b), "r"(n));
+  return (U3) {a, b, c};
+}
+
 // 6 MULs.
 __device__ U4 operator*(U3 x, u32 n) {
   u32 a, b, c, d;
