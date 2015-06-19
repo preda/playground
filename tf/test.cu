@@ -31,7 +31,7 @@
 #define ASIZE(a) (sizeof(a) / sizeof(a[0]))
 
 // Threads per block, doing sieving and factor-testing.
-#define THREADS_PER_BLOCK (512)
+#define SIEVE_THREADS 128
 
 // How many words of shared memory to use for sieving.
 #define NWORDS (6 * 1024)
@@ -262,12 +262,14 @@ __global__ void __launch_bounds__(512, 2) test(u32 doubleExp, u32 flushedExp, u6
   }
 }
 
-__global__ void __launch_bounds__(THREADS_PER_BLOCK, 4) sieve() {
+//
+__global__ void __launch_bounds__(512, 4) sieve() {
   __shared__ u32 words[NWORDS];
+  // kTabSize = 0;
   const int tid = threadIdx.x;
-  for (int i = 0; i < NWORDS / THREADS_PER_BLOCK; ++i) { words[tid + i * THREADS_PER_BLOCK] = 0; }
+  for (int i = 0; i < NWORDS / SIEVE_THREADS; ++i) { words[tid + i * SIEVE_THREADS] = 0; }
   __syncthreads();
-  for (int i = tid; i < NPRIMES; i += THREADS_PER_BLOCK) {
+  for (int i = tid; i < NPRIMES; i += SIEVE_THREADS) {
     int prime = primes[i];
     int btc0  = btcTab[i];
     int btcAux = btc0 - (NCLASS * NBITS % prime) * blockIdx.x % prime;
@@ -280,11 +282,9 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 4) sieve() {
   __syncthreads();
 
   int popc = 0;
-  for (int i = 0; i < NWORDS / THREADS_PER_BLOCK; ++i) {
-    u32 w = ~words[tid + i * THREADS_PER_BLOCK];
-    words[tid + i * THREADS_PER_BLOCK] = w;
-    popc += __popc(w);
-  }
+  
+  // for (int i = 0, idx = threadIdx.x; i < NWORDS / SIEVE_THREADS; ++i, idx += SIEVE_THREADS) { popc += __popc(words[idx] = ~words[idx]); }
+  for (int i = tid; i < NWORDS; i += SIEVE_THREADS) { popc += __popc(words[i] = ~words[i]); }
   
   u32 bits = words[tid];
   if (tid < 32) {
@@ -306,21 +306,21 @@ __global__ void __launch_bounds__(THREADS_PER_BLOCK, 4) sieve() {
   u32 delta = (tid + blockIdx.x * NWORDS) * 32;
   do {
     while (!bits) {
-      bits = words[i += THREADS_PER_BLOCK];
-      delta += THREADS_PER_BLOCK * 32;
+      bits = words[i += SIEVE_THREADS];
+      delta += SIEVE_THREADS * 32;
     }
     int bit = bfind(bits);
     bits &= ~(1 << bit);
     kTab[p] = delta + bit;
-    p += THREADS_PER_BLOCK;
+    p += SIEVE_THREADS;
   } while (--min);
   p += -tid + (int)pos;
   while (true) {
     while (!bits) {
-      i += THREADS_PER_BLOCK;
+      i += SIEVE_THREADS;
       if (i >= NWORDS) { goto out; }
       bits = words[i];
-      delta += THREADS_PER_BLOCK * 32;
+      delta += SIEVE_THREADS * 32;
     }
     int bit = bfind(bits);
     bits &= ~(1 << bit);
@@ -385,17 +385,17 @@ int main() {
     u64 k = k0Start + c;
     initBtcTab<<<NPRIMES/1024, 1024>>>(exp, k);
     cudaDeviceSynchronize();
-    // printf("kTab %d\n", kTabSize);
+    printf("kTab %d\n", kTabSize);
     kTabSize = 0;
-    if (foundFactor) { printf("Factor K: %llu\n", foundFactor); break; }
+    // if (foundFactor) { printf("Factor K: %llu\n", foundFactor); break; }
     if (!(cid & 0xf)) {
       u64 t2 = timeMillis();
       printf("%5d: class %5d: %llu\n", cid, c, t2 - t1);
       t1 = t2;
     }
-    sieve<<<32 * 4 * 12 * 1024 / NWORDS, THREADS_PER_BLOCK/*, NWORDS * 4*/>>>();
-    cudaDeviceSynchronize();
-    test<<<(kTabSize + 512*N - 1) / (512*N), 512>>>(exp + exp, flushedExp, k);
+    sieve<<<32 * 4 * 12 * 1024 / NWORDS, SIEVE_THREADS>>>();
+    // cudaDeviceSynchronize();
+    // test<<<(kTabSize + 512*N - 1) / (512*N), 512>>>(exp + exp, flushedExp, k);
   }
   printf("Total time: %llu ms\n", timeMillis() - t0);
   // cudaDeviceReset();
