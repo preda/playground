@@ -68,16 +68,16 @@ u64 timeMillis() {
   return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
-__device__ const u32 primes[] = {
+DEVICE const u32 primes[] = {
 #include "primes-1M.inc"
 };
 
 __managed__ u64 foundFactor;  // If a factor k is found, save it here.
-__device__ u32 invTab[NPRIMES];
-__device__ int btcTab[NPRIMES];
+DEVICE u32 invTab[NPRIMES];
+DEVICE int btcTab[NPRIMES];
 
 // returns (x*n >> 32) + (n ? 1 : 0). Used for Montgomery reduction. 5 MULs.
-__device__ U3 mulM(U3 x, u32 n) {
+DEVICE U3 mulM(U3 x, u32 n) {
   u32 a, b, c;
   asm("add.cc.u32     %0, 0xffffffff, %6;" // set carry = n
       "mul.hi.u32     %0, %3, %6;"
@@ -91,7 +91,7 @@ __device__ U3 mulM(U3 x, u32 n) {
 }
 
 // returns x * x; 6 MULs.
-__device__ U4 square(U2 x) {
+DEVICE U4 square(U2 x) {
   u32 a, b, c, d;
   asm(
       "mul.lo.u32     %1, %4, %5;"
@@ -110,7 +110,7 @@ __device__ U4 square(U2 x) {
 }
 
 // returns x * x; 12 MULs.
-__device__ U6 square(U3 x) {
+DEVICE U6 square(U3 x) {
   U2 ab = {x.a, x.b};
   U4 ab2 = square(ab);
   // U3 abc = mul(ab, x.c + x.c);
@@ -129,14 +129,14 @@ __device__ U6 square(U3 x) {
   return (U6) {ab2.a, ab2.b, c, d, e, f};
 }
 
-__device__ U5 modStep(U5 t, U3 m, u32 R, int sh, int bits) {
+DEVICE U5 modStep(U5 t, U3 m, u32 R, int sh, int bits) {
   u32 n = mulhi(shl(t.c, t.d, 32 - bits), R);
   t = (U5){0, t.a, t.b, t.c, t.d} - (_U5(m * n) << (sh + bits));
   assert(!t.e && !(t.d & (0xfffffff8 << bits)));
   return t;
 }
 
-__device__ U3 modShl3w(U4 x, U3 m) {
+DEVICE U3 modShl3w(U4 x, U3 m) {
   assert(m.c && !(m.c & 0xc0000000));
   int sh = __clz(m.c) + 1;
   if (sh > 20) {
@@ -164,7 +164,7 @@ __device__ U3 modShl3w(U4 x, U3 m) {
 // Compute m' such that: (u32) (m * m') == 0xffffffff, using extended binary euclidian algorithm.
 // See http://www.ucl.ac.uk/~ucahcjm/combopt/ext_gcd_python_programs.pdf
 // m is odd.
-__device__ static u32 mprime(u32 m) {
+DEVICE u32 mprime(u32 m) {
   m = (m >> 1) + 1;
   u32 u = m;
   u32 v = m << 31; 
@@ -178,7 +178,7 @@ __device__ static u32 mprime(u32 m) {
 // Montgomery Reduction. 18 MULs.
 // See https://www.cosic.esat.kuleuven.be/publications/article-144.pdf
 // Returns x * U^-1 mod m
-__device__ static U3 montRed(U6 x6, U3 m, u32 mp) {
+DEVICE U3 montRed(U6 x6, U3 m, u32 mp) {
   assert(!(x6.f & 0xc0000000));
   assert(x6.a + (x6.a * mp * m.a) == 0);
   U5 x5 = shr1w(x6) + mulM(m, x6.a * mp);
@@ -189,7 +189,7 @@ __device__ static U3 montRed(U6 x6, U3 m, u32 mp) {
 }
 
 // returns 2^exp % m
-__device__ U3 expMod(u32 exp, U3 m) {
+DEVICE U3 expMod(u32 exp, U3 m) {
   assert(exp & 0x80000000);
   int sh = exp >> 25;
   assert(sh >= 64 && sh < 128);
@@ -203,13 +203,13 @@ __device__ U3 expMod(u32 exp, U3 m) {
 }
 
 // returns whether (2*k*p + 1) is a factor of (2^p - 1)
-__device__ bool isFactor(u32 exp, u32 flushedExp, u64 k) {
+DEVICE bool isFactor(u32 exp, u32 flushedExp, u64 k) {
   U3 q = _U2(k) * (exp + exp) + (U3){1, 0, 0};  // 2 * k * exp + 1 as U3
   U3 r = expMod(flushedExp, q);
   return r.a == 1 && !r.b && !r.c;  
 }
 
-__device__ u32 modInv32(u64 step, u32 prime) {
+DEVICE u32 modInv32(u64 step, u32 prime) {
   int n = step % prime;
   int q = prime / n;
   int d = prime - q * n;
@@ -224,7 +224,7 @@ __device__ u32 modInv32(u64 step, u32 prime) {
 }
 
 // 3 times 64bit modulo, expensive!
-__device__ int bitToClear(u32 exp, u64 k, u32 prime, u32 inv) {
+DEVICE int bitToClear(u32 exp, u64 k, u32 prime, u32 inv) {
   u32 kmod = k % prime;
   u32 qmod = (kmod * (u64) (exp << 1) + 1) % prime;
   return (prime - qmod) * (u64) inv % prime;
@@ -243,15 +243,17 @@ __global__ void __launch_bounds__(1024) initBtcTab(u32 exp, u64 k) {
 }
 
 // Returns the position of the most significant bit that is set.
-__device__ int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
+DEVICE int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
 
-__device__ u32 kTab[160000000];
-__managed__ u32 kTabSize;
+#define KTAB_SIZE 160000000
+DEVICE u32 kTabA[KTAB_SIZE];
+DEVICE u32 kTabB[KTAB_SIZE];
+// __managed__ int kTabSizes[2];
+__managed__ int kTabSize;
 
 #define N 64
-__global__ void __launch_bounds__(512, 2) test(u32 doubleExp, u32 flushedExp, u64 k) {
+__global__ void __launch_bounds__(512, 2) test(u32 doubleExp, u32 flushedExp, u64 k, u32 *kTab, int kTabSize) {
   int n = kTabSize;
-  kTabSize = 0;
   int id = blockIdx.x * blockDim.x * N + threadIdx.x;
   for (int i = 0; i < N; ++i, id += blockDim.x) {
     u32 delta = kTab[id];
@@ -264,10 +266,8 @@ __global__ void __launch_bounds__(512, 2) test(u32 doubleExp, u32 flushedExp, u6
   }
 }
 
-// __launch_bounds__(512, 2)
-__global__ void  sieve() {
+DEVICE void sieve(int *pSize, u32 *kTab) {
   __shared__ u32 words[NWORDS];
-  for (int rep = 32; rep; --rep) {
   const int tid = threadIdx.x;
   for (int i = 0; i < NWORDS / SIEVE_THREADS; ++i) { words[tid + i * SIEVE_THREADS] = 0; }
   __syncthreads();
@@ -298,7 +298,7 @@ __global__ void  sieve() {
   atomicMin(words + 1, popc);
   __syncthreads();
   if (tid == 0) {
-    words[0] = atomicAdd(&kTabSize, words[0] & 0xfffff);
+    words[0] = atomicAdd(pSize, words[0] & 0xfffff);
   }
   int min = words[1];
   pos = (pos & 0xfffff) - min * (pos >> 20);
@@ -328,9 +328,16 @@ __global__ void  sieve() {
     bits &= ~(1 << bit);
     kTab[p++] = delta + bit;
   }
-  out:;
+  out:;  
+}
+
+__global__ void __launch_bounds__(SIEVE_THREADS) sieveA() {
+  for (int rep = 32; rep; --rep) {
+    sieve(&kTabSize, kTabA);
   }
 }
+
+// __global__ void sieveA() { sieve(kTabSizes, kTabA); }
 
 int classTab[NGOODCLASS];
 
@@ -380,24 +387,22 @@ int main() {
   initInvTab<<<NPRIMES/1024, 1024>>>(exp);
   cudaDeviceSynchronize();
   printf("initInvTab: %llu ms\n", timeMillis() - t1);
-  kTabSize = 0;
   t1 = timeMillis();
   for (int cid = 0; cid < NGOODCLASS; ++cid) {
+    kTabSize = 0;
+    // kTabSizes[1] = 0;
+
     int c = classTab[cid];
     u64 k = k0Start + c;
     initBtcTab<<<NPRIMES/1024, 1024>>>(exp, k);
+    sieveA<<<128 * 6 * 1024 / NWORDS, SIEVE_THREADS>>>();
     cudaDeviceSynchronize();
-    printf("kTab %d\n", kTabSize);
-    kTabSize = 0;
-    // if (foundFactor) { printf("Factor K: %llu\n", foundFactor); break; }
-    // if (!(cid & 0xf)) {
-      u64 t2 = timeMillis();
-      printf("%5d: class %5d: %llu\n", cid, c, t2 - t1);
-      t1 = t2;
-      // }
-    sieve<<<128 * 6 * 1024 / NWORDS, SIEVE_THREADS>>>();
-    // cudaDeviceSynchronize();
     // test<<<(kTabSize + 512*N - 1) / (512*N), 512>>>(exp + exp, flushedExp, k);
+    
+    u64 t2 = timeMillis();
+    printf("%5d: class %5d: %llu; Ks %u\n", cid, c, t2 - t1, kTabSize);
+    t1 = t2;    
+    // if (foundFactor) { printf("Factor K: %llu\n", foundFactor); break; }
   }
   printf("Total time: %llu ms\n", timeMillis() - t0);
   // cudaDeviceReset();
