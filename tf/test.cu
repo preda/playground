@@ -245,11 +245,15 @@ __global__ void __launch_bounds__(1024) initBtcTab(u32 exp, u64 k) {
 // Returns the position of the most significant bit that is set.
 DEVICE int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
 
-#define KTAB_SIZE 160000000
+// 128 blocks, times an internal repeat of 32, times shared memory per block of 24KB, times 8 bits per byte. 768M
+#define SIEVE_BITS (128 * 32 * 24 * 1024 * 8)
+#define SIEVE_REPEAT 32
+
+// Less than 20% of bits survive sieving.
+#define KTAB_SIZE (SIEVE_BITS / 5)
 DEVICE u32 kTabA[KTAB_SIZE];
 DEVICE u32 kTabB[KTAB_SIZE];
-// __managed__ int kTabSizes[2];
-__managed__ int kTabSize;
+__managed__ int kTabSizes[2];
 
 #define N 64
 __global__ void __launch_bounds__(512, 2) test(u32 doubleExp, u32 flushedExp, u64 k, u32 *kTab, int kTabSize) {
@@ -332,9 +336,10 @@ DEVICE void sieve(int *pSize, u32 *kTab) {
 }
 
 __global__ void __launch_bounds__(SIEVE_THREADS) sieveA() {
-  for (int rep = 32; rep; --rep) {
-    sieve(&kTabSize, kTabA);
-  }
+  int rep = SIEVE_REPEAT;
+  do {
+    sieve(&kTabSizes[0], kTabA);
+  } while (--rep);
 }
 
 // __global__ void sieveA() { sieve(kTabSizes, kTabA); }
@@ -389,18 +394,18 @@ int main() {
   printf("initInvTab: %llu ms\n", timeMillis() - t1);
   t1 = timeMillis();
   for (int cid = 0; cid < NGOODCLASS; ++cid) {
-    kTabSize = 0;
-    // kTabSizes[1] = 0;
+    kTabSizes[0] = 0;
+    kTabSizes[1] = 0;
 
     int c = classTab[cid];
     u64 k = k0Start + c;
     initBtcTab<<<NPRIMES/1024, 1024>>>(exp, k);
-    sieveA<<<128 * 6 * 1024 / NWORDS, SIEVE_THREADS>>>();
+    sieveA<<<SIEVE_BITS / NBITS / SIEVE_REPEAT, SIEVE_THREADS>>>();
     cudaDeviceSynchronize();
     // test<<<(kTabSize + 512*N - 1) / (512*N), 512>>>(exp + exp, flushedExp, k);
     
     u64 t2 = timeMillis();
-    printf("%5d: class %5d: %llu; Ks %u\n", cid, c, t2 - t1, kTabSize);
+    printf("%5d: class %5d: %llu; Ks %u\n", cid, c, t2 - t1, kTabSizes[0]);
     t1 = t2;    
     // if (foundFactor) { printf("Factor K: %llu\n", foundFactor); break; }
   }
