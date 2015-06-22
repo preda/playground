@@ -26,12 +26,13 @@
 #include <stdio.h>
 #include <assert.h>
 #include <sys/time.h>
+#include <sys/unistd.h>
 #include "widemath.h"
 
 #define ASIZE(a) (sizeof(a) / sizeof(a[0]))
 
 // Threads per sieving block.
-#define SIEV_THREADS 128
+#define SIEV_THREADS 256
 // Threads per testing block.
 #define TEST_THREADS 512
 
@@ -249,7 +250,7 @@ DEVICE int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); retu
 
 // 128 blocks, times an internal repeat of 32, times shared memory per block of 24KB, times 8 bits per byte == 3*2^28
 #define SIEV_BITS (128 * 32 * 24 * 1024 * 8)
-#define SIEV_REPEAT 32
+#define SIEV_REPEAT 64
 #define SIEV_BLOCKS (SIEV_BITS / (SIEV_REPEAT * NBITS))
 #define TEST_REPEAT 256
 
@@ -273,11 +274,11 @@ DEVICE void test(u32 doubleExp, u32 flushedExp, u64 k, u32 *kTab) {
   } while (--n);
 }
 
-__global__ void __launch_bounds__(TEST_THREADS) testA(u32 doubleExp, u32 flushedExp, u64 k) {
+__global__ void __launch_bounds__(TEST_THREADS, 4) testA(u32 doubleExp, u32 flushedExp, u64 k) {
   test(doubleExp, flushedExp, k, kTabA);
 }
 
-__global__ void __launch_bounds__(TEST_THREADS) testB(u32 doubleExp, u32 flushedExp, u64 k) {
+__global__ void __launch_bounds__(TEST_THREADS, 4) testB(u32 doubleExp, u32 flushedExp, u64 k) {
   test(doubleExp, flushedExp, k, kTabB);
 }
 
@@ -382,9 +383,16 @@ int main() {
   // cudaSetDevice(1);
   CUDA_CHECK_ERR;
 
+  int p1=-1, p2=-1;
+  cudaDeviceGetStreamPriorityRange(&p1, &p2);
+  CUDA_CHECK_ERR;
+  printf("Priority %d %d %d\n", p1, p2, SIEV_BLOCKS);
+  
   cudaStream_t sieveStream, testStream;
-  cudaStreamCreate(&sieveStream); CUDA_CHECK_ERR;
-  cudaStreamCreate(&testStream); CUDA_CHECK_ERR;
+  cudaStreamCreateWithPriority(&sieveStream, cudaStreamNonBlocking, 0);
+  CUDA_CHECK_ERR;
+  cudaStreamCreateWithPriority(&testStream, cudaStreamNonBlocking, 1);
+  CUDA_CHECK_ERR;
   
   
   const u32 exp = 119904229;
@@ -413,7 +421,7 @@ int main() {
   t1 = timeMillis();
   kTabSizeA = 0;
   kTabSizeB = 0;
-
+  
   for (int cid = 0; cid < NGOODCLASS; ++cid) {
     int sizeB = kTabSizeB;
     int testBlocksB = testBlocks(sizeB);
@@ -421,13 +429,17 @@ int main() {
     int c = classTab[cid];
     u64 k = k0Start + c;
     initBtcTab<<<NPRIMES/1024, 1024>>>(exp, k);
+    // if (!cid)
     sievA<<<SIEV_BLOCKS, SIEV_THREADS, 0, sieveStream>>>();
+    usleep(100);
     testB<<<testBlocksB, TEST_THREADS, 0, testStream>>>(doubleExp, flushedExp, k);
     cudaDeviceSynchronize();
     int sizeA = kTabSizeA;
     int testBlocksA = testBlocks(sizeA);
     kTabSizeA = 0;
-    sievB<<<SIEV_BLOCKS, SIEV_THREADS, 0, sieveStream>>>();    
+    // if (!cid)
+    sievB<<<SIEV_BLOCKS, SIEV_THREADS, 0, sieveStream>>>();
+    usleep(100);
     testA<<<testBlocksA, TEST_THREADS, 0, testStream>>>(doubleExp, flushedExp, k);
     cudaDeviceSynchronize();
     u64 t2 = timeMillis();
