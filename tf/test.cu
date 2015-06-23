@@ -132,6 +132,36 @@ DEVICE U6 square(U3 x) {
   return (U6) {ab2.a, ab2.b, c, d, e, f};
 }
 
+DEVICE U6 square80(U3 x) {
+  u32 a, b, c, d, e;
+  asm("{\n\t"
+      ".reg .u32 a2;\n\t"
+
+      "mul.lo.u32     %0, %5, %5;\n\t"     /* (a.d0 * a.d0).lo */
+      "mul.lo.u32     %1, %5, %6;\n\t"     /* (a.d0 * a.d1).lo */
+      "mul.hi.u32     %2, %5, %6;\n\t"     /* (a.d0 * a.d1).hi */
+
+      "add.u32        a2, %7, %7;\n\t"     /* shl(a.d2) */
+
+      "add.cc.u32     %1, %1, %1;\n\t"     /* 2 * (a.d0 * a.d1).lo */
+      "addc.cc.u32    %2, %2, %2;\n\t"     /* 2 * (a.d0 * a.d1).hi */
+      "madc.hi.u32    %3, %5, a2, 0;\n\t"  /* 2 * (a.d0 * a.d2).hi */
+                                           /* %3 (res.d3) has some space left because a2 is < 2^17 */
+
+      "mad.hi.cc.u32  %1, %5, %5, %1;\n\t" /* (a.d0 * a.d0).hi */
+      "madc.lo.cc.u32 %2, %6, %6, %2;\n\t" /* (a.d1 * a.d1).lo */
+      "madc.hi.cc.u32 %3, %6, %6, %3;\n\t" /* (a.d1 * a.d1).hi */
+      "madc.lo.u32    %4, %7, %7, 0;\n\t"  /* (a.d2 * a.d2).lo */
+      
+      "mad.lo.cc.u32  %2, %5, a2, %2;\n\t" /* 2 * (a.d0 * a.d2).lo */
+      "madc.lo.cc.u32 %3, %6, a2, %3;\n\t" /* 2 * (a.d1 * a.d2).lo */
+      "madc.hi.u32    %4, %6, a2, %4;\n\t" /* 2 * (a.d1 * a.d2).hi */                                          
+      "}"
+      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e)
+      : "r"(x.a), "r"(x.b), "r"(x.c));
+  return (U6) {a, b, c, d, e, 0};
+}
+
 DEVICE U5 modStep(U5 t, U3 m, u32 R, int sh, int bits) {
   u32 n = mulhi(shl(t.c, t.d, 32 - bits), R);
   t = (U5){0, t.a, t.b, t.c, t.d} - (_U5(m * n) << (sh + bits));
@@ -266,7 +296,10 @@ DEVICE void test(u32 doubleExp, u32 flushedExp, u64 k, u32 *kTab) {
   int pos = TEST_THREADS * TEST_REPEAT * blockIdx.x + threadIdx.x;
   do {
     u32 delta = kTab[pos];
-    U3 r = expMod(flushedExp, incMul(_U2(k + delta), doubleExp));
+    U3 kk = _U2(k + delta) * doubleExp;
+    ++kk.a;
+    //incMul(_U2(k + delta), doubleExp)
+    U3 r = expMod(flushedExp, kk);
     if (r.a == 1 && !(r.b | r.c)) {
       foundFactor = k;
     }
@@ -287,65 +320,65 @@ DEVICE void sieve(int *pSize, u32 *kTab) {
   const int tid = threadIdx.x;
   int rep = SIEV_REPEAT;
   do {
-  for (int i = 0; i < NWORDS / SIEV_THREADS; ++i) { words[tid + i * SIEV_THREADS] = 0; }
-  __syncthreads();
-  for (int i = tid; i < NPRIMES; i += SIEV_THREADS) {
-    int prime = primes[i];
-    int btc0  = btcTab[i];
-    int btcAux = btc0 - (NCLASS * NBITS % prime) * blockIdx.x % prime;
-    int btc = (btcAux < 0) ? btcAux + prime : btcAux;
-    while (btc < NBITS) {
-      atomicOr(words + (btc >> 5), 1 << (btc & 0x1f));
-      btc += prime;
+    for (int i = 0; i < NWORDS / SIEV_THREADS; ++i) { words[tid + i * SIEV_THREADS] = 0; }
+    __syncthreads();
+    for (int i = tid; i < NPRIMES; i += SIEV_THREADS) {
+      int prime = primes[i];
+      int btc0  = btcTab[i];
+      int btcAux = btc0 - (NCLASS * NBITS % prime) * blockIdx.x % prime;
+      int btc = (btcAux < 0) ? btcAux + prime : btcAux;
+      while (btc < NBITS) {
+        atomicOr(words + (btc >> 5), 1 << (btc & 0x1f));
+        btc += prime;
+      }
     }
-  }
-  __syncthreads();
-
-  int popc = 0;
+    __syncthreads();
+    
+    int popc = 0;
+    
+    // for (int i = 0, idx = threadIdx.x; i < NWORDS / SIEVE_THREADS; ++i, idx += SIEVE_THREADS) { popc += __popc(words[idx] = ~words[idx]); }
+    for (int i = tid; i < NWORDS; i += SIEV_THREADS) { popc += __popc(words[i] = ~words[i]); }
   
-  // for (int i = 0, idx = threadIdx.x; i < NWORDS / SIEVE_THREADS; ++i, idx += SIEVE_THREADS) { popc += __popc(words[idx] = ~words[idx]); }
-  for (int i = tid; i < NWORDS; i += SIEV_THREADS) { popc += __popc(words[i] = ~words[i]); }
-  
-  u32 bits = words[tid];
-  if (tid < 32) {
-    words[0] = 0;
-    words[1] = 0xffffffff;
-  }
-  __syncthreads();
-  u32 pos = atomicAdd(words, popc | (1 << 20));
-  atomicMin(words + 1, popc);
-  __syncthreads();
-  if (tid == 0) {
-    words[0] = atomicAdd(pSize, words[0] & 0xfffff);
-  }
-  int min = words[1];
-  pos = (pos & 0xfffff) - min * (pos >> 20);
-  __syncthreads();
-  int p = words[0] + tid;
-  int i = tid;
-  u32 delta = (tid + blockIdx.x * NWORDS) * 32;
-  do {
-    while (!bits) {
-      bits = words[i += SIEV_THREADS];
-      delta += SIEV_THREADS * 32;
+    u32 bits = words[tid];
+    if (tid < 32) {
+      words[0] = 0;
+      words[1] = 0xffffffff;
     }
-    int bit = bfind(bits);
-    bits &= ~(1 << bit);
-    kTab[p] = delta + bit;
-    p += SIEV_THREADS;
-  } while (--min);
-  p += -tid + (int)pos;
-  while (true) {
-    while (!bits) {
-      i += SIEV_THREADS;
-      if (i >= NWORDS) { goto out; }
-      bits = words[i];
-      delta += SIEV_THREADS * 32;
+    __syncthreads();
+    u32 pos = atomicAdd(words, popc | (1 << 20));
+    atomicMin(words + 1, popc);
+    __syncthreads();
+    if (tid == 0) {
+      words[0] = atomicAdd(pSize, words[0] & 0xfffff);
     }
-    int bit = bfind(bits);
-    bits &= ~(1 << bit);
-    kTab[p++] = delta + bit;
-  }
+    int min = words[1];
+    pos = (pos & 0xfffff) - min * (pos >> 20);
+    __syncthreads();
+    int p = words[0] + tid;
+    int i = tid;
+    u32 delta = (tid + blockIdx.x * NWORDS) * 32;
+    do {
+      while (!bits) {
+        bits = words[i += SIEV_THREADS];
+        delta += SIEV_THREADS * 32;
+      }
+      int bit = bfind(bits);
+      bits &= ~(1 << bit);
+      kTab[p] = delta + bit;
+      p += SIEV_THREADS;
+    } while (--min);
+    p += -tid + (int)pos;
+    while (true) {
+      while (!bits) {
+        i += SIEV_THREADS;
+        if (i >= NWORDS) { goto out; }
+        bits = words[i];
+        delta += SIEV_THREADS * 32;
+      }
+      int bit = bfind(bits);
+      bits &= ~(1 << bit);
+      kTab[p++] = delta + bit;
+    }
   out:;
   } while (--rep);
 }
@@ -423,11 +456,12 @@ int main() {
   kTabSizeB = 0;
   
   for (int cid = 0; cid < NGOODCLASS; ++cid) {
+    int c = classTab[cid];
+    u64 k = k0Start + c;
+
     int sizeB = kTabSizeB;
     int testBlocksB = testBlocks(sizeB);
     kTabSizeB = 0;
-    int c = classTab[cid];
-    u64 k = k0Start + c;
     initBtcTab<<<NPRIMES/1024, 1024>>>(exp, k);
     // if (!cid)
     sievA<<<SIEV_BLOCKS, SIEV_THREADS, 0, sieveStream>>>();
@@ -453,3 +487,53 @@ int main() {
   CUDA_CHECK_ERR;
   // cudaDeviceReset();
 }
+
+
+/*
+
+    initBtcTab<<<NPRIMES/1024, 1024>>>(exp, k);
+    sieveAndTest<<<SIEV_BLOCKS, SIEV_THREADS>>>(doubleExp, flushedExp, k);
+    cudaDeviceSynchronize();
+    u64 t2 = timeMillis();
+    printf("%llu\n", t2 - t1);
+    t1 = t2;
+
+  __global__ void __launch_bounds__(SIEV_THREADS, 4) sieveAndTest(u32 doubleExp, u32 flushedExp, u64 k) {
+  __shared__ u32 words[NWORDS];
+  const int tid = threadIdx.x;
+  int rep = SIEV_REPEAT;
+  while (true) {
+    for (int i = 0; i < NWORDS / SIEV_THREADS; ++i) { words[tid + i * SIEV_THREADS] = 0; }
+    __syncthreads();
+    for (int i = tid; i < NPRIMES; i += SIEV_THREADS) {
+      int prime = primes[i];
+      int btc0  = btcTab[i];
+      int btcAux = btc0 - (NCLASS * NBITS % prime) * blockIdx.x % prime;
+      int btc = (btcAux < 0) ? btcAux + prime : btcAux;
+      while (btc < NBITS) {
+        atomicOr(words + (btc >> 5), 1 << (btc & 0x1f));
+        btc += prime;
+      }
+    }
+    __syncthreads();    
+    u32 bits = ~words[tid];
+    int i = tid;
+    u32 delta = (tid + blockIdx.x * NWORDS) * 32;
+    while (true) {
+      while (!bits) {
+        i += SIEV_THREADS;
+        if (i >= NWORDS) { goto out; }
+        bits = ~words[i];
+        delta += SIEV_THREADS * 32;
+      }
+      int bit = bfind(bits);
+      bits &= ~(1 << bit);
+      U3 r = expMod(flushedExp, incMul(_U2(k + (delta + bit)), doubleExp));
+      if (r.a == 1 && !(r.b | r.c)) { foundFactor = k; }
+    }
+  out:
+    if (!--rep) { break; }
+    __syncthreads();
+  }
+}
+*/
