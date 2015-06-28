@@ -55,6 +55,17 @@ DEVICE U3 operator+(U3 x, U3 y) {
   return (U3) {a, b, c};
 }
 
+DEVICE U3 operator-(U3 x, U3 y) {
+  u32 a, b, c;
+  asm("sub.cc.u32  %0, %3, %6;"
+      "subc.cc.u32 %1, %4, %7;"
+      "subc.u32    %2, %5, %8;"
+      : "=r"(a), "=r"(b), "=r"(c)
+      : "r"(x.a), "r"(x.b), "r"(x.c),
+        "r"(y.a), "r"(y.b), "r"(y.c));
+  return (U3) {a, b, c};
+}
+
 DEVICE U4 operator-(U4 x, U4 y) {
   u32 a, b, c, d;
   asm("sub.cc.u32  %0, %4, %8;"
@@ -93,19 +104,6 @@ DEVICE U3 operator*(U2 x, u32 n) {
   return (U3) {a, b, c};
 }
 
-// compute x * n + 1
-DEVICE U3 incMul(U2 x, u32 n) {
-  u32 a, b, c;
-  asm(
-      "mul.hi.u32     %1, %3, %5;"
-      "mad.lo.cc.u32  %0, %3, %5, 1;"
-      "madc.lo.cc.u32 %1, %4, %5, %1;"
-      "madc.hi.u32    %2, %4, %5, 0;"
-      : "=r"(a), "=r"(b), "=r"(c)
-      : "r"(x.a), "r"(x.b), "r"(n));
-  return (U3) {a, b, c};
-}
-
 // 6 MULs.
 DEVICE U4 operator*(U3 x, u32 n) {
   u32 a, b, c, d;
@@ -119,6 +117,20 @@ DEVICE U4 operator*(U3 x, u32 n) {
       : "=r"(a), "=r"(b), "=r"(c), "=r"(d)
       : "r"(x.a), "r"(x.b), "r"(x.c), "r"(n));
   return (U4) {a, b, c, d};
+}
+
+// 5 MULs.
+DEVICE U3 mulLow(U3 x, u32 n) {
+  u32 a, b, c;
+  asm(
+      "mul.hi.u32     %1, %3, %6;"
+      "mul.lo.u32     %2, %5, %6;"
+      "mad.lo.cc.u32  %1, %4, %6, %1;"
+      "mul.lo.u32     %0, %3, %6;"
+      "madc.hi.u32    %2, %4, %6, %2;"
+      : "=r"(a), "=r"(b), "=r"(c)
+      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(n));
+  return (U3) {a, b, c};
 }
 
 DEVICE U5 shr1w(U6 x) { return (U5) {x.b, x.c, x.d, x.e, x.f}; }
