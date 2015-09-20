@@ -43,6 +43,26 @@ Node play(int p) const {
   return Node(*this).swapAndPlay(p);
 }
 
+void Node::play(int pos) {
+  assert(isEmpty(pos) && pos != koPos);
+  nPass = 0;
+
+  for (int p : NEIB(pos)) {
+    if (isEmpty(p)) {
+      maybeKo = false;
+    } else {
+      if (isBlack(p)) {
+        maybeKo = false;
+      } else {
+
+      }
+    }
+  }
+
+  
+}
+
+
 void Node::swapAndPlay(Groups &groups, int pos) {
   swapped = !swapped;
   std::swap(stoneBlack, stoneWhite);

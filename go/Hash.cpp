@@ -5,6 +5,39 @@
 // #include <stdio.h>
 // #include <assert.h>
 
+
+template<int N> unsigned quadrantValue(u64 black, u64 white, auto t);
+template<int N> unsigned quadrantAux(u64 stone, auto t);
+
+template unsigned quadrantAux<4>(u64 stone, auto t) {
+  return
+    (IS(t(P(1, 1)), stone) << 3)
+    | ((IS(t(P(1, 0)), stone) + IS(t(P(0, 1)), stone)) << 1)
+    | IS(t(P(0, 0)), stone);  
+}
+
+template unsigned quadrantValue<4>(u64 black, u64 white, auto t) {
+  u64 stone = black | white;
+  return (quadrantAux(black | white, t) << 4) | quadrantAux(black, t);
+}
+
+template<int N> int rotation(u64 black, u64 white) {
+  auto ident  = [](int p) { return p; };
+  auto reflX  = [](int p) { return P(Y(p), SIZE_X - X(p)); };
+  auto reflY  = [](int p) { return P(SIZE_Y - Y(p), X(p)); };
+  auto reflXY = [](int p) { return P(SIZE_Y - Y(p), SIZE_X - X(p)); };
+  unsigned A = quadrantValue<N>(black, white, ident);
+  unsigned B = quadrantValue<N>(black, white, reflX);
+  unsigned C = quadrantValue<N>(black, white, reflY);
+  unsigned D = quadrantValue<N>(black, white, reflXY);
+  
+}
+
+template int rotation<4>(u64 black, u64 white) {
+
+  
+}
+
 static union Bytes {
   uint64_t value;
   byte bytes[8];

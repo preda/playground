@@ -9,6 +9,8 @@
 typedef unsigned char byte;
 typedef signed char sbyte;
 typedef unsigned __int128 uint128_t;
+typedef uint64_t u64;
+
 
 #define SQ_SIZE 3
 #define SIZE_X SQ_SIZE
@@ -56,3 +58,53 @@ static inline int X(int pos) { return pos & (BIG_X - 1); }
 #define BORDER 0xff088888ff
 #define INSIDE 0x7070700
 #endif
+
+
+inline int size(uint64_t bits) { return __builtin_popcountll(bits); }
+
+inline bool IS(int p, auto bits) { return bits & (1LL << p); }
+
+inline void CLEAR(int p, u64 &bits) { bits &= ~(1LL << p); }
+// #define CLEAR(p, bits) bits &= ~(1LL << p)
+
+inline int POP(u64 &bits) { int r = firstOf(bits); CLEAR(r, bits); return r; }
+
+inline int firstOf(u64 bits) { return __builtin_ctzll(bits); }
+inline int firstOf(u32 bits) { return __builtin_ctz(bits);   }
+
+template<typename T>
+class Bits {
+  struct BitsIt {
+    T bits;
+    int operator*() { return firstOf(bits); }
+    void operator++() { bits &= bits - 1; }
+    bool operator!=(BitsIt o) { return bits != o.bits; }
+  };
+
+  T bits;
+public:
+  Bits(T bits) : bits(bits) {}
+  BitsIt begin() { return {bits}; }
+  BitsIt end() { return {0}; }
+};
+
+template<typename T, int N>
+class vect {
+  T v[N];
+  int _size = 0;
+
+public:
+  void push(T t) { assert(_size < N); v[_size++] = t; }
+  T pop()        { assert(_size > 0); return v[--_size]; }
+  int size() { return _size; }
+  bool isEmpty() { return _size <= 0; }
+  bool has(T t) {
+    for (T e : *this) { if (e == t) { return true; } }
+    return false;
+  }
+  void clear() { _size = 0; }
+  
+  T *begin() { return v; }
+  T *end() { return v + _size; }
+  T operator[](int i) { return v[i]; }
+};

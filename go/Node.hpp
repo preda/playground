@@ -11,15 +11,10 @@
 
 class Value;
 
-static inline int size(uint64_t bits) { return __builtin_popcountll(bits); }
-
-static inline bool IS(int p, auto bits) { return (bits >> p) & 1; }
-
 class Node {
 private:
   Hash hash;
   uint64_t stoneBlack, stoneWhite;
-  uint64_t empty;
   uint64_t pBlack, pWhite;
   int koPos;
   int nPass;
@@ -28,7 +23,7 @@ private:
 
   
 public:
-  Node();
+  Node(u64 black, u64 white);
   
   void setup(const char *board, int nPass = 0, int koPos = 0);
 
