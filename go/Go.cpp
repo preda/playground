@@ -33,6 +33,7 @@ enum {
   SIZE = 3,
   SIZE_X = SIZE,
   SIZE_Y = SIZE,
+  TOTAL_POINTS = SIZE_X * SIZE_Y,
   BIG_X = 8,
   BIG_Y = SIZE_Y + 1,
   DELTA = BIG_X,
@@ -246,6 +247,22 @@ public:
 
 template<typename T> inline Bits<T> bits(T v) { return Bits<T>(v); }
 
+struct Eval {
+  u64 pointsBlack;
+  u64 pointsWhite;
+
+  Value value(int k) {
+    int n;
+    return
+      (pointsBlack && (n = 2 * size(pointsBlack) - TOTAL_POINTS) > k) ? Value::atLeast(n) :
+      (pointsWhite && (n = TOTAL_POINTS - 2 * size(pointsWhite)) <= k) ? Value::atMost(n) :
+      Value::nil();
+  }
+};
+
+u64 bensonAlive(u64 black, u64 white, const u8 *gids);
+bool canPlay(int pos, u64 black, u64 white);
+
 class Node {
   u64 black, white;
   int koPos;
@@ -256,14 +273,17 @@ class Node {
 public:
   Node(): black(0), white(0), koPos(0), _nPass(0), swapped(false), gids() {}
     
-  bool isKo() { return koPos; }
-  int nPass() { return _nPass; }
+  bool isKo() PURE { return koPos; }
+  int nPass() PURE { return _nPass; }
   
   u64 position() { return 0; }
   u64 situationBits() { return 0; }
   
-  Value eval(int k) { return Value::nil(); }
-  u64 genMoves() { return 0; }
+  Eval eval() PURE {
+    return Eval{bensonAlive(black, white, gids), bensonAlive(white, black, gids)};
+  }
+  
+  u64 genMoves(const Eval &eval) PURE;
   
   Node play(int p) PURE {
     Node n(*this);
@@ -273,7 +293,11 @@ public:
   }
 
 private:
-  bool canPlay(int pos);
+  bool canPlay(int pos) PURE {
+    return (pos == koPos) ? false : (pos == PASS) ? (nPass() <= 1) :
+      ::canPlay(pos, black, white);
+  }
+  
   void setGroup(int pos, int gid);
   void playAux(int pos);
   void playNotPass(int pos);
@@ -317,9 +341,6 @@ void Node::setGroup(int pos, int gid) {
   }
 }
 
-// Whether the *black* group at pos has any liberties.
-// bool hasLiberty(int pos, u64 black, u64 white) { return !capture(pos, black, white); }
-
 bool canPlay(int pos, u64 black, u64 white) {
   assert(pos >= 0 && IS(pos, INSIDE));
   if (IS(pos, black | white)) { return false; }
@@ -328,13 +349,6 @@ bool canPlay(int pos, u64 black, u64 white) {
     if (p >= 0 && IS(p, white) && capture(p, white, black)) { return true; }
   }
   return !capture(pos, black, white);
-}
-
-bool Node::canPlay(int pos) {
-  assert(pos >= 0);
-  if (pos == koPos) { return false; }
-  if (pos == PASS) { return nPass() <= 1; }
-  return ::canPlay(pos, black, white);
 }
 
 void Node::playNotPass(int pos) {
@@ -386,6 +400,13 @@ void Node::playAux(int pos) {
   } else {
     playNotPass(pos);
   }
+}
+
+u64 Node::genMoves(const Eval &eval) const {
+  assert(nPass() < 2);
+  u64 moves = (INSIDE & ~(black | white) & ~(eval.pointsBlack | eval.pointsWhite)) | PASS;
+  for (int p : bits(moves)) { if (!canPlay(p)) { CLEAR(p, moves); } }
+  return moves;
 }
 
 template<typename T, int N>
@@ -451,7 +472,7 @@ u32 aliveGroups(vect<Region, 10> &regions) {
 }
 
 // returns black unconditionally alive groups and unconditionally controlled points.
-u64 bensonAlive(u64 black, u64 white, u8 *gids) {
+u64 bensonAlive(u64 black, u64 white, const u8 *gids) {
   vect<Region, 10> regions;
   u64 empty = INSIDE & ~(black | white);
   u64 emptyNotSeen = empty;
@@ -504,12 +525,14 @@ Value max(History history, Node node, int k, int depthPos, int maxDepth) {
   
   Value v = isPlain ? tt.get(position, k, depthPos, maxDepth) : Value::nil();
   if (v.isFinalEnough(k)) { return v; }
-  
-  v = node.eval(k);
+
+  Eval eval = node.eval();
+  v = eval.value(k);
+  // v = node.eval(k);
   if (v.isFinalEnough(k) || depthPos >= maxDepth) { return v; }
 
   history.push(situation);
-  u64 moves = node.genMoves();
+  u64 moves = node.genMoves(eval);
   v = Value::nil();
   for (int move : bits(moves)) {
     Node sub = node.play(move);
