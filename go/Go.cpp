@@ -2,6 +2,9 @@
 #include <stdint.h>
 #include <unordered_map>
 #include <string>
+#include <utility>
+
+using std::string;
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -9,13 +12,59 @@ typedef unsigned u32;
 typedef uint64_t u64;
 typedef unsigned __int128 u128;
 
-using std::string;
+inline auto min(auto a, auto b) { return a < b  ? a : b; }
+inline auto max(auto a, auto b) { return a >= b ? a : b; }
 
-auto min(auto a, auto b) { return a < b  ? a : b; }
-auto max(auto a, auto b) { return a >= b ? a : b; }
+inline int firstOf(u64 bits) { assert(bits); return __builtin_ctzll(bits); }
+inline int firstOf(u32 bits) { assert(bits); return __builtin_ctz(bits);   }
+inline int size(u64 bits) { return __builtin_popcountll(bits); }
+inline int size(u32 bits) { return __builtin_popcount(bits); }
+
+
+inline bool IS(int p, u64 bits) { assert(p >= 0 && p < 64); return bits & (1ull << p); }
+inline void SET(int p, u64 &bits) { assert(p >= 0 && p < 64); bits |= (1ull << p); }
+inline void SET(int p, u32 &bits) { assert(p >= 0 && p < 32); bits |= (1 << p); }
+constexpr void SETC(int p, u64 &bits) { bits |= (1ull << p); }
+
+inline void CLEAR(int p, u64 &bits) { assert(p >= 0 && p < 64); bits &= ~(1ull << p); }
+inline int  POP(u64 &bits) { int p = firstOf(bits); CLEAR(p, bits); return p; }
+
+enum {
+  SIZE = 3,
+  SIZE_X = SIZE,
+  SIZE_Y = SIZE,
+  BIG_X = 8,
+  BIG_Y = SIZE_Y + 1,
+  DELTA = BIG_X,
+
+  N = SIZE_X * SIZE_Y,
+  BIG_N = BIG_X * BIG_Y,
+  PASS = 63,
+};
+
+constexpr inline int P(int y, int x) { return (y << 3) + x; }
+inline int Y(int pos) { return (pos >> 3); }
+inline int X(int pos) { return pos & (BIG_X - 1); }
+
+constexpr u64 insidePoints() {
+  u64 ret = 0;
+  for (int y = 0; y < SIZE_Y; ++y) {
+    for (int x = 0; x < SIZE_X; ++x) {
+      SETC(P(y, x), ret);
+    }
+  }
+  return ret;
+}
 
 #define PURE const __attribute__((warn_unused_result))
-#define S(x) ((string) x).c_str()
+#define STR(x) ((string) x).c_str()
+#define NEIB(p) {p + 1, p + DELTA, p - 1, p - DELTA}
+
+enum {
+  INSIDE = insidePoints(),
+};
+
+inline bool isInside(int p) { return p >= 0 && IS(p, INSIDE); }
 
 class Value {  
   enum Kind {AT_LEAST, AT_MOST, DEEPER, LOOP, NIL};
@@ -179,9 +228,6 @@ public:
   }
 };
 
-inline int firstOf(u64 bits) { return __builtin_ctzll(bits); }
-inline int firstOf(u32 bits) { return __builtin_ctz(bits);   }
-
 template<typename T>
 class Bits {
   struct it {
@@ -198,29 +244,250 @@ public:
   it end()   { return {0}; }
 };
 
+template<typename T> inline Bits<T> bits(T v) { return Bits<T>(v); }
+
 class Node {
   u64 black, white;
   int koPos;
-  int nPass;
+  int _nPass;
   bool swapped;
-  byte gids[36];
+  u8 gids[48];
   
 public:
-  Node(): black(0), white(0), koPos(0), nPass(0), swapped(false), gids(0) {}
+  Node(): black(0), white(0), koPos(0), _nPass(0), swapped(false), gids() {}
     
   bool isKo() { return koPos; }
-  int nPass() { return nPass; }
+  int nPass() { return _nPass; }
   
   u64 position() { return 0; }
   u64 situationBits() { return 0; }
   
   Value eval(int k) { return Value::nil(); }
   u64 genMoves() { return 0; }
-  Node play(int p) { return *this; }
   
+  Node play(int p) PURE {
+    Node n(*this);
+    n.playAux(p);
+    n.swap();
+    return n;
+  }
+
+private:
+  bool canPlay(int pos);
+  void setGroup(int pos, int gid);
+  void playAux(int pos);
+  void playNotPass(int pos);
+  void swap() { std::swap(black, white); swapped != swapped; }
+  
+  bool isWhite(int p) const { return p >= 0 && IS(p, white); }
+  // bool isEmpty(int p) const { return isInside(p) && ~IS(p, black | white); }
+  // u64 capture(int p) const;
 };
 
-template<typename T> inline Bits<T> bits(T v) { return Bits<T>(v); }
+// returns captured *black* group at pos.
+u64 capture(int pos, u64 black, u64 white) {
+  assert(pos >= 0 && IS(pos, black));
+  u64 empty = INSIDE & ~(black | white);
+  u64 seen = 1ull << pos;
+  u64 open = 0;
+  while (true) {
+    for (int p : NEIB(pos)) {
+      if (p >= 0) {
+        if (IS(p, empty)) { return 0; }
+        if (IS(p, black) && !IS(p, seen)) { SET(p, seen); SET(p, open); }
+      }
+    }
+    if (!open) { return seen; }
+    pos = POP(open);
+  }
+}
+
+// set gids for the black group at pos.
+void Node::setGroup(int pos, int gid) {
+  assert(pos >= 0 && IS(pos, black));
+  u64 seen = 1ull << pos;
+  u64 open = 0;
+  while (true) {
+    gids[pos] = gid;
+    for (int p : NEIB(pos)) {
+      if (p >= 0 && IS(p, black) && !IS(p, seen)) { SET(p, seen); SET(p, open); }
+    }
+    if (!open) { break; }
+    pos = POP(open);
+  }
+}
+
+// Whether the *black* group at pos has any liberties.
+// bool hasLiberty(int pos, u64 black, u64 white) { return !capture(pos, black, white); }
+
+bool canPlay(int pos, u64 black, u64 white) {
+  assert(pos >= 0 && IS(pos, INSIDE));
+  if (IS(pos, black | white)) { return false; }
+  SET(pos, black);
+  for (int p : NEIB(pos)) {
+    if (p >= 0 && IS(p, white) && capture(p, white, black)) { return true; }
+  }
+  return !capture(pos, black, white);
+}
+
+bool Node::canPlay(int pos) {
+  assert(pos >= 0);
+  if (pos == koPos) { return false; }
+  if (pos == PASS) { return nPass() <= 1; }
+  return ::canPlay(pos, black, white);
+}
+
+void Node::playNotPass(int pos) {
+  // assert(pos >= 0 && pos != koPos && IS(pos, INSIDE & ~(black|white)));
+  assert(::canPlay(pos, black, white));
+  
+  _nPass = 0;
+  bool maybeKo = true;
+  int newGid = -1;
+  bool isSimple = true;
+  u64 captured = 0;
+  SET(pos, black);
+  for (int p : NEIB(pos)) {
+    if (p >= 0) {
+      if (IS(p, black)) {
+        maybeKo = false;
+        if (newGid == -1) {
+          newGid = gids[p];
+        } else if (newGid != gids[p]) {
+          isSimple = false;
+        }
+      } else if (IS(p, white)) {
+        captured |= capture(p, white, black);
+      } else if (IS(p, INSIDE)) {
+        maybeKo = false;
+      }
+    }
+  }
+  koPos = (maybeKo && size(captured) == 1) ? firstOf(captured) : 0;
+  white &= ~captured;
+  if (isSimple) {
+    if (newGid == -1) { newGid = pos; }
+    gids[pos] = newGid;
+  } else {
+    assert(newGid >= 0);
+    setGroup(pos, newGid);
+  }
+}
+
+void Node::playAux(int pos) {
+  assert(!(koPos && nPass()));  // Can't have Ko after pass.
+  if (pos == PASS) {
+    if (koPos) {
+      koPos = 0;
+    } else {
+      assert(nPass() <= 1);
+      ++_nPass;
+    }
+  } else {
+    playNotPass(pos);
+  }
+}
+
+template<typename T, int N>
+class vect {
+  T v[N];
+  int _size = 0;
+
+public:
+  void push(T t) { assert(_size < N); v[_size++] = t; }
+  T pop()        { assert(_size > 0); return v[--_size]; }
+  int size() { return _size; }
+  bool isEmpty() { return _size <= 0; }
+  bool has(T t) {
+    for (T e : *this) { if (e == t) { return true; } }
+    return false;
+  }
+  void clear() { _size = 0; }
+  
+  T *begin() { return v; }
+  T *end() { return v + _size; }
+  T operator[](int i) { return v[i]; }
+};
+
+struct Region {
+  u64 area;
+  u32 vital;
+  u32 border;
+
+  // Region(u64 area, u32 vital, u32 border) : area(area), vital(vital), border(border) {}
+  
+  bool isCoveredBy(u32 gidBits) { return (border & gidBits) == border; }
+  // int size() { return ::size(area); }
+  bool isUnconditional(u32 aliveGids) {
+    return isCoveredBy(aliveGids) && (vital || size(area) < 8);
+  }
+};
+
+u32 aliveGroups(vect<Region, 10> &regions) {
+  while (true) {
+    u32 alive = 0;
+    u32 halfAlive = 0;
+    for (Region &r : regions) {      
+      if (u32 vital = r.vital) {
+        for (int g : bits(vital)) {
+          if (IS(g, halfAlive)) {
+            SET(g, alive);
+          } else {
+            SET(g, halfAlive);
+          }
+        }
+      }
+    }
+    if (!alive) { return 0; }
+    bool changed = false;
+    for (Region &r : regions) {
+      if (r.vital && !r.isCoveredBy(alive)) {
+        r.vital = 0;
+        changed = true;
+      }
+    }
+    if (!changed) { return alive; }
+  }
+}
+
+// returns black unconditionally alive groups and unconditionally controlled points.
+u64 bensonAlive(u64 black, u64 white, u8 *gids) {
+  vect<Region, 10> regions;
+  u64 empty = INSIDE & ~(black | white);
+  u64 emptyNotSeen = empty;
+  while (emptyNotSeen) {
+    int pos = firstOf(emptyNotSeen);
+    u64 area = 1ull << pos;
+    u64 open = 0;
+    u32 vital = -1;
+    u32 border = 0;
+    while (true) {
+      u32 neibGroups = 0;
+      for (int p : NEIB(pos)) {
+        if (p >= 0) {
+          if (IS(p, black)) {
+            SET(gids[p], neibGroups);
+          } else if (IS(p, INSIDE) && !IS(p, area)) { // whiteOrEmpty && !area
+            SET(p, area);
+            SET(p, open);
+          }
+        }
+      }
+      border |= neibGroups;
+      if (IS(pos, empty)) { vital &= neibGroups; }
+      if (!open) { break; }
+      pos = POP(open);
+    }
+    emptyNotSeen &= ~area;
+    regions.push(Region{area, vital, border});
+  }
+  u64 points = 0;
+  if (u32 aliveGids = aliveGroups(regions)) {
+    for (int p : bits(black)) { if (IS(gids[p], aliveGids)) { SET(p, points); } }
+    for (Region &r : regions) { if (r.isUnconditional(aliveGids)) { points |= r.area; } }
+  }
+  return points;
+}
 
 Transtable tt;
 
