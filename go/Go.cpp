@@ -3,6 +3,7 @@
 #include <unordered_map>
 #include <string>
 #include <utility>
+#include <immintrin.h>
 
 using std::string;
 
@@ -269,7 +270,6 @@ class Node {
   int koPos;
   int _nPass;
   bool swapped;
-  // u8 gids[48];
   
 public:
   Node(): black(0), white(0), koPos(0), _nPass(0), swapped(false) {}
@@ -294,6 +294,7 @@ public:
     Node n(*this);
     n.playAux(p);
     n.swap();
+    n.rotate();
     return n;
   }
 
@@ -307,13 +308,88 @@ private:
   void playAux(int pos);
   void playNotPass(int pos);
   void swap() { std::swap(black, white); swapped != swapped; }
+  void rotate();
 };
+
+#define F(y, x) IS(t(P(y, x)), stone)
+int quadrantAux(u64 stone, auto t) {
+  return
+    (SIZE == 3) ? (F(0, 0) << 2) | (F(0, 1) + F(1, 0)) :
+    (SIZE == 4) ? (F(1, 1) << 3) | ((F(0, 1) + F(1, 0)) << 1) | F(0, 0) :
+    (SIZE == 5) ? (F(1, 1) << 5) | ((F(0, 2) + F(2, 0)) << 3) | (F(0, 0) << 2) | (F(0, 1) + F(1, 0)) :
+    (F(2, 2) << 6) | ((F(0, 2) + F(2, 0)) << 4) | (F(1, 1) << 3) | ((F(0, 1) + F(1, 0)) << 1) | F(0, 0);
+}
+
+int diagAux(u64 stone, auto t) {
+  return (SIZE <= 4) ? F(0, 1) : ((F(1, 2) << 2) | (F(0, 2) << 1) | F(0, 1));
+}
+#undef F
+
+int quadrant(u64 black, u64 white, auto t) {
+  return (quadrantAux(black | white, t) << 8) | quadrantAux(black, t);
+}
+
+int diagValue(u64 black, u64 white, auto t) {
+  return (diagAux(black | white, t) << 8) | diagAux(black, t);
+}
 
 union Bytes {
   u64 value;
   u8 bytes[8];
   unsigned operator[](int p) { return bytes[p]; }
 };
+
+u64 reflectY(u64 stones) {
+  Bytes b{.value = stones};
+  for (int y = 0; y < SIZE / 2; ++y) { std::swap(b.bytes[y], b.bytes[(SIZE - 1) - y]); }
+  return b.value;
+}
+
+#define LINE(i) (_pext_u64(stones, 0x0101010101010101ull << i) << (i * 8))
+u64 transpose(u64 stones) {
+  return LINE(0) | LINE(1) | LINE(2) | LINE(3) | LINE(4) | LINE(5);
+}
+#undef LINE
+
+u64 reflectX(u64 stones) { return transpose(reflectY(transpose(stones))); }
+
+void Node::rotate() {
+#define R(x) (SIZE - 1 - x)
+  auto ident  = [](int p) { return p; };
+  auto reflX  = [](int p) { return P(Y(p), R(X(p))); };
+  auto reflY  = [](int p) { return P(R(Y(p)), X(p)); };
+  auto reflXY = [](int p) { return P(R(Y(p)), R(X(p))); };
+  auto diag   = [](int p) { return P(X(p), Y(p)); };
+#undef R
+  
+  //  |AB|
+  //  |CD|
+  int A = quadrant(black, white, ident);
+  int B = quadrant(black, white, reflX);
+  int C = quadrant(black, white, reflY);
+  int D = quadrant(black, white, reflXY);
+
+  if (max(C, D) > max(A, B)) {
+    black = reflectY(black);
+    white = reflectY(white);
+    koPos = reflY(koPos);
+    std::swap(A, C);
+    std::swap(B, D);
+  }
+  if (max(B, D) > max(A, C)) {
+    black = reflectX(black);
+    white = reflectX(white);
+    koPos = reflX(koPos);
+    std::swap(A, B);
+    std::swap(C, D);
+  }
+  assert(A >= max(max(B, C), D));
+  if (diagValue(black, white, diag) > diagValue(black, white, ident)) {
+    black = transpose(black);
+    white = transpose(white);
+    koPos = diag(koPos);    
+  }
+}
 
 u64 extract(u64 stones) {
   Bytes b{.value = stones};
@@ -392,23 +468,6 @@ bool canPlay(int pos, u64 black, u64 white) {
   }
   return !capture(pos, black, white);
 }
-
-// set gids for the black group at pos.
-/*
-void Node::setGroup(int pos, int gid) {
-  assert(pos >= 0 && IS(pos, black));
-  u64 seen = 1ull << pos;
-  u64 open = 0;
-  while (true) {
-    gids[pos] = gid;
-    for (int p : NEIB(pos)) {
-      if (p >= 0 && IS(p, black) && !IS(p, seen)) { SET(p, seen); SET(p, open); }
-    }
-    if (!open) { break; }
-    pos = POP(open);
-  }
-}
-*/
 
 void Node::playNotPass(int pos) {
   // assert(pos >= 0 && pos != koPos && IS(pos, INSIDE & ~(black|white)));
@@ -635,3 +694,28 @@ void unitTest() {
 int main() {
   unitTest();
 }
+
+
+
+
+
+
+
+
+
+/*
+// set gids for the black group at pos.
+void Node::setGroup(int pos, int gid) {
+  assert(pos >= 0 && IS(pos, black));
+  u64 seen = 1ull << pos;
+  u64 open = 0;
+  while (true) {
+    gids[pos] = gid;
+    for (int p : NEIB(pos)) {
+      if (p >= 0 && IS(p, black) && !IS(p, seen)) { SET(p, seen); SET(p, open); }
+    }
+    if (!open) { break; }
+    pos = POP(open);
+  }
+}
+*/
