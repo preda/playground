@@ -260,7 +260,7 @@ struct Eval {
   }
 };
 
-u64 bensonAlive(u64 black, u64 white, const u8 *gids);
+u64 bensonAlive(u64 black, u64 white);
 bool canPlay(int pos, u64 black, u64 white);
 u64 stonesBase3(u64 stones);
 
@@ -269,10 +269,10 @@ class Node {
   int koPos;
   int _nPass;
   bool swapped;
-  u8 gids[48];
+  // u8 gids[48];
   
 public:
-  Node(): black(0), white(0), koPos(0), _nPass(0), swapped(false), gids() {}
+  Node(): black(0), white(0), koPos(0), _nPass(0), swapped(false) {}
     
   bool isKo() PURE { return koPos; }
   int nPass() PURE { return _nPass; }
@@ -285,7 +285,7 @@ public:
   }
   
   Eval eval() PURE {
-    return Eval{bensonAlive(black, white, gids), bensonAlive(white, black, gids)};
+    return Eval{bensonAlive(black, white), bensonAlive(white, black)};
   }
   
   u64 genMoves(const Eval &eval) PURE;
@@ -346,27 +346,41 @@ int tab3[256] = {
 #define POW32 (POW16 * POW16)
 u64 base3(u64 bits) {
   Bytes b{.value = bits};
-  return tab3[b[0]] + POW8*tab3[b[1]] + POW16*tab3[b[2]] + POW24*tab3[b[3]]  + POW32*tab3[b[4]];
+  return tab3[b[0]] + POW8*tab3[b[1]] + POW16*tab3[b[2]] + POW24*tab3[b[3]] + POW32*tab3[b[4]];
 }
 
 u64 stonesBase3(u64 stones) { return base3(extract(stones)); }
+
+u64 groupAt(int pos, u64 black) {
+  assert(pos >= 0 && IS(pos, black));
+  const u64 saveBlack = black;
+  CLEAR(pos, black);
+  u64 open = 0;
+  while (true) {
+    for (int p : NEIB(pos)) { if (p >= 0 && IS(p, black)) { CLEAR(p, black); SET(p, open); } }
+    if (!open) { break; }
+    pos = POP(open);
+  }
+  return saveBlack ^ black;
+}
 
 // returns captured *black* group at pos.
 u64 capture(int pos, u64 black, u64 white) {
   assert(pos >= 0 && IS(pos, black));
   u64 empty = INSIDE & ~(black | white);
-  u64 seen = 1ull << pos;
+  const u64 saveBlack = black;
+  CLEAR(pos, black);
   u64 open = 0;
   while (true) {
-    for (int p : NEIB(pos)) {
-      if (p >= 0) {
+    for (int p : NEIB(pos)) { if (p >= 0) {
         if (IS(p, empty)) { return 0; }
-        if (IS(p, black) && !IS(p, seen)) { SET(p, seen); SET(p, open); }
+        if (IS(p, black)) { CLEAR(p, black); SET(p, open); }
       }
     }
-    if (!open) { return seen; }
+    if (!open) { break; }
     pos = POP(open);
   }
+  return saveBlack ^ black;
 }
 
 bool canPlay(int pos, u64 black, u64 white) {
@@ -380,6 +394,7 @@ bool canPlay(int pos, u64 black, u64 white) {
 }
 
 // set gids for the black group at pos.
+/*
 void Node::setGroup(int pos, int gid) {
   assert(pos >= 0 && IS(pos, black));
   u64 seen = 1ull << pos;
@@ -393,27 +408,18 @@ void Node::setGroup(int pos, int gid) {
     pos = POP(open);
   }
 }
+*/
 
 void Node::playNotPass(int pos) {
   // assert(pos >= 0 && pos != koPos && IS(pos, INSIDE & ~(black|white)));
   assert(::canPlay(pos, black, white));
-  
   _nPass = 0;
   bool maybeKo = true;
-  int newGid = -1;
-  bool isSimple = true;
   u64 captured = 0;
   SET(pos, black);
   for (int p : NEIB(pos)) {
     if (p >= 0) {
-      if (IS(p, black)) {
-        maybeKo = false;
-        if (newGid == -1) {
-          newGid = gids[p];
-        } else if (newGid != gids[p]) {
-          isSimple = false;
-        }
-      } else if (IS(p, white)) {
+      if (IS(p, white)) {
         captured |= capture(p, white, black);
       } else if (IS(p, INSIDE)) {
         maybeKo = false;
@@ -422,13 +428,6 @@ void Node::playNotPass(int pos) {
   }
   koPos = (maybeKo && size(captured) == 1) ? firstOf(captured) : 0;
   white &= ~captured;
-  if (isSimple) {
-    if (newGid == -1) { newGid = pos; }
-    gids[pos] = newGid;
-  } else {
-    assert(newGid >= 0);
-    setGroup(pos, newGid);
-  }
 }
 
 void Node::playAux(int pos) {
@@ -515,13 +514,17 @@ u32 aliveGroups(vect<Region, 10> &regions) {
 }
 
 // returns black unconditionally alive groups and unconditionally controlled points.
-u64 bensonAlive(u64 black, u64 white, const u8 *gids) {
+u64 bensonAlive(u64 black, u64 white) {
   vect<Region, 10> regions;
   u64 empty = INSIDE & ~(black | white);
   u64 emptyNotSeen = empty;
+  u8 gids[48] = {0};
+  // int nextGid = 1;
   while (emptyNotSeen) {
     int pos = firstOf(emptyNotSeen);
-    u64 area = 1ull << pos;
+    // u64 area = 1ull << pos;
+    u64 inside = INSIDE;
+    CLEAR(pos, inside);
     u64 open = 0;
     u32 vital = -1;
     u32 border = 0;
@@ -530,11 +533,13 @@ u64 bensonAlive(u64 black, u64 white, const u8 *gids) {
       for (int p : NEIB(pos)) {
         if (p >= 0) {
           if (IS(p, black)) {
-            SET(gids[p], neibGroups);
-          } else if (IS(p, INSIDE) && !IS(p, area)) { // whiteOrEmpty && !area
-            SET(p, area);
-            SET(p, open);
-          }
+            int gid = gids[p];
+            if (!gid) {
+              gid = p + 1;
+              for (int pp : bits(groupAt(p, black))) { gids[pp] = gid; }
+            }
+            SET(gid, neibGroups);
+          } else if (IS(p, inside)) { CLEAR(p, inside); SET(p, open); }
         }
       }
       border |= neibGroups;
@@ -542,13 +547,14 @@ u64 bensonAlive(u64 black, u64 white, const u8 *gids) {
       if (!open) { break; }
       pos = POP(open);
     }
-    emptyNotSeen &= ~area;
-    regions.push(Region{area, vital, border});
+    emptyNotSeen &= inside;
+    regions.push(Region{INSIDE ^ inside, vital, border});
   }
   u64 points = 0;
   if (u32 aliveGids = aliveGroups(regions)) {
-    for (int p : bits(black)) { if (IS(gids[p], aliveGids)) { SET(p, points); } }
     for (Region &r : regions) { if (r.isUnconditional(aliveGids)) { points |= r.area; } }
+    for (int gid : bits(aliveGids)) { points |= groupAt(gid - 1, black); }                        
+    // for (int p : bits(black)) { if (IS(gids[p], aliveGids)) { SET(p, points); } }
   }
   return points;
 }
