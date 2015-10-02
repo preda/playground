@@ -59,8 +59,6 @@ enum {
   INSIDE = insidePoints(),
 };
 
-inline bool isInside(int p) { return p >= 0 && IS(p, INSIDE); }
-
 class Value {  
   enum Kind {AT_LEAST, AT_MOST, DEEPER, LOOP, NIL};
 
@@ -266,7 +264,51 @@ class Node {
   
 public:
   Node(): black(0), white(0), koPos(-1), _nPass(0), swapped(false) {}
-    
+  Node(u64 black, u64 white, int koPos) : black(black), white(white), koPos(koPos), _nPass(0), swapped(false) {}
+  Node(const char *board) : Node() {
+    int y = 0;
+    int x = 0;
+    for (;*board; ++board) {
+      char c = *board;
+      if (c == '|' || c == '\n') {
+        ++y; x = 0;
+      } else {
+        int p = P(y, x);
+        if (c == 'x') {
+          SET(p, black);
+        } else if (c == 'o') {
+          SET(p, white);
+        } else if (c == 'k') {
+          koPos = p;
+        } else {
+          assert(c == '.');
+        }
+        ++x;
+      }
+    }
+  }
+  
+  operator string() {
+    // printf("%lx %lx\n", black, white);
+    char buf[128];
+    char *out = buf;
+    for (int y = 0; y < SIZE; ++y) {
+      for (int x = 0; x < SIZE; ++x) {
+        int p = P(y, x);
+        assert(!(IS(p, black) && IS(p, white)));
+        *out++ = IS(p, black) ? 'x' : IS(p, white) ? 'o' : p == koPos ? 'k' : '.';
+      }
+      *out++ = '\n';
+    }
+    *out++ = 0;
+    return buf;
+  }
+
+  bool operator==(const Node &n) {
+    return black == n.black && white == n.white && koPos == n.koPos && _nPass == n._nPass &&
+      swapped == n.swapped;
+  }
+  
   bool isKo() PURE { return koPos >= 0; }
   int nPass() PURE { return _nPass; }
   
@@ -649,7 +691,28 @@ Value max(History history, Node node, int k, int depthPos, int maxDepth) {
 
 #include <stdio.h>
 
-void unitTest() {
+void testBasics() {
+  assert(firstOf((u32)1) == 0);
+  assert(firstOf((u64)2) == 1);
+  assert(size((u32)0) == 0);
+  assert(size((u64)-1) == 64);
+  assert(IS(0, 1));
+  assert(!IS(1, 1));
+  u64 bits = 10;
+  assert(POP(bits) == 1);
+  assert(bits == 8);
+  CLEAR(3, bits);
+  assert(bits == 0);
+  SET(2, bits);
+  assert(bits == 4);
+
+  assert(P(0, 1) == 1);
+  assert(P(1, 0) == 8);
+  assert(X(10) == 2);
+  assert(Y(10) == 1);
+}
+
+void testValue() {
   Value v = Value::nil();
   assert(v.isNil() && !v.isLoop() && !v.isAtLeast(0) && !v.isAtMost(0) && !v.isDeeper());
   v.accumulate(Value::atMost(1), 3);
@@ -685,8 +748,64 @@ void unitTest() {
   assert(tt.get(h, -3, 3, 20).isAtLeast(-2));
 }
 
+u64 fromString(const char *s) {
+  u64 stones = 0;
+  int y = 0;
+  int x = 0;
+  for (const char *ptr = s; *ptr; ++ptr) {
+    if (*ptr == '|') {
+      ++y;
+      x = 0;
+    } else {
+      if (*ptr == 'x' || *ptr == 'o') {
+        SET(P(y, x), stones);
+      } else {
+        assert(*ptr == '.');
+      }
+      ++x;
+    }
+  }
+  return stones;
+}
+
+void testBenson() {
+  assert(fromString("") == 0);
+  assert(fromString("xx") == 3);
+  assert(fromString("...|x") == 0x100);
+  
+  if (SIZE == 3) {
+    u64 black = fromString(".x.|xx.|...");
+    assert(bensonAlive(black, 0) == 0);
+    u64 white = fromString("...|...|..o");
+    assert(bensonAlive(black, white) == 0x070707);
+    assert(bensonAlive(fromString(".x.|.x.|.x."), 0) == 0x070707);
+    assert(bensonAlive(0, 0) == 0);
+  }
+}
+
+void testCanPlay() {
+  assert(canPlay(0, 0, 0));
+  assert(!canPlay(0, 0, fromString(".o.|o..")));
+  assert(canPlay(0, fromString("...|xo."), fromString(".o.|...")));
+  assert(canPlay(0, fromString("...|xx."), fromString(".ox|ox.")));
+}
+
+void testRotate() {
+  //Node n(fromString(".x.|, fromString("..o"), P(1, 2));
+  //n.rotate();
+  Node n(".xo|.o.|..o");
+  // printf("%s\n", STR(n));
+  n = n.play(P(1, 2));
+  // printf("%s\n", STR(n));
+  assert(n == Node("xok|.xo"));
+}
+
 int main() {
-  unitTest();
+  testBasics();
+  testValue();
+  testBenson();
+  testCanPlay();
+  testRotate();
 }
 
 
