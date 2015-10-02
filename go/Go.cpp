@@ -32,26 +32,19 @@ inline int  POP(u64 &bits) { int p = firstOf(bits); CLEAR(p, bits); return p; }
 
 enum {
   SIZE = 3,
-  SIZE_X = SIZE,
-  SIZE_Y = SIZE,
-  TOTAL_POINTS = SIZE_X * SIZE_Y,
-  BIG_X = 8,
-  BIG_Y = SIZE_Y + 1,
-  DELTA = BIG_X,
-
-  N = SIZE_X * SIZE_Y,
-  BIG_N = BIG_X * BIG_Y,
+  TOTAL_POINTS = SIZE * SIZE,
+  DELTA = 8,
   PASS = 63,
 };
 
 constexpr inline int P(int y, int x) { return (y << 3) + x; }
-inline int Y(int pos) { return (pos >> 3); }
-inline int X(int pos) { return pos & (BIG_X - 1); }
+inline int Y(int pos) { return pos >> 3; }
+inline int X(int pos) { return pos & 7; }
 
 constexpr u64 insidePoints() {
   u64 ret = 0;
-  for (int y = 0; y < SIZE_Y; ++y) {
-    for (int x = 0; x < SIZE_X; ++x) {
+  for (int y = 0; y < SIZE; ++y) {
+    for (int x = 0; x < SIZE; ++x) {
       SETC(P(y, x), ret);
     }
   }
@@ -272,16 +265,16 @@ class Node {
   bool swapped;
   
 public:
-  Node(): black(0), white(0), koPos(0), _nPass(0), swapped(false) {}
+  Node(): black(0), white(0), koPos(-1), _nPass(0), swapped(false) {}
     
-  bool isKo() PURE { return koPos; }
+  bool isKo() PURE { return koPos >= 0; }
   int nPass() PURE { return _nPass; }
   
   u64 positionBits() { return (stonesBase3(black) << 1) + stonesBase3(white); }
   
   u64 situationBits() {
-    assert(koPos >= 0 && _nPass >= 0);
-    return koPos | (_nPass << 6) | (swapped ? 0x100 : 0);
+    assert(koPos >= -1 && _nPass >= 0);
+    return (koPos + 1) | (_nPass << 6) | (swapped ? 0x100 : 0);
   }
   
   Eval eval() PURE {
@@ -300,6 +293,7 @@ public:
 
 private:
   bool canPlay(int pos) PURE {
+    assert(pos >= 0);
     return (pos == koPos) ? false : (pos == PASS) ? (nPass() <= 1) :
       ::canPlay(pos, black, white);
   }
@@ -485,15 +479,15 @@ void Node::playNotPass(int pos) {
       }
     }
   }
-  koPos = (maybeKo && size(captured) == 1) ? firstOf(captured) : 0;
+  koPos = (maybeKo && size(captured) == 1) ? firstOf(captured) : -1;
   white &= ~captured;
 }
 
 void Node::playAux(int pos) {
-  assert(!(koPos && nPass()));  // Can't have Ko after pass.
+  assert(!(isKo() && nPass()));  // Can't have Ko after pass.
   if (pos == PASS) {
-    if (koPos) {
-      koPos = 0;
+    if (isKo()) {
+      koPos = -1;
     } else {
       assert(nPass() <= 1);
       ++_nPass;
