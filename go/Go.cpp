@@ -4,6 +4,7 @@
 #include <string>
 #include <utility>
 #include <immintrin.h>
+#include <stdio.h>
 
 using std::string;
 
@@ -77,9 +78,20 @@ public:
   static Value atMost(int k)  { return Value(AT_MOST, k, 0); }
   static Value atLeast(int k) { return Value(AT_LEAST, k, 0); }
 
+  static const char *kindName(Kind kind) {
+    switch (kind) {
+    case AT_LEAST: return "at least";
+    case AT_MOST: return "at most";
+    case DEEPER: return "deeper";
+    case LOOP: return "loop";
+    case NIL: return "nil";
+    default: return "?";
+    }
+  }
+  
   operator string() {
     char buf[64];
-    snprintf(buf, sizeof(buf), "V(%d, %d, %d)", kind, v, depth);
+    snprintf(buf, sizeof(buf), "V(%s, %d, %d)", kindName(kind), v, depth);
     return buf;
   }
 
@@ -253,8 +265,8 @@ struct Eval {
 };
 
 u64 bensonAlive(u64 black, u64 white);
-bool canPlay(int pos, u64 black, u64 white);
 u64 stonesBase3(u64 stones);
+int scoreEmpty(u64 empty, u64 black, u64 white);
 
 class Node {
   u64 black, white;
@@ -264,7 +276,11 @@ class Node {
   
 public:
   Node(): black(0), white(0), koPos(-1), _nPass(0), swapped(false) {}
-  Node(u64 black, u64 white, int koPos) : black(black), white(white), koPos(koPos), _nPass(0), swapped(false) {}
+  Node(const Node &n) :
+    black(n.black), white(n.white), koPos(n.koPos), _nPass(n._nPass), swapped(n.swapped) {}
+  Node(u64 black, u64 white, int koPos) :
+    black(black), white(white), koPos(koPos), _nPass(0), swapped(false) {}
+
   Node(const char *board) : Node() {
     int y = 0;
     int x = 0;
@@ -305,8 +321,8 @@ public:
   }
 
   bool operator==(const Node &n) {
-    return black == n.black && white == n.white && koPos == n.koPos && _nPass == n._nPass &&
-      swapped == n.swapped;
+    return black == n.black && white == n.white && koPos == n.koPos && _nPass == n._nPass;
+    // && swapped == n.swapped;
   }
   
   bool isKo() PURE { return koPos >= 0; }
@@ -319,8 +335,19 @@ public:
     return (koPos + 1) | (_nPass << 6) | (swapped ? 0x100 : 0);
   }
   
-  Eval eval() PURE {
-    return Eval{bensonAlive(black, white), bensonAlive(white, black)};
+  Value eval(Eval &outEval, int k) PURE {
+    assert(nPass() <= 2);
+    u64 pointsBlack = bensonAlive(black, white);
+    u64 pointsWhite = bensonAlive(white, black);
+    outEval = Eval{pointsBlack, pointsWhite};
+    if (nPass() >= 2) {
+      u64 emptyUnsettled = INSIDE & ~(black | white | pointsBlack | pointsWhite);
+      int scoreUnsettled = scoreEmpty(emptyUnsettled, black, white);
+      int score = scoreUnsettled + size(black | pointsBlack) - size(white | pointsWhite);
+      return (score > k) ? Value::atLeast(score) : Value::atMost(score);
+    } else {
+      return outEval.value(k);
+    }
   }
   
   u64 genMoves(const Eval &eval) PURE;
@@ -334,16 +361,10 @@ public:
   }
 
 private:
-  bool canPlay(int pos) PURE {
-    assert(pos >= 0);
-    return (pos == koPos) ? false : (pos == PASS) ? (nPass() <= 1) :
-      ::canPlay(pos, black, white);
-  }
-  
   void setGroup(int pos, int gid);
   void playAux(int pos);
   void playNotPass(int pos);
-  void swap() { std::swap(black, white); swapped != swapped; }
+  void swap() { std::swap(black, white); swapped = !swapped; }
   void rotate();
 };
 
@@ -408,14 +429,14 @@ void Node::rotate() {
   if (max(C, D) > max(A, B)) {
     black = reflectY(black);
     white = reflectY(white);
-    koPos = reflY(koPos);
+    koPos = (koPos >= 0) ? reflY(koPos) : koPos;
     std::swap(A, C);
     std::swap(B, D);
   }
-  if (max(B, D) > max(A, C)) {
+  if (B > A) {
     black = reflectX(black);
     white = reflectX(white);
-    koPos = reflX(koPos);
+    koPos = (koPos >= 0) ? reflX(koPos) : koPos;
     std::swap(A, B);
     std::swap(C, D);
   }
@@ -423,7 +444,7 @@ void Node::rotate() {
   if (diagValue(black, white, diag) > diagValue(black, white, ident)) {
     black = transpose(black);
     white = transpose(white);
-    koPos = diag(koPos);    
+    koPos = (koPos >= 0) ? diag(koPos) : koPos;
   }
 }
 
@@ -495,6 +516,40 @@ u64 capture(int pos, u64 black, u64 white) {
   return saveBlack ^ black;
 }
 
+int scoreEmpty(u64 empty, u64 black, u64 white) {
+  assert(black | white);
+  assert(!(black & white));
+  int score = 0;
+  while (empty) {
+    int pos = firstOf(empty);
+    CLEAR(pos, empty);
+    int size = 1;
+    u64 open = 0;
+    bool touchesBlack = false, touchesWhite = false;
+    while (true) {
+      for (int p : NEIB(pos)) { if (p >= 0) {
+          if (IS(p, empty)) {
+            ++size;
+            CLEAR(p, empty);
+            SET(p, open);          
+          } else if (IS(p, black)) {
+            touchesBlack = true;
+          } else if (IS(p, white)) {
+            touchesWhite = true;
+          }
+        }
+      }
+      if (!open) { break; }
+      pos = POP(open);
+    }
+    assert(touchesBlack || touchesWhite);
+    if (!(touchesBlack && touchesWhite)) {
+      score += touchesBlack ? size : -size;
+    }   
+  }
+  return score;
+}
+
 bool canPlay(int pos, u64 black, u64 white) {
   assert(pos >= 0 && IS(pos, INSIDE));
   if (IS(pos, black | white)) { return false; }
@@ -507,7 +562,7 @@ bool canPlay(int pos, u64 black, u64 white) {
 
 void Node::playNotPass(int pos) {
   // assert(pos >= 0 && pos != koPos && IS(pos, INSIDE & ~(black|white)));
-  assert(::canPlay(pos, black, white));
+  assert(canPlay(pos, black, white));
   _nPass = 0;
   bool maybeKo = true;
   u64 captured = 0;
@@ -541,8 +596,10 @@ void Node::playAux(int pos) {
 
 u64 Node::genMoves(const Eval &eval) const {
   assert(nPass() < 2);
-  u64 moves = (INSIDE & ~(black | white) & ~(eval.pointsBlack | eval.pointsWhite)) | PASS;
-  for (int p : bits(moves)) { if (!canPlay(p)) { CLEAR(p, moves); } }
+  u64 moves = (INSIDE & ~(black | white) & ~(eval.pointsBlack | eval.pointsWhite));
+  if (koPos >= 0) { CLEAR(koPos, moves); }
+  for (int p : bits(moves)) { if (!canPlay(p, black, white)) { CLEAR(p, moves); } }
+  // SET(PASS, moves);
   return moves;
 }
 
@@ -572,10 +629,7 @@ struct Region {
   u32 vital;
   u32 border;
 
-  // Region(u64 area, u32 vital, u32 border) : area(area), vital(vital), border(border) {}
-  
   bool isCoveredBy(u32 gidBits) { return (border & gidBits) == border; }
-  // int size() { return ::size(area); }
   bool isUnconditional(u32 aliveGids) {
     return isCoveredBy(aliveGids) && (vital || size(area) < 8);
   }
@@ -656,13 +710,15 @@ u64 bensonAlive(u64 black, u64 white) {
 
 Transtable tt;
 
-Value max(History history, Node node, int k, int depthPos, int maxDepth) {
+Value maxMove(History &history, Node node, int k, int depthPos, int maxDepth) {
+  assert(depthPos <= maxDepth);
   u64 position  = node.positionBits();
   u64 sbits = node.situationBits();
   u128 situation = (((u128) sbits) << 64) | position;
   bool isPlain = !node.isKo() && !node.nPass();
-  
-  if (int historyPos = history.pos(situation)) {
+
+  int historyPos = history.pos(situation);
+  if (historyPos >= 0) {
     assert(historyPos < depthPos);
     return Value::loop(historyPos);
   }
@@ -670,16 +726,18 @@ Value max(History history, Node node, int k, int depthPos, int maxDepth) {
   Value v = isPlain ? tt.get(position, k, depthPos, maxDepth) : Value::nil();
   if (v.isFinalEnough(k)) { return v; }
 
-  Eval eval = node.eval();
-  v = eval.value(k);
-  if (v.isFinalEnough(k) || depthPos >= maxDepth) { return v; }
+  Eval eval;
+  v = node.eval(eval, k);
+  if (v.isFinalEnough(k)) { return v; }
+  if (depthPos >= maxDepth) { return Value::deeper(); }
 
   history.push(situation);
   u64 moves = node.genMoves(eval);
+  if (depthPos > 0) { SET(PASS, moves); }
   v = Value::nil();
   for (int move : bits(moves)) {
     Node sub = node.play(move);
-    Value subValue = max(history, sub, -k-1, depthPos + 1, maxDepth).negate();
+    Value subValue = maxMove(history, sub, -k-1, depthPos + 1, maxDepth).negate();
     v.accumulate(subValue, k);
     if (v.isCut(k)) { break; }
   }
@@ -689,7 +747,38 @@ Value max(History history, Node node, int k, int depthPos, int maxDepth) {
   return v;
 }
 
-#include <stdio.h>
+void mtdf() {
+  Node node;
+  int k = 0;
+  History history;
+  int maxDepth = 10;
+  Value v = maxMove(history, node, k, 0, maxDepth);
+  printf("%s\n", STR(v));
+}
+
+void testBasics();
+void testValue();
+void testBenson();
+void testCanPlay();
+void testRotate();
+
+int main() {
+  testBasics();
+  testValue();
+  testBenson();
+  testCanPlay();
+  testRotate();
+  
+  mtdf();
+}
+
+
+
+
+
+
+// --- test ---
+
 
 void testBasics() {
   assert(firstOf((u32)1) == 0);
@@ -799,18 +888,6 @@ void testRotate() {
   // printf("%s\n", STR(n));
   assert(n == Node("xok|.xo"));
 }
-
-int main() {
-  testBasics();
-  testValue();
-  testBenson();
-  testCanPlay();
-  testRotate();
-}
-
-
-
-
 
 
 
