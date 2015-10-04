@@ -944,11 +944,11 @@ void testReadGroups() {
     int libs[16];
     int n = readGroups(node.getBlack(), node.getWhite(), gids, libs);
     assert(n == 4);
-    assert(gids[P(2, 0)] == 1);
+    for (int p : {P(0, 0), P(0, 1), P(1, 1), P(2, 0), P(2, 1)}) { assert(gids[p] == 1); }
     assert(libs[1] == 4);
-    assert(gids[P(0, 3)] == 2);
+    for (int p : {P(0, 2), P(0, 3)}) { assert(gids[p] == 2); }
     assert(libs[2] == 2);
-    assert(gids[P(2, 3)] == 3);
+    for (int p : {P(2, 3), P(3, 2), P(3, 3)}) { assert(gids[p] == 3); }
     assert(libs[3] == 3);    
     assert(gids[P(3, 0)] == 4);
     assert(libs[4] == 1);
