@@ -361,6 +361,9 @@ public:
     return n;
   }
 
+  u64 getBlack() PURE { return black; }
+  u64 getWhite() PURE { return white; }
+  
 private:
   void setGroup(int pos, int gid);
   void playAux(int pos);
@@ -485,6 +488,39 @@ u64 base3(u64 bits) {
 
 u64 stonesBase3(u64 stones) { return base3(extract(stones)); }
 
+int readAux(int gid, const u64 black, const u64 white, int *gids, int *libs) {
+  u64 empty = INSIDE & ~(black | white);
+  u64 eatBlack = black;
+  while (eatBlack) {
+    ++gid;
+    int pos = POP(eatBlack);
+    gids[pos] = gid;
+    u64 open = 0;
+    u64 border = 0;
+    while (true) {
+      for (int p : NEIB(pos)) {
+        if (p >= 0) {
+          if (IS(p, eatBlack)) {
+            CLEAR(p, eatBlack);
+            SET(p, open);
+            gids[p] = gid;
+          } else {
+            SET(p, border);
+          }
+        }
+      }
+      if (!open) { break; }
+      pos = POP(open);
+    }
+    libs[gid] = size(border & empty);
+  }
+  return gid;
+}
+
+int readGroups(const u64 black, const u64 white, int *gids, int *libs) {
+  return readAux(readAux(0, black, white, gids, libs), white, black, gids, libs);
+}
+
 u64 groupAt(int pos, u64 black) {
   assert(pos >= 0 && IS(pos, black));
   const u64 saveBlack = black;
@@ -522,8 +558,7 @@ int scoreEmpty(u64 empty, u64 black, u64 white) {
   assert(!(black & white));
   int score = 0;
   while (empty) {
-    int pos = firstOf(empty);
-    CLEAR(pos, empty);
+    int pos = POP(empty);
     int size = 1;
     u64 open = 0;
     bool touchesBlack = false, touchesWhite = false;
@@ -562,8 +597,9 @@ bool canPlay(int pos, u64 black, u64 white) {
 }
 
 void Node::playNotPass(int pos) {
-  // assert(pos >= 0 && pos != koPos && IS(pos, INSIDE & ~(black|white)));
-  assert(canPlay(pos, black, white));
+  assert(pos >= 0 && pos != koPos && IS(pos, INSIDE & ~(black|white)));
+  // assert(canPlay(pos, black, white));
+  
   _nPass = 0;
   bool maybeKo = true;
   u64 captured = 0;
@@ -577,8 +613,14 @@ void Node::playNotPass(int pos) {
       }
     }
   }
-  koPos = (maybeKo && size(captured) == 1) ? firstOf(captured) : -1;
-  white &= ~captured;
+  koPos = -1;
+  if (captured) {
+    white &= ~captured;
+    if (maybeKo && size(captured) == 1) {
+      koPos = firstOf(captured);
+    }
+  }
+  assert(!capture(pos, black, white));
 }
 
 void Node::playAux(int pos) {
@@ -895,12 +937,31 @@ void testRotate() {
   }
 }
 
+void testReadGroups() {
+  if (SIZE == 4) {
+    Node node("xxoo|.x..|xx.o|o.oo");
+    int gids[64];
+    int libs[16];
+    int n = readGroups(node.getBlack(), node.getWhite(), gids, libs);
+    assert(n == 4);
+    assert(gids[P(2, 0)] == 1);
+    assert(libs[1] == 4);
+    assert(gids[P(0, 3)] == 2);
+    assert(libs[2] == 2);
+    assert(gids[P(2, 3)] == 3);
+    assert(libs[3] == 3);    
+    assert(gids[P(3, 0)] == 4);
+    assert(libs[4] == 1);
+  }
+}
+
 bool testAll() {
   testBasics();
   testValue();
   testBenson();
   testCanPlay();
   testRotate();
+  testReadGroups();
   return true;
 }
 
