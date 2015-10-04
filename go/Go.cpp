@@ -32,7 +32,7 @@ inline void CLEAR(int p, u64 &bits) { assert(p >= 0 && p < 64); bits &= ~(1ull <
 inline int  POP(u64 &bits) { int p = firstOf(bits); CLEAR(p, bits); return p; }
 
 enum {
-  SIZE = 3,
+  SIZE = 4,
   TOTAL_POINTS = SIZE * SIZE,
   DELTA = 8,
   PASS = 63,
@@ -132,11 +132,12 @@ public:
   }
 
   Value toTT(int k, int d) PURE {
+    assert(!isNil());
     return
       isDeeper() ? Value{DEEPER, k, d} :
       isLoop()   ? Value{LOOP,   k, 0} :
-      isNil()    ? Value{AT_LEAST, -64, 0} :
       *this;
+      // isNil()    ? Value{AT_LEAST, -64, 0} :
   }
 
 private:
@@ -199,7 +200,7 @@ public:
   void put(u64 h, int k, int depthPos, int maxDepth, Value value) {
     assert(depthPos < maxDepth);
     assert(!value.isNil());
-    if (value.isLoop() && value.depth < depthPos) { return; }
+    assert(!(value.isLoop() && value.depth < depthPos));
     u64 slot = slots[h >> (64 - SLOTS_BITS)];
     bool isMatch = (u32) slot == (u32) h;
     Data data(slot >> 32);
@@ -743,7 +744,12 @@ Value maxMove(History &history, Node node, int k, int depthPos, int maxDepth) {
   }
   history.pop(situation);
   assert(v.isFinalEnough(k));
-  if (isPlain) { tt.put(position, k, depthPos, maxDepth, v); }
+  if (isPlain && !(v.isLoop() && v.depth < depthPos) && !(v.isDeeper() && depthPos >= maxDepth - 1)) {
+    tt.put(position, k, depthPos, maxDepth, v);
+    if (depthPos < 8) {
+      printf("put k %d, d %d, %s\n%s\n", k, depthPos, STR(v), STR(node));
+    }
+  }
   return v;
 }
 
@@ -751,29 +757,29 @@ void mtdf() {
   Node node;
   int k = 0;
   History history;
-  int maxDepth = 10;
-  Value v = maxMove(history, node, k, 0, maxDepth);
-  printf("%s\n", STR(v));
+  int maxDepth = 14;
+  while (true) {
+    Value v = maxMove(history, node, k, 0, maxDepth);
+    printf("k %d, depth %d, %s\n", k, maxDepth, STR(v));
+    if (v.isDeeper()) {
+      ++maxDepth;
+    } else if (v.isLoop()) {
+      ++k;
+    } else if (v.isAtLeast(k + 1)) {
+      k = v.v;
+      if (k >= TOTAL_POINTS) { break; }
+    } else {
+      break;
+    }
+  }
 }
 
-void testBasics();
-void testValue();
-void testBenson();
-void testCanPlay();
-void testRotate();
+bool testAll();
 
 int main() {
-  testBasics();
-  testValue();
-  testBenson();
-  testCanPlay();
-  testRotate();
-  
+  assert(testAll());
   mtdf();
 }
-
-
-
 
 
 
@@ -880,15 +886,23 @@ void testCanPlay() {
 }
 
 void testRotate() {
-  //Node n(fromString(".x.|, fromString("..o"), P(1, 2));
-  //n.rotate();
-  Node n(".xo|.o.|..o");
-  // printf("%s\n", STR(n));
-  n = n.play(P(1, 2));
-  // printf("%s\n", STR(n));
-  assert(n == Node("xok|.xo"));
+  if (SIZE == 3) {
+    Node n(".xo|.o.|..o");
+    // printf("%s\n", STR(n));
+    n = n.play(P(1, 2));
+    // printf("%s\n", STR(n));
+    assert(n == Node("xok|.xo"));
+  }
 }
 
+bool testAll() {
+  testBasics();
+  testValue();
+  testBenson();
+  testCanPlay();
+  testRotate();
+  return true;
+}
 
 
 
