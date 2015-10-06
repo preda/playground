@@ -34,7 +34,7 @@ inline void CLEAR(int p, u64 &bits) { assert(p >= 0 && p < 64); bits &= ~(1ull <
 inline int  POP(u64 &bits) { int p = firstOf(bits); CLEAR(p, bits); return p; }
 
 enum {
-  SIZE = 3,
+  SIZE = 4,
   N = SIZE * SIZE,
   MAX_GROUPS = 18,
   DELTA = 8,
@@ -457,15 +457,20 @@ public:
 
   int valueOfMove(int pos) PURE {
     u64 empty = INSIDE & ~(black | white);
+    /*
     int ypos = Y(pos);
     int xpos = X(pos);
     int centerPlay = min(min(ypos, SIZE - 1 - ypos), min(xpos, SIZE - 1 - xpos));
-    int value = centerPlay;
+    */
+    int value = 0;
     bool isSuicide = true;
+    int nBlack = 0;
+    int nWhite = 0;
+    int nEmpty = 0;
     for (int p : NEIB(pos)) {
       if (p >= 0) {
         if (IS(p, empty)) {
-          ++value;
+          ++nEmpty;
           isSuicide = false;
         } else if (IS(p, INSIDE)) {
           int gid = gids[p];
@@ -473,20 +478,45 @@ public:
           int nLibs = size(shadow & empty);
           assert(nLibs > 0);
           if (IS(p, black)) {
+            ++nBlack;
             if (nLibs == 1) {
-              value += 1;
+              value += 2;
             } else {
               isSuicide = false;
             }
           } else {
             assert(IS(p, white));
+            ++nWhite;
             if (nLibs == 1) {
-              value += 2;
+              value += 3;
               isSuicide = false;
             }
           }
+        }        
+      }      
+    }
+    if (nBlack + nWhite + nEmpty == 4) {
+      if (nBlack == 1) {
+        value += 1;
+      } else if (nBlack == 2) {
+        if ((IS(pos-1, black) && IS(pos+1, black)) ||
+            (IS(pos-DELTA, black) && IS(pos+DELTA, black))) {
+          value += 2;
         }
       }
+      
+      if (nWhite == 1) {
+        value += 1;
+      } else if (nWhite == 2) {
+        if ((IS(pos-1, white) && IS(pos+1, white)) ||
+            (IS(pos-DELTA, white) && IS(pos+DELTA, white))) {
+          value += 2;
+        }
+      }
+
+      value += nEmpty;
+    } else {
+      value += nEmpty + nBlack;
     }
     return isSuicide ? 0 : (value + 1);
   }
@@ -880,7 +910,7 @@ Value maxMove(History &history, const Node &node, int k, int depthPos, int maxDe
   assert(v.isFinalEnough(k));
   if (isPlain && !(v.isLoop() && v.depth < depthPos) && !(v.isDeeper() && depthPos >= maxDepth - 1)) {
     tt.put(position, k, depthPos, maxDepth, v);
-    if (depthPos < 8) {
+    if (depthPos < 2) {
       printf("put k %d, d %d, %s\n%s\n", k, depthPos, STR(v), STR(node));
     }
   }
@@ -891,11 +921,12 @@ void mtdf() {
   Node node;
   int k = 0;
   History history;
-  int maxDepth = 16;
+  int maxDepth = 6;
   while (true) {
     Value v = maxMove(history, node, k, 0, maxDepth);
     printf("k %d, depth %d, %s\n", k, maxDepth, STR(v));
     if (v.isDeeper()) {
+      break;
       ++maxDepth;
     } else if (v.isLoop()) {
       ++k;
