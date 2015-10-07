@@ -352,13 +352,15 @@ public:
     n.rotate();
     return n;
   }
+
+  void rotate();
   
 private:
   void setGroup(int pos, int gid);
   void playAux(int pos);
   void playNotPass(int pos);
   void swap() { std::swap(black, white); swapped = !swapped; }
-  void rotate();
+
 };
 
 template<typename T, int N>
@@ -543,11 +545,14 @@ public:
 
 #define F(y, x) IS(t(P(y, x)), stone)
 int quadrantAux(u64 stone, auto t) {
-  return
-    (SIZE == 3) ? (F(0, 0) << 2) | (F(0, 1) + F(1, 0)) :
-    (SIZE == 4) ? (F(1, 1) << 3) | ((F(0, 1) + F(1, 0)) << 1) | F(0, 0) :
-    (SIZE == 5) ? (F(1, 1) << 5) | ((F(0, 2) + F(2, 0)) << 3) | (F(0, 0) << 2) | (F(0, 1) + F(1, 0)) :
-    (F(2, 2) << 6) | ((F(0, 2) + F(2, 0)) << 4) | (F(1, 1) << 3) | ((F(0, 1) + F(1, 0)) << 1) | F(0, 0);
+  int a = 0;
+  switch (SIZE) {
+  case 6: a |= F(2, 2) << 8;
+  case 5: a |= ((F(1, 2) + F(2, 1)) << 6) | ((F(0, 2) + F(2, 0)) << 4);
+  case 4: a |= F(1, 1) << 3;
+  case 3: a |= ((F(0, 1) + F(1, 0)) << 1) | F(0, 0);
+  }
+  return a;
 }
 
 int diagAux(u64 stone, auto t) {
@@ -556,7 +561,7 @@ int diagAux(u64 stone, auto t) {
 #undef F
 
 int quadrant(u64 black, u64 white, auto t) {
-  return (quadrantAux(black | white, t) << 8) | quadrantAux(black, t);
+  return (quadrantAux(black | white, t) << 9) | quadrantAux(black, t);
 }
 
 int diagValue(u64 black, u64 white, auto t) {
@@ -581,43 +586,44 @@ u64 transpose(u64 stones) {
 }
 #undef LINE
 
-u64 reflectX(u64 stones) { return transpose(reflectY(transpose(stones))); }
+u64 reflectXT(u64 stones) { return reflectY(transpose(stones)); }
 
 void Node::rotate() {
 #define R(x) (SIZE - 1 - x)
-  auto ident  = [](int p) { return p; };
-  auto reflX  = [](int p) { return P(Y(p), R(X(p))); };
-  auto reflY  = [](int p) { return P(R(Y(p)), X(p)); };
-  auto reflXY = [](int p) { return P(R(Y(p)), R(X(p))); };
-  auto diag   = [](int p) { return P(X(p), Y(p)); };
+  auto ident   = [](int p) { return p; };
+  auto Ry      = [](int p) { return P(R(Y(p)), X(p)); };
+  auto RxT     = [](int p) { return P(R(X(p)), Y(p)); };
+  auto RxTInv  = [](int p) { return P(X(p), R(Y(p))); };
+  auto RyxT    = [](int p) { return P(R(X(p)), R(Y(p))); };
+  auto T       = [](int p) { return P(X(p), Y(p)); };
 #undef R
   
   //  |AB|
   //  |CD|
   int A = quadrant(black, white, ident);
-  int B = quadrant(black, white, reflX);
-  int C = quadrant(black, white, reflY);
-  int D = quadrant(black, white, reflXY);
+  int B = quadrant(black, white, RxTInv);
+  int C = quadrant(black, white, Ry);
+  int D = quadrant(black, white, RyxT);
 
   if (max(C, D) > max(A, B)) {
     black = reflectY(black);
     white = reflectY(white);
-    koPos = (koPos >= 0) ? reflY(koPos) : koPos;
+    koPos = (koPos >= 0) ? Ry(koPos) : koPos;
     std::swap(A, C);
     std::swap(B, D);
   }
   if (B > A) {
-    black = reflectX(black);
-    white = reflectX(white);
-    koPos = (koPos >= 0) ? reflX(koPos) : koPos;
+    black = reflectXT(black);
+    white = reflectXT(white);
+    koPos = (koPos >= 0) ? RxT(koPos) : koPos;
     std::swap(A, B);
     std::swap(C, D);
   }
   assert(A >= max(max(B, C), D));
-  if (diagValue(black, white, diag) > diagValue(black, white, ident)) {
+  if (diagValue(black, white, T) > diagValue(black, white, ident)) {
     black = transpose(black);
     white = transpose(white);
-    koPos = (koPos >= 0) ? diag(koPos) : koPos;
+    koPos = (koPos >= 0) ? T(koPos) : koPos;
   }
 }
 
@@ -910,7 +916,7 @@ Value maxMove(History &history, const Node &node, int k, int depthPos, int maxDe
   assert(v.isFinalEnough(k));
   if (isPlain && !(v.isLoop() && v.depth < depthPos) && !(v.isDeeper() && depthPos >= maxDepth - 1)) {
     tt.put(position, k, depthPos, maxDepth, v);
-    if (depthPos < 2) {
+    if (depthPos < 10) {
       printf("put k %d, d %d, %s\n%s\n", k, depthPos, STR(v), STR(node));
     }
   }
@@ -921,7 +927,7 @@ void mtdf() {
   Node node;
   int k = 0;
   History history;
-  int maxDepth = 6;
+  int maxDepth = 8;
   while (true) {
     Value v = maxMove(history, node, k, 0, maxDepth);
     printf("k %d, depth %d, %s\n", k, maxDepth, STR(v));
@@ -1060,6 +1066,21 @@ void testRotate() {
     // printf("%s\n", STR(n));
     assert(n == Node("xok|.xo"));
   }
+
+  if (SIZE == 4) {
+    Node expected(".x..|oxxo|.o..|....");
+    for (const char *s : {
+        "....|..o.|oxxo|..x.",
+        "..x.|oxxo|..o.|....",
+      }){
+      
+      Node n(s);
+      // printf("%s\n", STR(n));
+      n.rotate();
+      // printf("%s\n----\n\n", STR(n));
+      assert(n == expected);
+    }
+  }
 }
 
 void testReadGroups() {
@@ -1099,14 +1120,12 @@ bool testAll() {
   printf("eval %d\n", eval.valueOfMove(11));
   */
 
-  /*
   testBasics();
   testValue();
   testBenson();
   testCanPlay();
   testRotate();
-  testReadGroups();
-  */
+  // testReadGroups();
   return true;
 }
 
