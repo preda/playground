@@ -258,7 +258,6 @@ template<typename T> inline Bits<T> bits(T v) { return Bits<T>(v); }
 u64 bensonAlive(u64 black, u64 white, int *gids, u64 *shadows);
 u64 stonesBase3(u64 stones);
 int scoreEmpty(u64 empty, u64 black, u64 white);
-int readGids(u64 black, u8 *gids, int gid);
 
 template<typename T, int N>
 class vect {
@@ -318,6 +317,20 @@ public:
       }
     }
   }
+
+  char symbolAtPos(int pos) const {
+    assert(pos >= 0);
+    if (pos == koPos) {
+      assert(!IS(pos, black | white | blackAlive | whiteAlive));
+      return 'k';
+    } else if (IS(pos, blackAlive)) {
+      return IS(pos, black) ? 'X' : IS(pos, white) ? 'c' : '+';
+    } else if (IS(pos, whiteAlive)) {
+      return IS(pos, white) ? 'O' : IS(pos, black) ? 'y' : '0';
+    } else {
+      return IS(pos, black) ? 'x' : IS(pos, white) ? 'o' : '.';
+    }
+  }
   
   operator string() const {
     char buf[128];
@@ -326,7 +339,8 @@ public:
       for (int x = 0; x < SIZE; ++x) {
         int p = P(y, x);
         assert(!(IS(p, black) && IS(p, white)));
-        *out++ = IS(p, black) ? 'x' : IS(p, white) ? 'o' : p == koPos ? 'k' : '.';
+        *out++ = symbolAtPos(p);
+        // *out++ = IS(p, black) ? 'x' : IS(p, white) ? 'o' : p == koPos ? 'k' : '.';
       }
       *out++ = '\n';
     }
@@ -361,7 +375,7 @@ public:
     return n;
   }
 
-  void updateAlive();
+  bool updateAlive();
   Value value(int k) PURE;
   vect<u8, N+1> genMoves() PURE;
   void rotate();
@@ -449,9 +463,30 @@ u64 groupAt(int pos, u64 black) {
   return saveBlack ^ black;
 }
 
+void readGids(u64 black, u8 *gids) {
+  while (black) {
+    int pos = POP(black);
+    int gid = pos;
+    gids[pos] = gid;    
+    u64 open = 0;
+    while (true) {
+      for (int p : NEIB(pos)) {
+        if (p >= 0 && IS(p, black)) {
+          CLEAR(p, black);
+          SET(p, open);
+          gids[p] = gid;
+        }
+      }
+      if (!open) { break; }
+      pos = POP(open);
+    }
+  }
+}
+
 // update whiteAlive
-void Node::updateAlive() {
-  readGids(white, gids, readGids(black, gids, 0));
+bool Node::updateAlive() {
+  readGids(black, gids);
+  readGids(white, gids);
   u64 emptyNotSeen = INSIDE & ~(black | white | whiteAlive);
   vect<Region, 10> regions;
   while (emptyNotSeen) {
@@ -462,7 +497,9 @@ void Node::updateAlive() {
   if (u32 aliveGids = aliveGroups(regions)) {
     for (Region &r : regions) { if (r.isUnconditional(aliveGids)) { whiteAlive |= r.area; } }
     for (int gid : bits(aliveGids)) { whiteAlive |= groupAt(gid, white); }
+    return true;
   }
+  return false;
 }
 
 Value Node::value(int k) const {
@@ -479,27 +516,6 @@ Value Node::value(int k) const {
       (whiteAlive && (n = N - 2 * size(whiteAlive)) <= k) ? Value::atMost(n) :
       Value::nil();
   }
-}
-
-int readGids(u64 black, u8 *gids, int gid) {
-  while (black) {
-    int pos = POP(black);
-    gids[pos] = gid;    
-    u64 open = 0;
-    while (true) {
-      for (int p : NEIB(pos)) {
-        if (p >= 0 && IS(p, black)) {
-          CLEAR(p, black);
-          SET(p, open);
-          gids[p] = gid;
-        }
-      }
-      if (!open) { break; }
-      pos = POP(open);
-    }
-    ++gid;
-  }
-  return gid;
 }
 
 // returns captured *black* group at pos.
@@ -530,12 +546,17 @@ bool isAtari(int pos, u64 black, u64 white) {
   u64 open = 0;
   int nLibs = 0;
   while (true) {
-    for (int p : NEIB(pos)) { if (p >= 0) {
+    for (int p : NEIB(pos)) {
+      if (p >= 0) {
         if (IS(p, empty)) {
           ++nLibs;
           if (nLibs >= 2) { return false; }
+          CLEAR(p, empty);
         }
-        if (IS(p, black)) { CLEAR(p, black); SET(p, open); }
+        if (IS(p, black)) {
+          CLEAR(p, black);
+          SET(p, open);
+        }
       }
     }
     if (!open) { break; }
@@ -557,6 +578,7 @@ int Node::valueOfMove(int pos) const {
       if (IS(p, empty)) {
         ++nEmpty;
         isSuicide = false;
+        // printf("empty %d ", p); 
       } else if (IS(p, INSIDE)) {
         if (IS(p, black)) {
           ++nBlack;
@@ -564,6 +586,7 @@ int Node::valueOfMove(int pos) const {
             value += 2;
           } else {
             isSuicide = false;
+            // printf("not atari %d ", p);
           }
         } else {
           assert(IS(p, white));
@@ -571,6 +594,7 @@ int Node::valueOfMove(int pos) const {
           if (isAtari(p, white, black)) {
             value += 3;
             isSuicide = false;
+            // printf("white atari %d ", p);
           }
         }
       }
@@ -595,7 +619,7 @@ int Node::valueOfMove(int pos) const {
       }
     }
     
-      value += nEmpty;
+    value += nEmpty;
   } else {
     value += nEmpty + nBlack;
   }
@@ -812,7 +836,12 @@ void Node::playNotPass(int pos) {
       koPos = firstOf(captured);
     }
   }
-  // if (capture(pos, black, white)) { printf("pos %d ko %d\n%s\n", pos, koPos, STR(*this)); }
+  if (capture(pos, black, white)) {
+    printf("pos %d ko %d\n%s\n", pos, koPos, STR(*this));
+    CLEAR(pos, black);
+    printf("vom %d\n", valueOfMove(pos));
+    SET(pos, black);
+  }
   assert(!capture(pos, black, white));  
 }
 
@@ -848,7 +877,11 @@ Value maxMove(History &history, Node &node, int k, int depthPos, int maxDepth) {
   Value v = isPlain ? tt.get(position, k, depthPos, maxDepth) : Value::nil();
   if (v.isFinalEnough(k)) { return v; }
 
-  node.updateAlive();
+  if (depthPos >= 14) {
+    if (node.updateAlive()) {
+      // printf("Alv k %d, d %d\n%s value %s\n", k, depthPos, STR(node), STR(node.value(k)));
+    }
+  }
   v = node.value(k);
   
   if (v.isFinalEnough(k)) { return v; }
@@ -870,8 +903,8 @@ Value maxMove(History &history, Node &node, int k, int depthPos, int maxDepth) {
   assert(v.isFinalEnough(k));
   if (isPlain && !(v.isLoop() && v.depth < depthPos) && !(v.isDeeper() && depthPos >= maxDepth - 1)) {
     tt.put(position, k, depthPos, maxDepth, v);
-    if (depthPos < 10) {
-      printf("put k %d, d %d, %s\n%s\n", k, depthPos, STR(v), STR(node));
+    if (depthPos <= 5) {
+      printf("Put k %d, d %d, %s\n%s\n", k, depthPos, STR(v), STR(node));
     }
   }
   return v;
@@ -881,7 +914,7 @@ void mtdf() {
   Node node;
   int k = 0;
   History history;
-  int maxDepth = 8;
+  int maxDepth = 16;
   while (true) {
     Value v = maxMove(history, node, k, 0, maxDepth);
     printf("k %d, depth %d, %s\n", k, maxDepth, STR(v));
