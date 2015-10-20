@@ -690,6 +690,13 @@ u64 transpose(u64 stones) {
 
 u64 reflectXT(u64 stones) { return reflectY(transpose(stones)); }
 
+#define APPLY(f)                                        \
+  black = f(black);                                     \
+  white = f(white);                                     \
+  blackAlive = blackAlive ? f(blackAlive) : blackAlive; \
+  whiteAlive = whiteAlive ? f(whiteAlive) : whiteAlive;
+  
+
 void Node::rotate() {
 #define R(x) (SIZE - 1 - x)
   auto ident   = [](int p) { return p; };
@@ -708,23 +715,20 @@ void Node::rotate() {
   int D = quadrant(black, white, RyxT);
 
   if (max(C, D) > max(A, B)) {
-    black = reflectY(black);
-    white = reflectY(white);
+    APPLY(reflectY);
     koPos = (koPos >= 0) ? Ry(koPos) : koPos;
     std::swap(A, C);
     std::swap(B, D);
   }
   if (B > A) {
-    black = reflectXT(black);
-    white = reflectXT(white);
+    APPLY(reflectXT);
     koPos = (koPos >= 0) ? RxT(koPos) : koPos;
     std::swap(A, B);
     std::swap(C, D);
   }
   assert(A >= max(max(B, C), D));
   if (diagValue(black, white, T) > diagValue(black, white, ident)) {
-    black = transpose(black);
-    white = transpose(white);
+    APPLY(transpose);
     koPos = (koPos >= 0) ? T(koPos) : koPos;
   }
 }
@@ -877,7 +881,7 @@ Value maxMove(History &history, Node &node, int k, int depthPos, int maxDepth) {
   Value v = isPlain ? tt.get(position, k, depthPos, maxDepth) : Value::nil();
   if (v.isFinalEnough(k)) { return v; }
 
-  if (depthPos >= 14) {
+  if (depthPos >= 8) {
     if (node.updateAlive()) {
       // printf("Alv k %d, d %d\n%s value %s\n", k, depthPos, STR(node), STR(node.value(k)));
     }
@@ -903,7 +907,7 @@ Value maxMove(History &history, Node &node, int k, int depthPos, int maxDepth) {
   assert(v.isFinalEnough(k));
   if (isPlain && !(v.isLoop() && v.depth < depthPos) && !(v.isDeeper() && depthPos >= maxDepth - 1)) {
     tt.put(position, k, depthPos, maxDepth, v);
-    if (depthPos <= 5) {
+    if (depthPos <= 2) {
       printf("Put k %d, d %d, %s\n%s\n", k, depthPos, STR(v), STR(node));
     }
   }
@@ -914,10 +918,11 @@ void mtdf() {
   Node node;
   int k = 0;
   History history;
-  int maxDepth = 16;
+  int maxDepth = 10;
   while (true) {
     Value v = maxMove(history, node, k, 0, maxDepth);
     printf("k %d, depth %d, %s\n", k, maxDepth, STR(v));
+    break;
     if (v.isDeeper()) {
       break;
       ++maxDepth;
