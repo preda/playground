@@ -255,7 +255,6 @@ public:
 
 template<typename T> inline Bits<T> bits(T v) { return Bits<T>(v); }
 
-u64 bensonAlive(u64 black, u64 white, int *gids, u64 *shadows);
 u64 stonesBase3(u64 stones);
 int scoreEmpty(u64 empty, u64 black, u64 white);
 
@@ -286,7 +285,6 @@ class Node {
   int koPos;
   int _nPass;
   bool swapped;
-  u8 gids[48];
   
 public:
   Node(): black(0), white(0), blackAlive(0), whiteAlive(0), koPos(-1), _nPass(0), swapped(false) {}
@@ -399,7 +397,7 @@ struct Region {
   }
 };
 
-Region regionAt(int pos, u64 black, u64 blackAlive, u64 empty, u8 *gids) {
+extern inline Region regionAt(int pos, u64 black, u64 blackAlive, u64 empty, u8 *gids) {
   assert(pos >= 0 && IS(pos, empty) && !IS(pos, blackAlive));
   u64 iniActive = INSIDE & ~blackAlive;
   u64 active = iniActive;
@@ -485,12 +483,12 @@ void readGids(u64 black, u8 *gids) {
 
 // update whiteAlive
 bool Node::updateAlive() {
-  readGids(black, gids);
-  readGids(white, gids);
+  u8 whiteGids[48];
+  readGids(white, whiteGids);
   u64 emptyNotSeen = INSIDE & ~(black | white | whiteAlive);
   vect<Region, 10> regions;
   while (emptyNotSeen) {
-    Region r = regionAt(firstOf(emptyNotSeen), white, whiteAlive, emptyNotSeen, gids);
+    Region r = regionAt(firstOf(emptyNotSeen), white, whiteAlive, emptyNotSeen, whiteGids);
     emptyNotSeen &= ~r.area;
     regions.push(r);
   }
@@ -694,8 +692,7 @@ u64 reflectXT(u64 stones) { return reflectY(transpose(stones)); }
   black = f(black);                                     \
   white = f(white);                                     \
   blackAlive = blackAlive ? f(blackAlive) : blackAlive; \
-  whiteAlive = whiteAlive ? f(whiteAlive) : whiteAlive;
-  
+  whiteAlive = whiteAlive ? f(whiteAlive) : whiteAlive
 
 void Node::rotate() {
 #define R(x) (SIZE - 1 - x)
