@@ -284,14 +284,13 @@ class Node {
   u64 blackAlive, whiteAlive;
   int koPos;
   int _nPass;
-  bool swapped;
   
 public:
-  Node(): black(0), white(0), blackAlive(0), whiteAlive(0), koPos(-1), _nPass(0), swapped(false) {}
+  Node(): black(0), white(0), blackAlive(0), whiteAlive(0), koPos(-1), _nPass(0) {}
   
   Node(u64 black, u64 white, int koPos) :
     black(black), white(white), blackAlive(0), whiteAlive(0),
-    koPos(koPos), _nPass(0), swapped(false) {}
+    koPos(koPos), _nPass(0) {}
 
   Node(const char *board) : Node() {
     int y = 0;
@@ -348,7 +347,6 @@ public:
 
   bool operator==(const Node &n) {
     return black == n.black && white == n.white && koPos == n.koPos && _nPass == n._nPass;
-    // && swapped == n.swapped;
   }
   
   bool isKo() PURE { return koPos >= 0; }
@@ -361,7 +359,7 @@ public:
   
   u64 situationBits() PURE {
     assert(koPos >= -1 && _nPass >= 0);
-    return (koPos + 1) | (_nPass << 6) | (swapped ? 0x100 : 0);
+    return (koPos + 1) | (_nPass << 6);
   }
     
   Node play(int p) PURE {
@@ -382,7 +380,10 @@ private:
   void setGroup(int pos, int gid);
   void playAux(int pos);
   void playNotPass(int pos);
-  void swap() { std::swap(black, white); swapped = !swapped; }
+  void swap() {
+    std::swap(black, white);
+    std::swap(blackAlive, whiteAlive);
+  }
   int valueOfMove(int pos) PURE;
 };
 
