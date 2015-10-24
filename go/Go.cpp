@@ -38,7 +38,10 @@ enum {
   N = SIZE * SIZE,
   MAX_GROUPS = 18,
   DELTA = 8,
-  PASS = 63,
+  MOVE_PASS = 63,
+  PASS_0 = 56,
+  PASS_1 = 57,
+  PASS_2 = 58,
 };
 
 constexpr inline int P(int y, int x) { return (y << 3) + x; }
@@ -283,14 +286,13 @@ class Node {
   u64 black, white;
   u64 blackAlive, whiteAlive;
   int koPos;
-  int _nPass;
   
 public:
-  Node(): black(0), white(0), blackAlive(0), whiteAlive(0), koPos(-1), _nPass(0) {}
+  Node(): black(0), white(0), blackAlive(0), whiteAlive(0), koPos(PASS_0) {}
   
   Node(u64 black, u64 white, int koPos) :
     black(black), white(white), blackAlive(0), whiteAlive(0),
-    koPos(koPos), _nPass(0) {}
+    koPos(koPos) {}
 
   Node(const char *board) : Node() {
     int y = 0;
@@ -337,7 +339,6 @@ public:
         int p = P(y, x);
         assert(!(IS(p, black) && IS(p, white)));
         *out++ = symbolAtPos(p);
-        // *out++ = IS(p, black) ? 'x' : IS(p, white) ? 'o' : p == koPos ? 'k' : '.';
       }
       *out++ = '\n';
     }
@@ -346,11 +347,9 @@ public:
   }
 
   bool operator==(const Node &n) {
-    return black == n.black && white == n.white && koPos == n.koPos && _nPass == n._nPass;
+    return black == n.black && white == n.white && koPos == n.koPos;
   }
   
-  bool isKo() PURE { return koPos >= 0; }
-  int nPass() PURE { return _nPass; }
   u64 getBlack() PURE { return black; }
   u64 getWhite() PURE { return white; }
   int getKoPos() PURE { return koPos; }
@@ -358,8 +357,8 @@ public:
   u64 positionBits() PURE { return (stonesBase3(black) << 1) + stonesBase3(white); }
   
   u64 situationBits() PURE {
-    assert(koPos >= -1 && _nPass >= 0);
-    return (koPos + 1) | (_nPass << 6);
+    assert(koPos >= 0 && koPos <= PASS_2);
+    return koPos;
   }
     
   Node play(int p) PURE {
@@ -502,8 +501,7 @@ bool Node::updateAlive() {
 }
 
 Value Node::value(int k) const {
-  assert(nPass() <= 2);
-  if (nPass() >= 2) {
+  if (koPos == PASS_2) {
     u64 emptyUnsettled = INSIDE & ~(black | white | blackAlive | whiteAlive);
     int scoreUnsettled = scoreEmpty(emptyUnsettled, black, white);
     int score = scoreUnsettled + size(black | blackAlive) - size(white | whiteAlive);
@@ -626,21 +624,20 @@ int Node::valueOfMove(int pos) const {
 }
   
 vect<u8, N+1> Node::genMoves() const {
-  assert(nPass() < 2);
-  assert(!(nPass() && koPos >= 0));
+  assert(koPos < PASS_2);
   int tmp[N];
   int n = 0;    
   u64 moves = (INSIDE & ~(black | white) & ~(blackAlive | whiteAlive));
-  if (koPos >= 0) { CLEAR(koPos, moves); }    
+  if (koPos < PASS_0) { CLEAR(koPos, moves); }    
   for (int p : bits(moves)) {
     if (int v = valueOfMove(p)) { tmp[n++] = (v << 8) | p; }
     // if (!canPlay(p, black, white)) { CLEAR(p, moves); }
   }
   std::sort(tmp, tmp + n);
   vect<u8, N+1> ret;
-  if (nPass() == 1) { ret.push(PASS); }
+  if (koPos == PASS_1) { ret.push(MOVE_PASS); }
   for (int *p = tmp + n - 1; p >= tmp; --p) { ret.push(*p & 0xff); }
-  if (nPass() == 0) { ret.push(PASS); }
+  if (koPos != PASS_1) { ret.push(MOVE_PASS); }
   return ret;
 }
 
@@ -714,20 +711,20 @@ void Node::rotate() {
 
   if (max(C, D) > max(A, B)) {
     APPLY(reflectY);
-    koPos = (koPos >= 0) ? Ry(koPos) : koPos;
+    koPos = (koPos < PASS_0) ? Ry(koPos) : koPos;
     std::swap(A, C);
     std::swap(B, D);
   }
   if (B > A) {
     APPLY(reflectXT);
-    koPos = (koPos >= 0) ? RxT(koPos) : koPos;
+    koPos = (koPos < PASS_0) ? RxT(koPos) : koPos;
     std::swap(A, B);
     std::swap(C, D);
   }
   assert(A >= max(max(B, C), D));
   if (diagValue(black, white, T) > diagValue(black, white, ident)) {
     APPLY(transpose);
-    koPos = (koPos >= 0) ? T(koPos) : koPos;
+    koPos = (koPos < PASS_0) ? T(koPos) : koPos;
   }
 }
 
@@ -811,10 +808,6 @@ bool canPlay(int pos, u64 black, u64 white) {
 }
 
 void Node::playNotPass(int pos) {
-  assert(pos >= 0 && pos != koPos && IS(pos, INSIDE & ~(black|white)));
-  // assert(canPlay(pos, black, white));
-  
-  _nPass = 0;
   bool maybeKo = true;
   u64 captured = 0;
   SET(pos, black);
@@ -831,7 +824,6 @@ void Node::playNotPass(int pos) {
       }
     }
   }
-  koPos = -1;
   if (captured) {
     white &= ~captured;
     if (maybeKo && size(captured) == 1) {
@@ -848,15 +840,17 @@ void Node::playNotPass(int pos) {
 }
 
 void Node::playAux(int pos) {
-  assert(!(isKo() && nPass()));  // Can't have Ko after pass.
-  if (pos == PASS) {
-    if (isKo()) {
-      koPos = -1;
+  if (pos == MOVE_PASS) {
+    if (koPos < PASS_0) {
+      koPos = PASS_0;
     } else {
-      assert(nPass() <= 1);
-      ++_nPass;
+      assert(koPos < PASS_2);
+      ++koPos;
     }
   } else {
+    assert(pos >= 0 && pos != koPos);
+    assert(IS(pos, INSIDE & ~(black|white)));
+    koPos = PASS_0;
     playNotPass(pos);
   }
 }
@@ -868,7 +862,7 @@ Value maxMove(History &history, Node &node, int k, int depthPos, int maxDepth) {
   u64 position  = node.positionBits();
   u64 sbits = node.situationBits();
   u128 situation = (((u128) sbits) << 64) | position;
-  bool isPlain = !node.isKo() && !node.nPass();
+  bool isPlain = (node.getKoPos() == PASS_0);
 
   int historyPos = history.pos(situation);
   if (historyPos >= 0) {
@@ -887,7 +881,7 @@ Value maxMove(History &history, Node &node, int k, int depthPos, int maxDepth) {
   v = node.value(k);
   
   if (v.isFinalEnough(k)) { return v; }
-  assert(node.nPass() < 2);
+  assert(node.koPos < PASS_2);
   if (depthPos >= maxDepth) { return Value::deeper(); }
 
   history.push(situation);
@@ -895,7 +889,7 @@ Value maxMove(History &history, Node &node, int k, int depthPos, int maxDepth) {
   auto moves = node.genMoves();
   v = Value::nil();
   for (int move : moves) {
-    if (move == PASS && depthPos == 0) { continue; } // avoid initial PASS.
+    if (move == MOVE_PASS && depthPos == 0) { continue; } // avoid initial PASS.
     Node sub = node.play(move);
     Value subValue = maxMove(history, sub, -k-1, depthPos + 1, maxDepth).negate();
     v.accumulate(subValue, k);
