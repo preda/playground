@@ -24,7 +24,6 @@ inline int firstOf(u32 bits) { assert(bits); return __builtin_ctz(bits);   }
 inline int size(u64 bits) { return __builtin_popcountll(bits); }
 inline int size(u32 bits) { return __builtin_popcount(bits); }
 
-
 inline bool IS(int p, u64 bits) { assert(p >= 0 && p < 64); return bits & (1ull << p); }
 inline void SET(int p, u64 &bits) { assert(p >= 0 && p < 64); bits |= (1ull << p); }
 inline void SET(int p, u32 &bits) { assert(p >= 0 && p < 32); bits |= (1 << p); }
@@ -66,128 +65,19 @@ enum {
   INSIDE = insidePoints(),
 };
 
-class Value {  
-  enum Kind {AT_LEAST, AT_MOST, DEEPER, LOOP, NIL};
-
-  static Kind negateKind(Kind kind) { return (kind == AT_MOST) ? AT_LEAST : ((kind == AT_LEAST) ? AT_MOST : kind); }
-
-  Value(Kind kind, int v, int depth): kind(kind), v(v), depth(depth) {}
-  
-public:
-  Kind kind;
-  int v;
-  int depth;
-
-  static Value loop(int depth) { return Value(LOOP, 0, depth); }
-  static Value nil()    { return Value(NIL, 0, 0); }
-  static Value deeper() { return Value(DEEPER, 0, 0); }
-  static Value atMost(int k)  { return Value(AT_MOST, k, 0); }
-  static Value atLeast(int k) { return Value(AT_LEAST, k, 0); }
-
-  static const char *kindName(Kind kind) {
-    switch (kind) {
-    case AT_LEAST: return "at least";
-    case AT_MOST: return "at most";
-    case DEEPER: return "deeper";
-    case LOOP: return "loop";
-    case NIL: return "nil";
-    default: return "?";
-    }
-  }
-  
-  operator string() const {
-    char buf[64];
-    snprintf(buf, sizeof(buf), "V(%s, %d, %d)", kindName(kind), v, depth);
-    return buf;
-  }
-
-  bool operator==(const Value &o) { return kind == o.kind && v == o.v && depth == o.depth; }
-  
-  bool isAtLeast(int k) PURE { return kind == AT_LEAST && v >= k; }
-  bool isAtMost(int k)  PURE { return kind == AT_MOST  && v <= k; }
-  bool isDeeper()       PURE { return kind == DEEPER; }
-  bool isLoop()         PURE { return kind == LOOP; }
-  bool isNil()          PURE { return kind == NIL; }
-  
-  bool isFinalEnough(int k) PURE { return isDeeper() || isAtLeast(k + 1) || isAtMost(k) || isLoop(); }
-  bool isCut(int k) PURE { return isAtLeast(k + 1); }
-
-  Value negate() PURE { return Value(negateKind(kind), -v, depth); }
-
-  void accumulate(const Value &sub, int k) {
-    assert(!isCut(k));
-    if (sub.isCut(k) || sub.isDeeper() || isNil()) {
-      *this = sub;
-    } else if (!isDeeper()) {
-      if (isLoop() || sub.isLoop()) {
-        *this = loop(min(depth, sub.depth));
-      } else {
-        assert(sub.kind == AT_MOST && kind == AT_MOST);
-        v = max(v, sub.v);  // atMost(max(v, sub.v));
-      }
-    }
-  }
-
-  Value fromTT(int k, int d) PURE {
-    return
-      (kind == DEEPER && v == k && depth >= d) ? Value::deeper() :
-      (kind == AT_LEAST && v > k)  ? Value::atLeast(v) :
-      (kind == AT_MOST  && v <= k) ? Value::atMost(k)  :
-      (kind == LOOP && v == k)     ? Value::loop(256)  :
-      Value::nil();
-  }
-
-  Value toTT(int k, int d) PURE {
-    assert(!isNil());
-    return
-      isDeeper() ? Value{DEEPER, k, d} :
-      isLoop()   ? Value{LOOP,   k, 0} :
-      *this;
-      // isNil()    ? Value{AT_LEAST, -64, 0} :
-  }
-
-private:
-  union PackedValue {    
-    u16 bits;
-    struct {
-      unsigned kind:2;
-      unsigned value:7;
-      unsigned depth:7;
-    };
-    
-    PackedValue(const Value &v): kind(v.kind), value(v.v + 64), depth(v.depth) {}
-    PackedValue(u16 bits): bits(bits) {}
-
-    Value unpack() { return Value((Kind)kind, value - 64, depth); }
-  };
-
-public:
-  u32 pack() PURE { return PackedValue(*this).bits; }
-  static Value unpack(u16 bits) { return PackedValue(bits).unpack(); }
-};
-
 class Transtable {
-#define SLOTS_BITS 34
-  // 128GB : u64[1ull << SLOTS_BITS]
-  u64 *slots; 
-
-  class Data {
-  public:
-    Value up, down;
-    
-    Data(u32 data) : up(Value::unpack(data >> 16)), down(Value::unpack((u16) data)) {}
-    
-    Value getValue(int k, int depth) {
-      Value v = up.fromTT(k, depth);
-      return v.isNil() ? down.fromTT(k, depth) : v;
-    }
-
-    static u64 pack(Value up, Value down) { return (up.pack() << 16) | down.pack(); }
-  };
-  
+#define HASH_BITS 58
+#define SLOTS_BITS 35
+#define BLOCK_BITS 32
+#define LOCK_BITS 26
+#define LOCK_MASK ((1 << LOCK_BITS) - 1)
+#define NOT_FOUND (-128)
+  // 128GB == 2^37 == u32[1 << 35]
+  u32 *slots;
+  int counter = 0;
 public:
   Transtable() {
-    slots = (u64 *) calloc(1<<(SLOTS_BITS - 17), 1<<20);
+    slots = (u32 *) calloc(1 << 25, 1 << 12);
     assert(slots);
   }
 
@@ -196,46 +86,60 @@ public:
     slots = 0;
   }
   
-  Value get(u64 h, int k, int depthPos, int maxDepth) {
-    assert(depthPos <= maxDepth);
-    u64 slot = slots[h >> (64 - SLOTS_BITS)];
-    if ((u32) slot != (u32) h) { return Value::nil(); }
-    return Data(slot >> 32).getValue(k, maxDepth - depthPos);
+  int get(u64 hash) {
+    /* hash has 58 bits. Lower 26 bits form the 'lock', and the higher 32 form the block index.
+       A slot has 4bytes. 8 consecutive slots form a block.
+       A slot matches if its lower 26 bits match the lock.
+    */
+    
+    assert((hash >> HASH_BITS) == 0);  // no more than HASH_BITS
+    u32 lock = ((u32) hash) & LOCK_MASK;
+    for (u32 *p = slots + ((hash >> 26) << 3), *end = p + 8; p < end && *p; ++p) {
+      if ((*p & LOCK_MASK) == lock) { return (*p >> LOCK_BITS) - 32; }
+    }
+    return NOT_FOUND;
   }
 
-  void put(u64 h, int k, int depthPos, int maxDepth, Value value) {
-    assert(depthPos < maxDepth);
-    assert(!value.isNil());
-    assert(!(value.isLoop() && value.depth < depthPos));
-    u64 slot = slots[h >> (64 - SLOTS_BITS)];
-    bool isMatch = (u32) slot == (u32) h;
-    Data data(slot >> 32);
-    Value ttv = value.toTT(k, maxDepth - depthPos);
-    Value up   = (k >= 0) ? ttv : (isMatch ? data.up   : Value::nil());
-    Value down = (k < 0)  ? ttv : (isMatch ? data.down : Value::nil());
-    slots[h >> (64 - SLOTS_BITS)] = (Data::pack(up, down) << 32) | (u32) h;
+  void put(u64 hash, int value) {
+    assert((hash >> HASH_BITS) == 0);
+    assert(value >= -31 && value <= 31);
+    u32 lock = ((u32) hash) & LOCK_MASK;
+    u32 newSlot = ((value + 32) << LOCK_BITS) | lock;
+    u32 *block = slots + ((hash >> 26) << 3);
+    for (u32 *p = block, *end = p + 8; p < end; ++p) {
+      if ((*p == 0) || ((*p & LOCK_MASK) == lock)) {
+        int oldValue = (*p >> LOCK_BITS) - 32;
+        assert(value != oldValue);
+        // printf("%d %d\n", oldValue, value);
+        assert(oldValue == -32 || value == 0 || (oldValue > 0 && value > oldValue) || (oldValue < 0 && value < oldValue));
+        *p = newSlot;
+        return;
+      }
+    }
+    block[counter] = newSlot;
+    counter = (counter + 1) & 7;
   }
 };
 
 class History {
-  struct HistHash { size_t operator()(u128 key) const { return (size_t) key; } };
+  // struct HistHash { size_t operator()(u128 key) const { return (size_t) key; } };
   
-  std::unordered_map<u128, int, HistHash> map;
+  std::unordered_map<u64, int> map;
   int level;
   
 public:
   History(): level(0) {} 
   
-  int pos(u128 key) {
+  int pos(u64 key) {
     auto it = map.find(key);
     return (it == map.end()) ? -1 : it->second;
   }
 
-  void push(u128 key) { map[key] = level++; }
+  void push(u64 key, int depth) { assert(depth == level); map[key] = level++; }
 
-  void pop(u128 key) {
+  void pop(u64 key, int depth) {
     --level;
-    assert(map[key] == level);
+    assert(map[key] == level && depth == level);
     map.erase(key);
   }
 };
@@ -354,11 +258,11 @@ public:
   u64 getWhite() PURE { return white; }
   int getKoPos() PURE { return koPos; }
   
-  u64 positionBits() PURE { return (stonesBase3(black) << 1) + stonesBase3(white); }
-  
-  u64 situationBits() PURE {
+  u64 position() PURE {
+    u64 smallPosition = (stonesBase3(black) << 1) + stonesBase3(white);
+    assert(!(smallPosition >> 58));
     assert(koPos >= 0 && koPos <= PASS_2);
-    return koPos;
+    return (((u64) koPos) << 58) | smallPosition;
   }
     
   Node play(int p) PURE {
@@ -371,7 +275,7 @@ public:
   }
 
   bool updateAlive();
-  Value value(int k) PURE;
+  int value(int k) PURE;
   vect<u8, N+1> genMoves() PURE;
   void rotate();
   
@@ -500,18 +404,20 @@ bool Node::updateAlive() {
   return false;
 }
 
-Value Node::value(int k) const {
+int Node::value(int k) const {
+  k = abs(k);
   if (koPos == PASS_2) {
     u64 emptyUnsettled = INSIDE & ~(black | white | blackAlive | whiteAlive);
     int scoreUnsettled = scoreEmpty(emptyUnsettled, black, white);
     int score = scoreUnsettled + size(black | blackAlive) - size(white | whiteAlive);
-    return (score > k) ? Value::atLeast(score) : Value::atMost(score);
+    return (score >= k || score <= -k) ? score : 0;
   } else {
-    int n;
-    return
-      (blackAlive && (n = 2 * size(blackAlive) - N) > k) ? Value::atLeast(n) :
-      (whiteAlive && (n = N - 2 * size(whiteAlive)) <= k) ? Value::atMost(n) :
-      Value::nil();
+    int atLeast = 2 * size(blackAlive) - N;
+    if (atLeast >= k) { return atLeast; }    
+    int atMost = N - 2 * size(whiteAlive);
+    if (atMost <= -k) { return atMost; }
+    if (atMost < k && atLeast > -k) { return 0; }
+    return -128;
   }
 }
 
@@ -855,74 +761,96 @@ void Node::playAux(int pos) {
   }
 }
 
+bool isFinalEnough(int v, int k) {
+  return v != NOT_FOUND
+    && ((k < 0 && (v <= k || v >= 0))
+        || (k > 0 && (v >= k || v <= 0)));
+}
+
+bool isCut(int v, int k) {
+  return (v > k) || (k > 0 && v >= k);
+}
+
 Transtable tt;
 
-Value maxMove(History &history, Node &node, int k, int depthPos, int maxDepth) {
-  assert(depthPos <= maxDepth);
-  u64 position  = node.positionBits();
-  u64 sbits = node.situationBits();
-  u128 situation = (((u128) sbits) << 64) | position;
-  bool isPlain = (node.getKoPos() == PASS_0);
-
-  int historyPos = history.pos(situation);
+int maxMove(History &history, Node &node, int k, int depth, int *outCacheAt) {
+  u64 bigPosition  = node.position();
+  
+  *outCacheAt = 1024;
+  
+  int historyPos = history.pos(bigPosition);
   if (historyPos >= 0) {
-    assert(historyPos < depthPos);
-    return Value::loop(historyPos);
+    assert(depth > historyPos);
+    // if (!((depth - historyPos) & 1)) {
+    *outCacheAt =  historyPos;
+    // }    
+    return 0;
   }
-  
-  Value v = isPlain ? tt.get(position, k, depthPos, maxDepth) : Value::nil();
-  if (v.isFinalEnough(k)) { return v; }
 
-  if (depthPos >= 8) {
-    if (node.updateAlive()) {
-      // printf("Alv k %d, d %d\n%s value %s\n", k, depthPos, STR(node), STR(node.value(k)));
-    }
+  printf("depth %d hash %lx\n%s\n", depth, bigPosition, STR(node));
+  
+  u64 smallPosition = bigPosition & ((1ull << 58) - 1);
+  bool isPlain = (node.getKoPos() == PASS_0);
+  if (isPlain) {    
+    int v = tt.get(smallPosition);
+    if (isFinalEnough(v, k)) { return v; }
   }
-  v = node.value(k);
-  
-  if (v.isFinalEnough(k)) { return v; }
-  assert(node.koPos < PASS_2);
-  if (depthPos >= maxDepth) { return Value::deeper(); }
 
-  history.push(situation);
+  node.updateAlive();
+  // printf("Alv k %d, d %d\n%s value %s\n", k, depth, STR(node), STR(node.value(k)));
+  
+  int v = node.value(k);
+  if (isFinalEnough(v, k)) {
+    if (isPlain) { tt.put(smallPosition, v); }
+    return v;
+  }
+
+  // if (node.getKoPos() >= PASS_2) { printf("v %d k %d\n%s\n", v, k, STR(node)); }
+  assert(node.getKoPos() < PASS_2);
+  
+  history.push(bigPosition, depth);
 
   auto moves = node.genMoves();
-  v = Value::nil();
+  v = -128;
+  int cacheAt = 1024;
   for (int move : moves) {
-    if (move == MOVE_PASS && depthPos == 0) { continue; } // avoid initial PASS.
+    if (depth == 0 && move == MOVE_PASS) { continue; } // avoid initial PASS.
     Node sub = node.play(move);
-    Value subValue = maxMove(history, sub, -k-1, depthPos + 1, maxDepth).negate();
-    v.accumulate(subValue, k);
-    if (v.isCut(k)) { break; }
-  }
-  history.pop(situation);
-  assert(v.isFinalEnough(k));
-  if (isPlain && !(v.isLoop() && v.depth < depthPos) && !(v.isDeeper() && depthPos >= maxDepth - 1)) {
-    tt.put(position, k, depthPos, maxDepth, v);
-    if (depthPos <= 2) {
-      printf("Put k %d, d %d, %s\n%s\n", k, depthPos, STR(v), STR(node));
+    int subCacheAt = 1024;
+    int subValue = -maxMove(history, sub, -k, depth + 1, &subCacheAt);
+    if (isCut(subValue, k)) {
+      if (!isCut(v, k) || subCacheAt > cacheAt) {
+        v = subValue;
+        cacheAt = subCacheAt;
+      }
+      if (cacheAt == 1024) { break; }
+    } else if (!isCut(v, k)) {
+      v = max(v, subValue);
+      cacheAt = min(cacheAt, subCacheAt);
     }
   }
+  
+  history.pop(bigPosition, depth);
+  assert(isFinalEnough(v, k));
+  if (isPlain && depth <= cacheAt) {
+    printf("tt put depth %d v %d\n%s\n", depth, v, STR(node));
+    tt.put(smallPosition, v);
+  }
+  // if (depth <= 2) { printf("Put k %d, d %d, %s\n%s\n", k, depth, STR(v), STR(node)); }
+  *outCacheAt = cacheAt;
   return v;
 }
 
 void mtdf() {
   Node node;
-  int k = 0;
+  int k = 1;
   History history;
-  int maxDepth = 10;
   while (true) {
-    Value v = maxMove(history, node, k, 0, maxDepth);
-    printf("k %d, depth %d, %s\n", k, maxDepth, STR(v));
-    break;
-    if (v.isDeeper()) {
-      break;
-      ++maxDepth;
-    } else if (v.isLoop()) {
-      ++k;
-    } else if (v.isAtLeast(k + 1)) {
-      k = v.v;
-      if (k >= N) { break; }
+    int cacheAt = 1024;
+    int v = maxMove(history, node, k, 0, &cacheAt);
+    printf("k %d, cacheAt %d, value %d\n", k, cacheAt, v);
+    if (v >= k) {
+      k = v + 1;
     } else {
       break;
     }
@@ -932,6 +860,9 @@ void mtdf() {
 bool testAll();
 
 int main() {
+  Node n(0x3f3f3f3f3f3full, 0, PASS_0);
+  printf("%lx\n", n.position());
+  
   assert(testAll());
   mtdf();
 }
@@ -962,6 +893,7 @@ void testBasics() {
   assert(Y(10) == 1);
 }
 
+/*
 void testValue() {
   Value v = Value::nil();
   assert(v.isNil() && !v.isLoop() && !v.isAtLeast(0) && !v.isAtMost(0) && !v.isDeeper());
@@ -997,6 +929,7 @@ void testValue() {
   assert(tt.get(h, -1, 3, 20).isNil());
   assert(tt.get(h, -3, 3, 20).isAtLeast(-2));
 }
+*/
 
 u64 fromString(const char *s) {
   u64 stones = 0;
@@ -1105,7 +1038,7 @@ bool testAll() {
   */
 
   testBasics();
-  testValue();
+  // testValue();
   testBenson();
   testCanPlay();
   testRotate();

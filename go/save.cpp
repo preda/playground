@@ -1,3 +1,180 @@
+/*
+union TTValue {
+  u16 bits;
+  struct {
+    int v:8;
+    bool inside:1;
+    unsigned a:7;
+  };
+
+  Value getValue(
+};
+*/
+
+class Value {  
+  Value(Kind kind, int v, int limit): kind(kind), v(v), limit(limit) {}
+  Value(Kind kind, int v): Value(kind, v, 256);
+  
+public:
+  int v;
+
+  static Value nil()    { return Value(NIL, 0); }
+  static Value deeper() { return Value(DEEPER, 0); }
+  // static Value atMost(int k)  { return Value(AT_MOST, k); }
+  // static Value atLeast(int k) { return Value(AT_LEAST, k); }
+
+  static const char *kindName(Kind kind) {
+    switch (kind) {
+      // case OUTSIDE: return "outside";
+      // case INSIDE: return "inside";
+      //case AT_LEAST: return "at least";
+      //case AT_MOST: return "at most";
+    case NORMAL: return "";
+    case DEEPER: return "deeper";
+      // case LOOP: return "loop";
+    case NIL: return "nil";
+    default: return "?";
+    }
+  }
+  
+  operator string() const {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "V(%s, %d, %d)", kindName(kind), v, limit);
+    return buf;
+  }
+
+  // bool operator==(const Value &o) { return kind == o.kind && v == o.v && limit == o.limit; }
+  
+  bool isAtLeast(int k) PURE {
+    assert(k != 0);
+    return (k > 0) ? (kind == OUTSIDE && v >= k) : ((kind == OUTSIDE && v > 0) || (kind == INSIDE && v <= 0 && v >= k-1));
+  }
+
+  bool isAtMost(int k)  PURE {
+    assert(k != 0);
+    return (k > 0) ? ((kind == OUTSIDE && v < 0) || (kind == INSIDE && v >= 0 && v <= k+1)) : (kind == OUTSIDE && v <= k);
+  }
+
+  bool isDeeper()       PURE { return kind == DEEPER; }
+  bool isNil()          PURE { return kind == NIL; }
+  
+  bool isFinalEnough(int k) PURE { return isDeeper() || isAtLeast(k + 1) || isAtMost(k); }
+  bool isCut(int k) PURE { return isAtLeast(k + 1); }
+
+  Value negate() PURE { return Value(kind, -v, limit); }
+
+  void accumulate(const Value &sub, int k) {
+    assert(!isCut(k));
+
+    
+    
+    if (sub.isCut(k) || isNil()) {
+      *this = sub;
+    } else {
+      limit = min(limit, sub.limit);
+      if (sub.isDeeper()) {
+        *this = sub;
+      } else if(!isDeeper()) {
+        
+      }
+    }
+    
+    if (sub.isCut(k) || sub.isDeeper() || isNil()) {
+      *this = sub;
+    } else if (!isDeeper()) {
+      assert(sub.kind == AT_MOST && kind == AT_MOST);
+      v = max(v, sub.v);  // atMost(max(v, sub.v));
+    }
+  }
+
+  void max(const Value &old) {
+    if (old.isNil() || old.isDeeper() || isDeeper()) { return; }
+    assert(kind == AT_LEAST || kind == AT_MOST);
+    assert(old.kind == AT_LEAST || old.kind == AT_MOST);
+    if (kind == AT_LEAST && old.kind == AT_LEAST) {
+      v = max(v, old.v);
+    } else if (kind == AT_MOST && old.kind == AT_MOST) {
+      v = min(v, old.v);
+    } else {
+      assert(kind != old.kind);
+      if (kind == AT_LEAST) {
+        assert(v <= old.v && v < 0);
+      } else {
+        assert(old.v <= v && v > 0);
+      }
+      v = 0;  // marker: between -k and k.
+    }
+  }
+
+  static Value and(Value a, Value b) {
+    
+  }
+
+  Value fromTT(int k, int d) PURE {
+    return
+      (kind == DEEPER && v == k && depth >= d) ? Value::deeper() :
+      (kind == AT_LEAST && v > k)  ? Value::atLeast(v) :
+      (kind == AT_MOST  && v <= k) ? Value::atMost(k)  :
+      //      (kind == LOOP && v == k)     ? Value::loop(256)  :
+      Value::nil();
+  }
+
+  Value toTT(int k, int d) PURE {
+    assert(!isNil());
+    return
+      isDeeper() ? Value{DEEPER, k, d} :
+    // isLoop()   ? Value{LOOP,   k, 0} :
+      *this;
+      // isNil()    ? Value{AT_LEAST, -64, 0} :
+  }
+
+private:
+  union PackedValue {    
+    u16 bits;
+    struct {
+      unsigned kind:2;
+      unsigned value:7;
+      unsigned depth:7;
+    };
+    
+    PackedValue(const Value &v): kind(v.kind), value(v.v + 64), depth(v.depth) {
+      assert(v.kind >= 0 && v.kind < 4 && v.depth < 128);
+    }
+    PackedValue(u16 bits): bits(bits) {}
+
+    Value unpack() { return Value((Kind)kind, value - 64, depth); }
+  };
+
+public:
+  u32 pack() PURE { return PackedValue(*this).bits; }
+  static Value unpack(u16 bits) { return PackedValue(bits).unpack(); }
+};
+
+union Packed {
+  u16 bits;
+  struct {
+    unsigned kind:2;
+    unsigned a:7;
+    unsigned b:7;
+  };
+};
+
+u16 pack(unsigned kind, unsigned a, unsigned b) {
+  Packed p{.kind=kind, .a=a, .b=b};
+  return p.bits;
+}
+
+
+
+
+
+
+
+
+
+
+
+
 u32 aliveGroups(vect<Region, 10> &regions) {
   while (true) {
     u32 alive = 0;
