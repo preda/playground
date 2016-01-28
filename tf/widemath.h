@@ -16,9 +16,15 @@ struct U6 { u32 a, b, c, d, e, f; };
 
 DEVICE U6 _U6(U3 x)  { return (U6) {x.a, x.b, x.c, 0, 0, 0}; }
 DEVICE U5 _U5(U4 x)  { return (U5) {x.a, x.b, x.c, x.d, 0}; }
+DEVICE U4 _U4(U3 x)  { return (U4) {x.a, x.b, x.c, 0}; }
 DEVICE U6 _U6(U5 x)  { return (U6) {x.a, x.b, x.c, x.d, x.e, 0}; }
 DEVICE U6 _U6(U4 x)  { return _U6(_U5(x)); }
 DEVICE U2 _U2(u64 x) { return (U2) {(u32) x, (u32) (x >> 32)}; }
+DEVICE u64 _u64(U2 x) { return (((u64) x.b) << 32) | x.a; }
+
+DEVICE U3 operator~(U3 x) {
+  return (U3) {~x.a, ~x.b, ~x.c};
+}
 
 DEVICE U5 operator+(U5 x, U3 y) {
  u32 a, b, c, d, e;
@@ -53,6 +59,38 @@ DEVICE U3 operator+(U3 x, U3 y) {
       : "r"(x.a), "r"(x.b), "r"(x.c),
         "r"(y.a), "r"(y.b), "r"(y.c));
   return (U3) {a, b, c};
+}
+
+DEVICE U3 operator+(U3 x, U2 y) {
+  u32 a, b, c;
+  asm("add.cc.u32  %0, %3, %6;"
+      "addc.cc.u32 %1, %4, %7;"
+      "addc.u32    %2, %5, 0;"
+      : "=r"(a), "=r"(b), "=r"(c)
+      : "r"(x.a), "r"(x.b), "r"(x.c),
+        "r"(y.a), "r"(y.b));
+  return (U3) {a, b, c};
+}
+
+DEVICE U3 operator+(U3 x, u32 y) {
+  u32 a, b, c;
+  asm("add.cc.u32  %0, %3, %6;"
+      "addc.cc.u32 %1, %4, 0;"
+      "addc.u32    %2, %5, 0;"
+      : "=r"(a), "=r"(b), "=r"(c)
+      : "r"(x.a), "r"(x.b), "r"(x.c),
+        "r"(y));
+  return (U3) {a, b, c};
+}
+
+DEVICE U2 operator+(U2 x, u32 y) {
+  u32 a, b;
+  asm("add.cc.u32  %0, %2, %4;"
+      "addc.u32 %1, %3, 0;"
+      : "=r"(a), "=r"(b)
+      : "r"(x.a), "r"(x.b),
+        "r"(y));
+  return (U2) {a, b};
 }
 
 DEVICE U3 operator-(U3 x, U3 y) {
@@ -133,9 +171,52 @@ DEVICE U3 mulLow(U3 x, u32 n) {
   return (U3) {a, b, c};
 }
 
+DEVICE U3 mulLow(U3 x, U3 y) {
+  u32 a, b, c;
+  asm(
+      "mul.lo.u32    %2, %5, %6;"
+      "mul.lo.u32    %0, %3, %6;"
+      "mad.lo.u32    %2, %3, %8, %2;"      
+      "mul.hi.u32    %1, %3, %6;"
+      "mad.lo.u32    %2, %4, %7, %2;"
+      "mad.lo.cc.u32 %1, %4, %6, %1;"
+      "madc.hi.u32   %2, %4, %6, %2;"
+      "mad.lo.cc.u32 %1, %3, %7, %1;"
+      "madc.hi.u32   %2, %3, %7, %2;"
+      : "=r"(a), "=r"(b), "=r"(c)
+      : "r"(x.a), "r"(x.b), "r"(x.c),
+        "r"(y.a), "r"(y.b), "r"(y.c));
+  return (U3) {a, b, c};
+}
+
+// 9 MULs. Disregards carry from lower (not computed) digits, thus has an error of at most 4.
+DEVICE U3 shr3wMul(U3 x, U3 y) {
+  u32 a, b, c;
+  asm(
+      "mul.hi.u32     %0, %5, %6;"
+      "mad.lo.cc.u32  %0, %5, %7, %0;"
+      "addc.u32       %1, 0, 0;"
+
+      "mad.lo.cc.u32  %0, %4, %8, %0;"
+      "madc.hi.u32    %1, %5, %7, %1;"
+
+      "mad.hi.cc.u32  %0, %3, %8, %0;"
+      "madc.lo.cc.u32 %1, %5, %8, %1;"
+      "madc.hi.u32    %2, %5, %8, 0;"
+
+      "mad.hi.cc.u32  %0, %4, %7, %0;"
+      "madc.hi.cc.u32 %1, %4, %8, %1;"
+      "addc.u32       %2, %2, 0;"
+      : "=r"(a), "=r"(b), "=r"(c)
+      : "r"(x.a), "r"(x.b), "r"(x.c),
+        "r"(y.a), "r"(y.b), "r"(y.c));
+  return (U3) {a, b, c};
+}
+
 DEVICE U5 shr1w(U6 x) { return (U5) {x.b, x.c, x.d, x.e, x.f}; }
 DEVICE U4 shr1w(U5 x) { return (U4) {x.b, x.c, x.d, x.e}; }
 DEVICE U3 shr1w(U4 x) { return (U3) {x.b, x.c, x.d}; }
+DEVICE U2 shr1w(U3 x) { return (U2) {x.b, x.c}; }
 
 // Funnel shift left.
 DEVICE u32 shl(u32 a, u32 b, int n) {

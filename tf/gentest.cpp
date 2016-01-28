@@ -10,7 +10,7 @@ int main() {
 #include "selfraw.c"
   printf("Test tests[] = {\n");
   for (int i = 0; i < N; ++i) {
-    if (bit_min[i] >= 64 && bit_min[i] <= 93) {
+    if (bit_min[i] >= 64 && bit_min[i] <= 76) {
       printf("{%10u, %22lluull},\n", exp[i], k[i]);
     }
   }

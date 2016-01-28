@@ -79,20 +79,6 @@ __managed__ u64 foundFactor;  // If a factor k is found, save it here.
 DEVICE u32 invTab[NPRIMES];
 DEVICE int btcTab[NPRIMES];
 
-// returns (x*n >> 32) + (n ? 1 : 0). Used for Montgomery reduction. 5 MULs.
-DEVICE U3 mulM(U3 x, u32 n) {
-  u32 a, b, c;
-  asm("add.cc.u32     %0, 0xffffffff, %6;" // set carry = n
-      "mul.hi.u32     %0, %3, %6;"
-      "mul.lo.u32     %1, %5, %6;"
-      "madc.lo.cc.u32 %0, %4, %6, %0;"
-      "madc.hi.cc.u32 %1, %4, %6, %1;"
-      "madc.hi.u32    %2, %5, %6, 0;"
-      : "=r"(a), "=r"(b), "=r"(c)
-      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(n));
-  return (U3) {a, b, c};
-}
-
 // returns x * x; 6 MULs.
 DEVICE U4 square(U2 x) {
   u32 a, b, c, d;
@@ -112,134 +98,173 @@ DEVICE U4 square(U2 x) {
   return (U4) {a, b, c, d};
 }
 
-// returns x * x; 12 MULs.
-DEVICE U6 square(U3 x) {
+// X at most 79bits. Computes x * x; 11 MULs.
+DEVICE U5 square(U3 x) {
+  assert(!(x.c & 0xffff8000));
   U2 ab = {x.a, x.b};
   U4 ab2 = square(ab);
   // U3 abc = mul(ab, x.c + x.c);
-  U3 abc = ab * (x.c + x.c);
-  
-  u32 c, d, e, f;
-  asm(
-      "add.cc.u32  %0, %4, %6;"
-      "addc.cc.u32 %1, %5, %7;"
-      "mul.hi.u32  %3, %9, %9;"
-      "madc.lo.cc.u32 %2, %9, %9, %8;"
-      "addc.u32       %3, %3, 0;"
-      : "=r"(c), "=r"(d), "=r"(e), "=r"(f)
-      : "r"(ab2.c), "r"(ab2.d), "r"(abc.a), "r"(abc.b), "r"(abc.c), "r"(x.c));
-  assert(!(f & 0xc0000000));
-  return (U6) {ab2.a, ab2.b, c, d, e, f};
+  U3 abc = ab * (x.c + x.c) + (U3) {ab2.c, ab2.d, x.c * x.c};
+  assert(!(abc.c & 0xc0000000));
+  return (U5) {ab2.a, ab2.b, abc.a, abc.b, abc.c};
 }
+  /*
+  u32 c, d, e;
+  asm(
+      "add.cc.u32  %0, %3, %5;"
+      "addc.cc.u32 %1, %4, %6;"
+      "madc.lo.u32 %2, %8, %8, %7;"
+      : "=r"(c), "=r"(d), "=r"(e)
+      : "r"(ab2.c), "r"(ab2.d), "r"(abc.a), "r"(abc.b), "r"(abc.c), "r"(x.c));
+  assert(!(e & 0xc0000000));
+  return (U5) {ab2.a, ab2.b, c, d, e};
+  */
 
-DEVICE U6 square80(U3 x) {
+
+/*
+DEVICE U5 square(U3 x) {
+  assert(!(x.c & 0xffff8000));
   u32 a, b, c, d, e;
   asm("{\n\t"
       ".reg .u32 a2;\n\t"
 
-      "mul.lo.u32     %0, %5, %5;\n\t"     /* (a.d0 * a.d0).lo */
-      "mul.lo.u32     %1, %5, %6;\n\t"     /* (a.d0 * a.d1).lo */
-      "mul.hi.u32     %2, %5, %6;\n\t"     /* (a.d0 * a.d1).hi */
+      "mul.lo.u32     %0, %5, %5;\n\t"
+      "mul.lo.u32     %1, %5, %6;\n\t"
+      "mul.hi.u32     %2, %5, %6;\n\t"
 
-      "add.u32        a2, %7, %7;\n\t"     /* shl(a.d2) */
+      "add.u32        a2, %7, %7;\n\t"
 
-      "add.cc.u32     %1, %1, %1;\n\t"     /* 2 * (a.d0 * a.d1).lo */
-      "addc.cc.u32    %2, %2, %2;\n\t"     /* 2 * (a.d0 * a.d1).hi */
-      "madc.hi.u32    %3, %5, a2, 0;\n\t"  /* 2 * (a.d0 * a.d2).hi */
-                                           /* %3 (res.d3) has some space left because a2 is < 2^17 */
+      "add.cc.u32     %1, %1, %1;\n\t"
+      "addc.cc.u32    %2, %2, %2;\n\t"
+      "madc.hi.u32    %3, %5, a2, 0;\n\t"
 
-      "mad.hi.cc.u32  %1, %5, %5, %1;\n\t" /* (a.d0 * a.d0).hi */
-      "madc.lo.cc.u32 %2, %6, %6, %2;\n\t" /* (a.d1 * a.d1).lo */
-      "madc.hi.cc.u32 %3, %6, %6, %3;\n\t" /* (a.d1 * a.d1).hi */
-      "madc.lo.u32    %4, %7, %7, 0;\n\t"  /* (a.d2 * a.d2).lo */
+      "mad.hi.cc.u32  %1, %5, %5, %1;\n\t"
+      "madc.lo.cc.u32 %2, %6, %6, %2;\n\t"
+      "madc.hi.cc.u32 %3, %6, %6, %3;\n\t"
+      "madc.lo.u32    %4, %7, %7, 0;\n\t"
       
-      "mad.lo.cc.u32  %2, %5, a2, %2;\n\t" /* 2 * (a.d0 * a.d2).lo */
-      "madc.lo.cc.u32 %3, %6, a2, %3;\n\t" /* 2 * (a.d1 * a.d2).lo */
-      "madc.hi.u32    %4, %6, a2, %4;\n\t" /* 2 * (a.d1 * a.d2).hi */                                          
+      "mad.lo.cc.u32  %2, %5, a2, %2;\n\t"
+      "madc.lo.cc.u32 %3, %6, a2, %3;\n\t"
+      "madc.hi.u32    %4, %6, a2, %4;\n\t"
       "}"
       : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e)
       : "r"(x.a), "r"(x.b), "r"(x.c));
   return (U6) {a, b, c, d, e, 0};
 }
+*/
 
-DEVICE U5 modStep(U5 t, U3 m, u32 R, int sh, int bits) {
-  u32 n = mulhi(shl(t.c, t.d, 32 - bits), R);
-  t = (U5){0, t.a, t.b, t.c, t.d} - (_U5(m * n) << (sh + bits));
-  assert(!t.e && !(t.d & (0xfffffff8 << bits)));
-  return t;
+DEVICE void p(const char *s, U4 x) {
+  printf("%s 0x%08x%08x%08x%08x\n", s, x.d, x.c, x.b, x.a);
+  // printf("%s %08x-%08x-%08x-%08x\n", s, x.d, x.c, x.b, x.a);
 }
 
-DEVICE U3 modShl3w(U4 x, U3 m) {
-  assert(m.c && !(m.c & 0xc0000000));
-  int sh = __clz(m.c) + 1;
-  if (sh > 20) {
-    m = m << (sh - 20);
-    sh = 20;
-  }
-  assert(sh >= 3 && sh <= 20);
-  u32 R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(m.b, m.c, sh)) + 1);
+DEVICE void p(const char *s, U3 x) {
+  printf("%s 0x%08x%08x%08x\n", s, x.c, x.b, x.a);
+  // printf("%s %08x-%08x-%08x\n", s, x.c, x.b, x.a);
+}
+
+// m at most 78 bits.
+DEVICE U3 mod(U5 x, U3 m, U3 u) {
+  /*
+  p("u  ", u); p("xu ", (U3){x.c, x.d, x.e});
+  U3 tmp = shr3wMul((U3) {x.c, x.d, x.e}, u);
+  U3 d = mulLow(m, tmp);
+  U3 r = (U3){x.a, x.b, x.c} - d;
+  p("tmp ", tmp); p("x   ", (U3){x.a, x.b, x.c}); p("d   ", d); p("r   ", r);  
+  return (U3){x.a, x.b, x.c} - mulLow(tmp, m);  
+  */
+
+  return (U3){x.a, x.b, x.c} - mulLow(m, shr3wMul((U3) {x.c, x.d, x.e}, u));
+}
+
+// Returns the position of the most significant bit that is set.
+DEVICE int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
+
+#define TWO32f (4294967296.0f)
+#define TWO64f (18446744073709551616.0f)  
+#define TWO53f (9007199254740992.0f)
+#define TWO32m1 (0xffffffff)
+
+// returns float lower approximation of 2**32 / x
+DEVICE float floatInv(U3 x) {
+  return __frcp_rd(__ull2float_ru(_u64(shr1w(x)) + 1));
+  // return __int_as_float(0x3f7ffffb) / ((((float) x.c) * TWO32f) + ((float) x.b));
+}
+
+// compute 2**160 / x
+DEVICE U3 inv160(U3 n, float nf) {
+  // 1
+  // printf("1 %f %x\n", nf*TWO64f, (u32)(TWO64f * nf));
+  assert(nf * TWO64f < TWO32f);
+  u32 rc = (u32) (TWO64f * nf);
+  U3 nn = (~mulLow(n, rc)) + 1;
   
-  u32 n = mulhi(x.d, R);
-  x -= (m * n) << sh;
-  assert(!(x.d & 0xfffffff8));
-  U5 t = _U5(x);
+  U4 q = (U4) {0, nn.a, nn.b, nn.c};
 
-  t = modStep(t, m, R, sh, 3);
-  t = modStep(t, m, R, sh, 6);
-  t = modStep(t, m, R, sh, 9);
+  // 2
+  float qf = (q.d * TWO32f + q.c) * 512.0f * nf;
+  // printf("2 %f %x %x\n", qf, q.d, q.c);
+  assert(qf < (1 << 22));
+  u32 qi = (u32) qf;
+  // printf("2 qi %x\n", qi);
+  u32 rb = (qi << 23);
+  rc += (qi >> 9);
+  // U4 aux = ((n * qi) << 23);
+  // p("qpre", q);
+  // p("aux", aux);
+  q = q - ((n * qi) << 23);
+  // p("2q", q);
+  assert(q.d == 0);
+
+  // 3
+  qf = (q.c * TWO32f + q.b) * nf;
+  assert(qf < (1 << 25));
+  qi = (u32) qf;
+  U2 rup = (U2){rb, rc} + qi;
+  // U4 nq = n * qi; p("3nq", nq);
+  q = q - n * qi;
+  // p("3q", q);
+  assert(q.d == 0);
   
-  n = mulhi(shl(t.c, t.d, 20), R) >> (20 - sh);
-  x = (U4){t.a, t.b, t.c, t.d} - m * n;
-  assert(!x.d && !(x.c >> (35 - sh)));
-  return (U3) {x.a, x.b, x.c};
+  // 4
+  qf = (q.c * TWO32f + q.b) * 131072.0f * nf;
+  // printf("4 %f %x %x\n", qf, q.c, q.b);
+  assert(qf < (1 << 22));
+  qi = (u32) qf;
+
+  rup = rup + (qi >> 17);
+  U3 ret = (U3) {(qi << 15), rup.a, rup.b};
+
+  q = ((U4) {0, q.a, q.b, q.c}) - ((n * qi) << 15);
+  // p("q4", q);
+  assert(q.d == 0);
+  
+  // 5
+  qf = (q.c * TWO32f + q.b) * nf;
+  assert(qf < (1 << 20));
+  return ret + (u32) qf;
 }
 
-// Compute m' such that: (u32) (m * m') == 0xffffffff, using extended binary euclidian algorithm.
-// See http://www.ucl.ac.uk/~ucahcjm/combopt/ext_gcd_python_programs.pdf
-// m is odd.
-DEVICE u32 mprime(u32 m) {
-  m = (m >> 1) + 1;
-  u32 u = m;
-  u32 v = m << 31; 
-  for (int i = 0; i < 30; ++i) {
-    u = (u >> 1) + ((u & 1) ? m : 0);
-    v = shr(v, u, 1);
-  }
-  return v | 1;
-}
-
-// Montgomery Reduction. 18 MULs.
-// See https://www.cosic.esat.kuleuven.be/publications/article-144.pdf
-// Returns x * U^-1 mod m
-DEVICE U3 montRed(U6 x6, U3 m, u32 mp) {
-  assert(!(x6.f & 0xc0000000));
-  assert(x6.a + (x6.a * mp * m.a) == 0);
-  U5 x5 = shr1w(x6) + mulM(m, x6.a * mp);
-  U4 x4 = shr1w(x5) + mulM(m, x5.a * mp);
-  U3 x3 = shr1w(x4) + mulM(m, x4.a * mp);
-  assert(!(x3.c & 0xc0000000));
-  return x3;
-}
-
-// returns 2^exp % m
+// returns 2**exp % m
 DEVICE U3 expMod(u32 exp, U3 m) {
   assert(exp & 0x80000000);
+  assert(m.c && !(m.c & 0xffffc000));
+  
   int sh = exp >> 25;
   assert(sh >= 64 && sh < 128);
-  U3 a = modShl3w((U4){0, 0, 1 << (sh - 64), 1 << (sh - 96)}, m);
-  u32 mp = mprime(m.a);
-  for (exp <<= 7; exp; exp += exp) {
-    a = montRed(square(a), m, mp);
-    if (exp & 0x80000000) { a <<= 1; }  // Alternative: a <<= exp >> 31;
-  }
-  return montRed(_U6(a), m, mp);
-}
+  exp <<= 7;
 
-// returns whether (2*k*p + 1) is a factor of (2^p - 1)
-DEVICE bool isFactor(u32 exp, u32 flushedExp, u64 k) {
-  U3 q = _U2(k) * (exp + exp) + (U3){1, 0, 0};  // 2 * k * exp + 1 as U3
-  U3 r = expMod(flushedExp, q);
-  return r.a == 1 && !r.b && !r.c;  
+  float nf = floatInv(m);
+  U3 u = inv160(m, nf);  
+  U3 a = mod((U5){0, 0, 1 << (sh - 64), 1 << (sh - 96), 0}, m, u);
+  // p("u: ", u); p("a: ", a); p("m: ", m); printf("sh %d\n", sh);
+  do {
+    // p("a  ", a);
+    a = mod(square(a), m, u);
+    if (exp & 0x80000000) { a <<= 1; }  // Alternative: a <<= exp >> 31;
+  } while (exp += exp);
+  a = a - mulLow(m, (u32) ((a.c * TWO32f + a.b) * nf));
+  return a;
 }
 
 DEVICE u32 modInv32(u64 step, u32 prime) {
@@ -275,9 +300,6 @@ __global__ void __launch_bounds__(1024) initBtcTab(u32 exp, u64 k) {
   btcTab[id] = bitToClear(exp, k, primes[id], invTab[id]);
 }
 
-// Returns the position of the most significant bit that is set.
-DEVICE int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
-
 // 128 blocks, times an internal repeat of 32, times shared memory per block of 24KB, times 8 bits per byte == 3*2^28
 #define SIEV_BITS (128 * 32 * 24 * 1024 * 8)
 #define SIEV_REPEAT 64
@@ -291,20 +313,27 @@ DEVICE u32 kTabB[KTAB_SIZE];
 __managed__ int kTabSizeA;
 __managed__ int kTabSizeB;
 
-DEVICE void test(u32 doubleExp, u32 flushedExp, u64 k, u32 *kTab) {
+DEVICE void test(u32 doubleExp, u32 flushedExp, u64 kBase, u32 *kTab) {
   int n = TEST_REPEAT;
   int pos = TEST_THREADS * TEST_REPEAT * blockIdx.x + threadIdx.x;
+  U3 m = _U2(kBase) * doubleExp;
+  assert(!(m.a & 1));
+  m.a |= 1;
   do {
-    u32 delta = kTab[pos];
-    U3 kk = _U2(k + delta) * doubleExp;
-    ++kk.a;
-    //incMul(_U2(k + delta), doubleExp)
-    U3 r = expMod(flushedExp, kk);
+    m = m + _U2(kTab[pos] * doubleExp);
+    U3 r = expMod(flushedExp, m);
     if (r.a == 1 && !(r.b | r.c)) {
-      foundFactor = k;
+      foundFactor = kTab[pos];
     }
     pos += TEST_THREADS;
   } while (--n);
+}
+
+__global__ void testSingle(u32 doubleExp, u32 flushedExp, u64 k) {
+  U3 m = _U2(k) * doubleExp;
+  m.a |= 1;
+  m = expMod(flushedExp, m);
+  p(": ", _U4(m));
 }
 
 __global__ void __launch_bounds__(TEST_THREADS, 4) testA(u32 doubleExp, u32 flushedExp, u64 k) {
@@ -402,13 +431,27 @@ u64 calculateK(u32 exp, int bits) {
   return (((u128) 1) << (bits - 1)) / exp;
 }
 
-#define CUDA_CHECK_ERR  err = cudaGetLastError(); if (err) { printf("CUDA error: %s\n", cudaGetErrorString(err)); return 0; }
+#define CUDA_CHECK_ERR  {cudaError_t _err = cudaGetLastError(); if (_err) { printf("CUDA error: %s\n", cudaGetErrorString(_err)); return 0; }}
 
 int testBlocks(int kSize) {
   return kSize / (TEST_THREADS * TEST_REPEAT); // FIXME round up instead of down.
 }
 
+__global__ void testInv(U3 n) {
+  float nf = floatInv(n);
+  printf("%f\n", nf * TWO64f);
+  U3 r = inv160(n, nf);
+  printf("%08x-%08x-%08x\n", r.c, r.b, r.a);
+         //%08x%08x%08x %08x%08x%08x %u\n", x.c, x.d, x.e, xup.a, xup.b, xup.c, m.a, m.b, m.c, n);
+}
+
 int main() {
+  /*
+  U3 n{0, 0, 1};
+  testInv<<<1, 1>>>(n);
+  cudaDeviceSynchronize(); CUDA_CHECK_ERR; return 0;
+  */
+  
   assert(NPRIMES % 1024 == 0);
   
   cudaError_t err;
@@ -443,6 +486,9 @@ int main() {
   u32 blocks = (kEnd - k0Start + (blockSize - 1)) / blockSize;
   u32 flushedExp = exp << __builtin_clz(exp);
   u32 doubleExp = exp + exp;
+
+  testSingle<<<1, 1>>>(doubleExp, flushedExp, 2649453382952ul);
+  cudaDeviceSynchronize(); CUDA_CHECK_ERR; return 0;
   
   printf("exp %u kStart %llu kEnd %llu k0Start %llu k0End %llu, %llu blocks %u, actual %u\n",
          exp, kStart, kEnd, k0Start, k0End, (k0Start + blocks * (u64) blockSize), blocks, 512 * 3 * 1024 / NWORDS);

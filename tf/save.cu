@@ -187,3 +187,4 @@ __device__ u16 classBtc(u32 exp, u16 c, u16 prime, u16 inv) {
   return btc;
 }
 */
+
