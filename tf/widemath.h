@@ -26,6 +26,7 @@ DEVICE U5 shr1w(U6 x) { return (U5) {x.b, x.c, x.d, x.e, x.f}; }
 DEVICE U4 shr1w(U5 x) { return (U4) {x.b, x.c, x.d, x.e}; }
 DEVICE U3 shr1w(U4 x) { return (U3) {x.b, x.c, x.d}; }
 DEVICE U2 shr1w(U3 x) { return (U2) {x.b, x.c}; }
+DEVICE U4 shl1w(U3 x) { return (U4) {0, x.a, x.b, x.c}; }
 
 DEVICE U3 operator~(U3 x) {
   return (U3) {~x.a, ~x.b, ~x.c};

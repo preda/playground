@@ -99,7 +99,7 @@ DEVICE void p(const char *s, U3 x) { printf("%6s 0x%08x%08x%08x\n", s, x.c, x.b,
 
 #endif
 
-// Returns x modulo m, given u the "inverse" of m (2**160 / m); m at most 77 bits.
+// Returns x % m, given u the "inverse" of m (2**160 / m); m at most 77 bits.
 DEVICE U3 mod(U5 x, U3 m, U3 u) {
   return (U3){x.a, x.b, x.c} - mulLow(m, shr3wMul((U3) {x.c, x.d, x.e}, u));
 }
@@ -117,17 +117,22 @@ DEVICE int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); retu
 // Returns float lower approximation of 2**32 / x
 DEVICE float floatInv(U3 x) { return __frcp_rd(__ull2float_ru(_u64(shr1w(x)) + 1)); }
 
+// Returns float lower approximation of a + b*2**32
+DEVICE float floatOf(u32 a, u32 b) {
+  return __ull2float_rz(_u64((U2) {a, b}));
+  // __fmaf_rz(b, TWO32f, a);
+}
+
 // Returns 2**160 / n
 DEVICE U3 inv160(U3 n, float nf) {
   // 1
   assert(nf * TWO64f < TWO32f);
-  u32 rc = (u32) (TWO64f * nf);
-  U3 nn = (~mulLow(n, rc)) + 1;
-  
-  U4 q = (U4) {0, nn.a, nn.b, nn.c};
+  u32 rc = (u32) __fmul_rz(TWO64f, nf);
+  U4 q = shl1w((~mulLow(n, rc)) + 1);
 
   // 2
-  float qf = __fmul_rd(__fmaf_rd(q.d, TWO32f, q.c), TWO16f * nf);
+  float qf = floatOf(q.c, q.d) * nf * TWO16f;
+  
   assert(qf < TWO28f);
   u32 qi = (u32) qf;
   u32 rb = (qi << 16);
@@ -136,7 +141,7 @@ DEVICE U3 inv160(U3 n, float nf) {
   assert(q.d == 0);
 
   // 3
-  qf = __fmaf_rd(q.c, TWO32f, q.b) * nf;
+  qf = floatOf(q.b, q.c) * nf;
   assert(qf < (1 << 24));
   qi = (u32) qf;
   U2 rup = (U2){rb, rc} + qi;
@@ -144,26 +149,27 @@ DEVICE U3 inv160(U3 n, float nf) {
   assert(q.d == 0);
   
   // 4
-  qf = __fmaf_rd(q.c, TWO32f, q.b) * (TWO17f * nf);
+  qf = floatOf(q.b, q.c) * nf * TWO17f;
   assert(qf < (1 << 22));
   qi = (u32) qf;
 
   rup = rup + (qi >> 17);
   U3 ret = (U3) {(qi << 15), rup.a, rup.b};
 
+  // p("n ", n); p("q ", q);
   q = ((U4) {0, q.a, q.b, q.c}) - ((n * qi) << 15);
+  // if (q.d) { printf("qi %d qf %.2f %.10f %.10f %.10f %f nf %f", qi, qf, t1, t2, t3, TWO32f, (nf * TWO64f)); p("q4 ", q); }
   assert(q.d == 0);
   
   // 5
-  qf = (q.c * TWO32f + q.b) * nf;
+  qf = floatOf(q.b, q.c) * nf;
   assert(qf < (1 << 20));
   return ret + (u32) qf;
 }
 
-// returns 2**exp % m
+// Returns 2**exp % m
 DEVICE U3 expMod(u32 exp, U3 m) {
   assert(exp & 0x80000000);
-  // p("m ", m);
   assert(m.c && !(m.c & 0xffffc000));
   int sh = exp >> 25;
   assert(sh >= 64 && sh < 128);
@@ -171,14 +177,10 @@ DEVICE U3 expMod(u32 exp, U3 m) {
 
   float nf = floatInv(m);
   U3 u = inv160(m, nf);
-  // p("m  ", m); p("u  ", u);
   U3 a = mod((U5){0, 0, 1 << (sh - 64), 1 << (sh - 96), 0}, m, u);
-  // p("u: ", u); p("a: ", a); p("m: ", m); printf("sh %d\n", sh);
   do {
-    // p("a  ", a);
     a = mod(square(a), m, u);
-    // p("a2 ", a);
-    if (exp & 0x80000000) { a <<= 1; }  // Alternative: a <<= exp >> 31;
+    if (exp & 0x80000000) { a <<= 1; }
   } while (exp += exp);
   a = a - mulLow(m, (u32) ((a.c * TWO32f + a.b) * nf));
   return a;
@@ -248,12 +250,6 @@ DEVICE void test(u32 doubleExp, u32 flushedExp, u64 kBase, u32 *kTab) {
 }
 
 __global__ void testSingle(u32 doubleExp, u32 flushedExp, u64 k) {
-  /*
-  U3 a = (U3) {TWO32m1, TWO32m1, 0xffff};
-  U5 a2 = square(a);
-  p("a2 ", a);
-  */
-  
   U3 m = _U2(k) * doubleExp;
   m.a |= 1;
   U3 r = expMod(flushedExp, m);
@@ -290,7 +286,6 @@ DEVICE void sieve(int *pSize, u32 *kTab) {
     
     int popc = 0;
     
-    // for (int i = 0, idx = threadIdx.x; i < NWORDS / SIEVE_THREADS; ++i, idx += SIEVE_THREADS) { popc += __popc(words[idx] = ~words[idx]); }
     for (int i = tid; i < NWORDS; i += SIEV_THREADS) { popc += __popc(words[i] = ~words[i]); }
   
     u32 bits = words[tid];
@@ -369,7 +364,7 @@ struct Test { u32 exp; u64 k; };
 bool testOne(u32 exp, u64 k) {  
   u32 flushedExp = exp << __builtin_clz(exp);
   u32 doubleExp = exp + exp;
-  printf("%10u %20llu\n", exp, k);
+  printf("\r%10u %20llu", exp, k);
   testSingle<<<1, 1>>>(doubleExp, flushedExp, k);
   cudaDeviceSynchronize(); CUDA_CHECK_ERR;
   if (testOut.a != 1 || testOut.b || testOut.c) {
@@ -379,27 +374,25 @@ bool testOne(u32 exp, u64 k) {
   return true;
 }
 
-int main() {
+int main(int argc, char **argv) {
+  // cudaSetDevice(1);
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
-  // testOne(50739071, 103222393285365ull); return 0;
-  // testOne(50725243, 2270235299916ull); return 0;
-  // testOne(53143919, 950870091161484ull); return 0;
-  // testOne(53093063, 913679425737ull); return 0;
-  for (Test *t = tests, *end = tests + sizeof(tests) / sizeof(tests[0]); t < end; ++t) {
-    if (!testOne(t->exp, t->k)) {
-      return -1;
-    }
-  }
-  return 0;
+  CUDA_CHECK_ERR;
   
-
+  assert(argc > 0);
+  if (argc == 1) {
+    printf("Running selftest..\n");
+    for (Test *t = tests, *end = tests + ASIZE(tests); t < end; ++t) {
+      if (!testOne(t->exp, t->k)) { return -1; }
+    }
+    printf("\n%lu tests passed ok\n", ASIZE(tests));
+    return 0;
+  }
+  // const u32 exp = 119904229;
+  u32 exp = (u32) atol(argv[1]);
+  int startPow2 = (argc >= 3) ? atoi(argv[2]) : 65;
   
   assert(NPRIMES % 1024 == 0);
-  
-  cudaError_t err;
-
-  // cudaSetDevice(1);
-  CUDA_CHECK_ERR;
 
   int p1=-1, p2=-1;
   cudaDeviceGetStreamPriorityRange(&p1, &p2);
@@ -412,14 +405,11 @@ int main() {
   cudaStreamCreateWithPriority(&testStream, cudaStreamNonBlocking, 1);
   CUDA_CHECK_ERR;
   
-  
-  const u32 exp = 119904229;
   u64 t1 = timeMillis();
   u64 t0 = t1;
   initClasses(exp);
   printf("initClasses: %llu ms\n", timeMillis() - t1);
 
-  int startPow2 = 69;
   u64 kStart = calculateK(exp, startPow2);
   u64 kEnd   = calculateK(exp, startPow2 + 1);
   u64 k0Start = kStart - (kStart % NCLASS);
@@ -429,9 +419,6 @@ int main() {
   u32 flushedExp = exp << __builtin_clz(exp);
   u32 doubleExp = exp + exp;
 
-  testSingle<<<1, 1>>>(doubleExp, flushedExp, 2649453382952ul);
-  cudaDeviceSynchronize(); CUDA_CHECK_ERR; return 0;
-  
   printf("exp %u kStart %llu kEnd %llu k0Start %llu k0End %llu, %llu blocks %u, actual %u\n",
          exp, kStart, kEnd, k0Start, k0End, (k0Start + blocks * (u64) blockSize), blocks, 512 * 3 * 1024 / NWORDS);
   
@@ -455,6 +442,7 @@ int main() {
     sievA<<<SIEV_BLOCKS, SIEV_THREADS, 0, sieveStream>>>();
     usleep(100);
     testB<<<testBlocksB, TEST_THREADS, 0, testStream>>>(doubleExp, flushedExp, k);
+    // testB<<<1, 1, 0, testStream>>>(doubleExp, flushedExp, k);
     cudaDeviceSynchronize();
     int sizeA = kTabSizeA;
     int testBlocksA = testBlocks(sizeA);
@@ -463,6 +451,7 @@ int main() {
     sievB<<<SIEV_BLOCKS, SIEV_THREADS, 0, sieveStream>>>();
     usleep(100);
     testA<<<testBlocksA, TEST_THREADS, 0, testStream>>>(doubleExp, flushedExp, k);
+    // testA<<<1, 1, 0, testStream>>>(doubleExp, flushedExp, k);
     cudaDeviceSynchronize();
     u64 t2 = timeMillis();
     printf("%5d: class %5d: %llu; A %d (%d), B %d (%d)\n", cid, c, t2 - t1, sizeA, testBlocksA, sizeB, testBlocksB);
