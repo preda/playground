@@ -157,6 +157,10 @@ DEVICE U4 operator*(U3 x, u32 n) {
   return (U4) {a, b, c, d};
 }
 
+DEVICE bool operator==(U3 x, U3 y) {
+  return x.a == y.a && x.b == y.b && x.c == y.c;
+}
+
 // 5 MULs.
 DEVICE U3 mulLow(U3 x, u32 n) {
   u32 a, b, c;

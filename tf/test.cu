@@ -183,6 +183,7 @@ DEVICE int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); retu
 #define TWO32f (4294967296.0f)
 #define TWO64f (18446744073709551616.0f)  
 #define TWO53f (9007199254740992.0f)
+#define TWO20f (1048576.0f)
 #define TWO32m1 (0xffffffff)
 
 // returns float lower approximation of 2**32 / x
@@ -202,23 +203,23 @@ DEVICE U3 inv160(U3 n, float nf) {
   U4 q = (U4) {0, nn.a, nn.b, nn.c};
 
   // 2
-  float qf = (q.d * TWO32f + q.c) * 512.0f * nf;
-  // printf("2 %f %x %x\n", qf, q.d, q.c);
-  assert(qf < (1 << 22));
+  // float qf = (q.d * TWO32f + q.c) * 512.0f * nf;
+  // float qf = (q.d * TWO32f + q.c) * TWO20f * nf;
+  float qf = __fmul_rd(__fmaf_rd(q.d, TWO32f, q.c), TWO20f * nf);
+  // printf("2 %f %f %u %u\n", (nf * TWO64f), qf, q.d, q.c); p("n ", n);
+  assert(qf < TWO32f);
   u32 qi = (u32) qf;
   // printf("2 qi %x\n", qi);
-  u32 rb = (qi << 23);
-  rc += (qi >> 9);
-  // U4 aux = ((n * qi) << 23);
-  // p("qpre", q);
-  // p("aux", aux);
-  q = q - ((n * qi) << 23);
+  u32 rb = (qi << 12);
+  rc += (qi >> 20);
+  // U4 aux = ((n * qi) << 12); p("qpre", q); p("aux", aux);
+  q = q - ((n * qi) << 12);
   // p("2q", q);
   assert(q.d == 0);
 
   // 3
-  qf = (q.c * TWO32f + q.b) * nf;
-  assert(qf < (1 << 25));
+  qf = __fmaf_rd(q.c, TWO32f, q.b) * nf;
+  assert(qf < (1 << 24)); // 25
   qi = (u32) qf;
   U2 rup = (U2){rb, rc} + qi;
   // U4 nq = n * qi; p("3nq", nq);
@@ -227,7 +228,7 @@ DEVICE U3 inv160(U3 n, float nf) {
   assert(q.d == 0);
   
   // 4
-  qf = (q.c * TWO32f + q.b) * 131072.0f * nf;
+  qf = __fmaf_rd(q.c, TWO32f, q.b) * (131072.0f * nf);
   // printf("4 %f %x %x\n", qf, q.c, q.b);
   assert(qf < (1 << 22));
   qi = (u32) qf;
@@ -248,19 +249,21 @@ DEVICE U3 inv160(U3 n, float nf) {
 // returns 2**exp % m
 DEVICE U3 expMod(u32 exp, U3 m) {
   assert(exp & 0x80000000);
+  // p("m ", m);
   assert(m.c && !(m.c & 0xffffc000));
-  
   int sh = exp >> 25;
   assert(sh >= 64 && sh < 128);
   exp <<= 7;
 
   float nf = floatInv(m);
-  U3 u = inv160(m, nf);  
+  U3 u = inv160(m, nf);
+  // p("m  ", m); p("u  ", u);
   U3 a = mod((U5){0, 0, 1 << (sh - 64), 1 << (sh - 96), 0}, m, u);
   // p("u: ", u); p("a: ", a); p("m: ", m); printf("sh %d\n", sh);
   do {
     // p("a  ", a);
     a = mod(square(a), m, u);
+    // p("a2 ", a);
     if (exp & 0x80000000) { a <<= 1; }  // Alternative: a <<= exp >> 31;
   } while (exp += exp);
   a = a - mulLow(m, (u32) ((a.c * TWO32f + a.b) * nf));
@@ -312,6 +315,7 @@ DEVICE u32 kTabA[KTAB_SIZE];
 DEVICE u32 kTabB[KTAB_SIZE];
 __managed__ int kTabSizeA;
 __managed__ int kTabSizeB;
+__managed__ U3 testOut;
 
 DEVICE void test(u32 doubleExp, u32 flushedExp, u64 kBase, u32 *kTab) {
   int n = TEST_REPEAT;
@@ -332,8 +336,9 @@ DEVICE void test(u32 doubleExp, u32 flushedExp, u64 kBase, u32 *kTab) {
 __global__ void testSingle(u32 doubleExp, u32 flushedExp, u64 k) {
   U3 m = _U2(k) * doubleExp;
   m.a |= 1;
-  m = expMod(flushedExp, m);
-  p(": ", _U4(m));
+  U3 r = expMod(flushedExp, m);
+  if (r.c >= m.c && r == (m + 1)) { r = (U3) {1, 0, 0}; }
+  testOut = r;
 }
 
 __global__ void __launch_bounds__(TEST_THREADS, 4) testA(u32 doubleExp, u32 flushedExp, u64 k) {
@@ -437,25 +442,42 @@ int testBlocks(int kSize) {
   return kSize / (TEST_THREADS * TEST_REPEAT); // FIXME round up instead of down.
 }
 
-__global__ void testInv(U3 n) {
-  float nf = floatInv(n);
-  printf("%f\n", nf * TWO64f);
-  U3 r = inv160(n, nf);
-  printf("%08x-%08x-%08x\n", r.c, r.b, r.a);
-         //%08x%08x%08x %08x%08x%08x %u\n", x.c, x.d, x.e, xup.a, xup.b, xup.c, m.a, m.b, m.c, n);
+struct Test { u32 exp; u64 k; };
+
+#include "tests.inc"
+
+bool testOne(u32 exp, u64 k) {
+  u32 flushedExp = exp << __builtin_clz(exp);
+  u32 doubleExp = exp + exp;
+  printf("%10u %20llu\n", exp, k);
+  testSingle<<<1, 1>>>(doubleExp, flushedExp, k);
+  cudaDeviceSynchronize(); CUDA_CHECK_ERR;
+  if (testOut.a != 1 || testOut.b || testOut.c) {
+    printf("ERROR %10u %20llu m ", exp, k);
+    return false;
+  }
+  return true;
 }
 
 int main() {
-  /*
-  U3 n{0, 0, 1};
-  testInv<<<1, 1>>>(n);
-  cudaDeviceSynchronize(); CUDA_CHECK_ERR; return 0;
-  */
+  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
+  // testOne(50739071, 103222393285365ull); return 0;
+  // testOne(50725243, 2270235299916ull); return 0;
+  // testOne(53143919, 950870091161484ull); return 0;
+  // testOne(53093063, 913679425737ull); return 0;
+  for (Test *t = tests, *end = tests + sizeof(tests) / sizeof(tests[0]); t < end; ++t) {
+    if (!testOne(t->exp, t->k)) {
+      return -1;
+    }
+  }
+  return 0;
+  
+
   
   assert(NPRIMES % 1024 == 0);
   
   cudaError_t err;
-  // cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
+
   // cudaSetDevice(1);
   CUDA_CHECK_ERR;
 
