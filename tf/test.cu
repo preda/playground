@@ -1,27 +1,40 @@
-// Copyright (c) Mihai Preda, 2015.
+// Copyright (c) Mihai Preda, 2015 - 2016
 
 /*
-  This is a program for trial factoring of Mersenne numbers, which are numbers of the form
-  2^exp - 1. See http://www.mersenne.org/various/math.php
+  Aa program for trial factoring of Mersenne numbers on a CUDA GPU.
 
-  For a given mersenne number 2^exp-1, i.e. for a given value "exp", exp being prime,
-  the trial factors are of the form q = 2*k*exp + 1, and we're interested only in prime factors.
+  Mersenne numbers are of the form 2**exp - 1; see http://www.mersenne.org/various/math.php
+  This is inpired by mfaktc: http://www.mersenneforum.org/mfaktc/
 
-  Range: exp < 2^30. q < 2^94.
+  For a given mersenne number 2**exp-1, where exp is prime, the factors are of the form
+  m = 2*k*exp + 1, and we're interested only in prime factors.
 
-  A first step consist in generating prime candidate factors -- this is called "sieving" because
-  it uses Erathostene's sieve. Next each factor q is tested by computing "modular exponentiation",
-  reminder r = 2^exp modulo q. If this reminder is equal to 1, it means that q is a factor of
-  2^exp-1, and thus the mersenne number is not prime.
+  Limits: exp < 2**31; 2**64 < m < 2**76.
 
-  Both the sieving and the testing is run on the GPU.
+  First prime candidate factors are generated -- this is called "sieving" because it uses
+  Erathostene's sieve. Next each candidate m is tested by the computing the modular
+  exponentiation reminder r = 2**exp modulo m. If this reminder is equal to 1, it means
+  that m is a factor of 2^exp-1, and thus the mersenne number is not prime.
 
-  Some naming conventions used:
-  shl: shift left.
-  shr: shift right.
-  U3: unsigned int using 3 words (i.e. 96bits).
-  u32: unsigned int using 32 bits.
- */
+  
+  Naming conventions used:
+
+  1. type names:
+     - u8, u16, u32, u64, u128: unsigned integer with the given number of *bits*.
+     - U2, U3, U4, etc: unsigned long integer with the given number of 32-bit words.
+       The words of a long integer are named "a", "b", "c", etc, a being the least-significant.
+       
+  2. operators on long integers:
+     - usual: +, -, *.
+     - bit shifts: <<, >>.
+     - shr1w(): word shift right
+     - funnel shift returning one word: shl, shr
+     - cast to larger type, e.g. _U4(U3 x)
+     - mulLow(): multiplication computing only the lower words
+     - shr3wMul(): multiplication computing  only the higher words
+     - equality ==
+     - square
+*/
 
 #include <stdio.h>
 #include <assert.h>
@@ -79,123 +92,34 @@ __managed__ u64 foundFactor;  // If a factor k is found, save it here.
 DEVICE u32 invTab[NPRIMES];
 DEVICE int btcTab[NPRIMES];
 
-// returns x * x; 6 MULs.
-DEVICE U4 square(U2 x) {
-  u32 a, b, c, d;
-  asm(
-      "mul.lo.u32     %1, %4, %5;"
-      "mul.hi.u32     %2, %4, %5;"
-      "mul.lo.u32     %0, %4, %4;"
-      "add.cc.u32     %1, %1, %1;"
-      "addc.cc.u32    %2, %2, %2;"
-      "addc.u32       %3, 0, 0;"
-      
-      "mad.hi.cc.u32  %1, %4, %4, %1;"
-      "madc.lo.cc.u32 %2, %5, %5, %2;"
-      "madc.hi.u32    %3, %5, %5, %3;"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d)
-      : "r"(x.a), "r"(x.b));
-  return (U4) {a, b, c, d};
-}
+#ifndef DNDEBUG
 
-// X at most 79bits. Computes x * x; 11 MULs.
-DEVICE U5 square(U3 x) {
-  assert(!(x.c & 0xffff8000));
-  U2 ab = {x.a, x.b};
-  U4 ab2 = square(ab);
-  // U3 abc = mul(ab, x.c + x.c);
-  U3 abc = ab * (x.c + x.c) + (U3) {ab2.c, ab2.d, x.c * x.c};
-  assert(!(abc.c & 0xc0000000));
-  return (U5) {ab2.a, ab2.b, abc.a, abc.b, abc.c};
-}
-  /*
-  u32 c, d, e;
-  asm(
-      "add.cc.u32  %0, %3, %5;"
-      "addc.cc.u32 %1, %4, %6;"
-      "madc.lo.u32 %2, %8, %8, %7;"
-      : "=r"(c), "=r"(d), "=r"(e)
-      : "r"(ab2.c), "r"(ab2.d), "r"(abc.a), "r"(abc.b), "r"(abc.c), "r"(x.c));
-  assert(!(e & 0xc0000000));
-  return (U5) {ab2.a, ab2.b, c, d, e};
-  */
+DEVICE void p(const char *s, U4 x) { printf("%6s 0x%08x%08x%08x%08x\n", s, x.d, x.c, x.b, x.a); }
+DEVICE void p(const char *s, U3 x) { printf("%6s 0x%08x%08x%08x\n", s, x.c, x.b, x.a); }
 
+#endif
 
-/*
-DEVICE U5 square(U3 x) {
-  assert(!(x.c & 0xffff8000));
-  u32 a, b, c, d, e;
-  asm("{\n\t"
-      ".reg .u32 a2;\n\t"
-
-      "mul.lo.u32     %0, %5, %5;\n\t"
-      "mul.lo.u32     %1, %5, %6;\n\t"
-      "mul.hi.u32     %2, %5, %6;\n\t"
-
-      "add.u32        a2, %7, %7;\n\t"
-
-      "add.cc.u32     %1, %1, %1;\n\t"
-      "addc.cc.u32    %2, %2, %2;\n\t"
-      "madc.hi.u32    %3, %5, a2, 0;\n\t"
-
-      "mad.hi.cc.u32  %1, %5, %5, %1;\n\t"
-      "madc.lo.cc.u32 %2, %6, %6, %2;\n\t"
-      "madc.hi.cc.u32 %3, %6, %6, %3;\n\t"
-      "madc.lo.u32    %4, %7, %7, 0;\n\t"
-      
-      "mad.lo.cc.u32  %2, %5, a2, %2;\n\t"
-      "madc.lo.cc.u32 %3, %6, a2, %3;\n\t"
-      "madc.hi.u32    %4, %6, a2, %4;\n\t"
-      "}"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e)
-      : "r"(x.a), "r"(x.b), "r"(x.c));
-  return (U6) {a, b, c, d, e, 0};
-}
-*/
-
-DEVICE void p(const char *s, U4 x) {
-  printf("%s 0x%08x%08x%08x%08x\n", s, x.d, x.c, x.b, x.a);
-  // printf("%s %08x-%08x-%08x-%08x\n", s, x.d, x.c, x.b, x.a);
-}
-
-DEVICE void p(const char *s, U3 x) {
-  printf("%s 0x%08x%08x%08x\n", s, x.c, x.b, x.a);
-  // printf("%s %08x-%08x-%08x\n", s, x.c, x.b, x.a);
-}
-
-// m at most 78 bits.
+// Returns x modulo m, given u the "inverse" of m (2**160 / m); m at most 77 bits.
 DEVICE U3 mod(U5 x, U3 m, U3 u) {
-  /*
-  p("u  ", u); p("xu ", (U3){x.c, x.d, x.e});
-  U3 tmp = shr3wMul((U3) {x.c, x.d, x.e}, u);
-  U3 d = mulLow(m, tmp);
-  U3 r = (U3){x.a, x.b, x.c} - d;
-  p("tmp ", tmp); p("x   ", (U3){x.a, x.b, x.c}); p("d   ", d); p("r   ", r);  
-  return (U3){x.a, x.b, x.c} - mulLow(tmp, m);  
-  */
-
   return (U3){x.a, x.b, x.c} - mulLow(m, shr3wMul((U3) {x.c, x.d, x.e}, u));
 }
 
 // Returns the position of the most significant bit that is set.
 DEVICE int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
 
-#define TWO32f (4294967296.0f)
-#define TWO64f (18446744073709551616.0f)  
-#define TWO53f (9007199254740992.0f)
-#define TWO20f (1048576.0f)
-#define TWO32m1 (0xffffffff)
+#define TWO16f  65536.0f
+#define TWO17f  131072.0f
+#define TWO28f  268435456.0f
+#define TWO32f  4294967296.0f
+#define TWO64f  18446744073709551616.0f
+#define TWO32m1 0xffffffff
 
-// returns float lower approximation of 2**32 / x
-DEVICE float floatInv(U3 x) {
-  return __frcp_rd(__ull2float_ru(_u64(shr1w(x)) + 1));
-  // return __int_as_float(0x3f7ffffb) / ((((float) x.c) * TWO32f) + ((float) x.b));
-}
+// Returns float lower approximation of 2**32 / x
+DEVICE float floatInv(U3 x) { return __frcp_rd(__ull2float_ru(_u64(shr1w(x)) + 1)); }
 
-// compute 2**160 / x
+// Returns 2**160 / n
 DEVICE U3 inv160(U3 n, float nf) {
   // 1
-  // printf("1 %f %x\n", nf*TWO64f, (u32)(TWO64f * nf));
   assert(nf * TWO64f < TWO32f);
   u32 rc = (u32) (TWO64f * nf);
   U3 nn = (~mulLow(n, rc)) + 1;
@@ -203,33 +127,24 @@ DEVICE U3 inv160(U3 n, float nf) {
   U4 q = (U4) {0, nn.a, nn.b, nn.c};
 
   // 2
-  // float qf = (q.d * TWO32f + q.c) * 512.0f * nf;
-  // float qf = (q.d * TWO32f + q.c) * TWO20f * nf;
-  float qf = __fmul_rd(__fmaf_rd(q.d, TWO32f, q.c), TWO20f * nf);
-  // printf("2 %f %f %u %u\n", (nf * TWO64f), qf, q.d, q.c); p("n ", n);
-  assert(qf < TWO32f);
+  float qf = __fmul_rd(__fmaf_rd(q.d, TWO32f, q.c), TWO16f * nf);
+  assert(qf < TWO28f);
   u32 qi = (u32) qf;
-  // printf("2 qi %x\n", qi);
-  u32 rb = (qi << 12);
-  rc += (qi >> 20);
-  // U4 aux = ((n * qi) << 12); p("qpre", q); p("aux", aux);
-  q = q - ((n * qi) << 12);
-  // p("2q", q);
+  u32 rb = (qi << 16);
+  rc += (qi >> 16);
+  q = q - ((n * qi) << 16);
   assert(q.d == 0);
 
   // 3
   qf = __fmaf_rd(q.c, TWO32f, q.b) * nf;
-  assert(qf < (1 << 24)); // 25
+  assert(qf < (1 << 24));
   qi = (u32) qf;
   U2 rup = (U2){rb, rc} + qi;
-  // U4 nq = n * qi; p("3nq", nq);
   q = q - n * qi;
-  // p("3q", q);
   assert(q.d == 0);
   
   // 4
-  qf = __fmaf_rd(q.c, TWO32f, q.b) * (131072.0f * nf);
-  // printf("4 %f %x %x\n", qf, q.c, q.b);
+  qf = __fmaf_rd(q.c, TWO32f, q.b) * (TWO17f * nf);
   assert(qf < (1 << 22));
   qi = (u32) qf;
 
@@ -237,7 +152,6 @@ DEVICE U3 inv160(U3 n, float nf) {
   U3 ret = (U3) {(qi << 15), rup.a, rup.b};
 
   q = ((U4) {0, q.a, q.b, q.c}) - ((n * qi) << 15);
-  // p("q4", q);
   assert(q.d == 0);
   
   // 5
@@ -334,6 +248,12 @@ DEVICE void test(u32 doubleExp, u32 flushedExp, u64 kBase, u32 *kTab) {
 }
 
 __global__ void testSingle(u32 doubleExp, u32 flushedExp, u64 k) {
+  /*
+  U3 a = (U3) {TWO32m1, TWO32m1, 0xffff};
+  U5 a2 = square(a);
+  p("a2 ", a);
+  */
+  
   U3 m = _U2(k) * doubleExp;
   m.a |= 1;
   U3 r = expMod(flushedExp, m);
@@ -446,7 +366,7 @@ struct Test { u32 exp; u64 k; };
 
 #include "tests.inc"
 
-bool testOne(u32 exp, u64 k) {
+bool testOne(u32 exp, u64 k) {  
   u32 flushedExp = exp << __builtin_clz(exp);
   u32 doubleExp = exp + exp;
   printf("%10u %20llu\n", exp, k);

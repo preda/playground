@@ -188,3 +188,12 @@ __device__ u16 classBtc(u32 exp, u16 c, u16 prime, u16 inv) {
 }
 */
 
+
+  /*
+  p("u  ", u); p("xu ", (U3){x.c, x.d, x.e});
+  U3 tmp = shr3wMul((U3) {x.c, x.d, x.e}, u);
+  U3 d = mulLow(m, tmp);
+  U3 r = (U3){x.a, x.b, x.c} - d;
+  p("tmp ", tmp); p("x   ", (U3){x.a, x.b, x.c}); p("d   ", d); p("r   ", r);  
+  return (U3){x.a, x.b, x.c} - mulLow(tmp, m);  
+  */
