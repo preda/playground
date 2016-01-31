@@ -93,7 +93,7 @@ DEVICE const u32 primes[] = {
 DEVICE u32 invTab[NPRIMES];
 DEVICE int btcTabs[NGOODCLASS][NPRIMES];
 
-__managed__ u32 sievedBits[NGOODCLASS][NWORDS];
+DEVICE u32 sievedBits[NGOODCLASS][NWORDS];
 __managed__ u64 foundFactor;  // If a factor k is found, save it here.
 __managed__ int classTab[NGOODCLASS];
 
@@ -373,6 +373,10 @@ u64 calculateK(u32 exp, int bits) {
 
 #define CUDA_CHECK_ERR  {cudaError_t _err = cudaGetLastError(); if (_err) { printf("CUDA error: %s\n", cudaGetErrorString(_err)); return 0; }}
 
+inline void checkCuda(cudaError_t result) {
+  if (result != cudaSuccess) { printf("CUDA Runtime Error: %s\n", cudaGetErrorString(result)); }
+}
+
 int testBlocks(int kSize) {
   return kSize / (TEST_THREADS * TEST_REPEAT); // FIXME round up instead of down.
 }
@@ -451,23 +455,37 @@ int main(int argc, char **argv) {
 
   t1 = timeMillis();
   sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
+
+  u32 *hostBits = 0;
+  checkCuda(cudaHostAlloc(&hostBits, NGOODCLASS * NWORDS * 4, 0));
+
   cudaDeviceSynchronize(); CUDA_CHECK_ERR;
   printf("Sieve: %llu ms\n", timeMillis() - t1);
 
   t1 = timeMillis();
+  cudaMemcpyFromSymbol(hostBits, sievedBits, NGOODCLASS * NWORDS * 4, 0, cudaMemcpyDeviceToHost);
+  CUDA_CHECK_ERR;
+  printf("Copy: %llu ms\n", timeMillis() - t1);
+  
+  t1 = timeMillis();
   u8 deltas[NBITS / 5];
+  int min = 100000, max = 0;
   for (int ci = 0; ci < NGOODCLASS; ++ci) {
     u8 *out = deltas;
-    for (u32 *p = sievedBits[ci], *end = p + NWORDS; p < end; ++p) {
+    for (u32 *p = hostBits + ci * NWORDS, *end = p + NWORDS; p < end; ++p) {
       u32 w = ~*p;
       while (w) {
         int bit = __builtin_ctz(w);
-        w &= ~(1 << bit);
+        w = w & (w - 1); // w &= ~(1 << bit);
         *out++ = bit;
       }
     }
+    int n = out - deltas;
+    if (n < min) { min = n; }
+    if (n > max) { max = n; }
     // int c = classTab[i];    
   }
+  printf("%d %d %ld\n", min, max, sizeof(deltas));
   printf("Extract %llu ms\n", timeMillis() - t1);
   
   
