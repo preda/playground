@@ -1,27 +1,40 @@
-// Copyright (c) Mihai Preda, 2015.
+// Copyright (c) Mihai Preda, 2015 - 2016
 
 /*
-  This is a program for trial factoring of Mersenne numbers, which are numbers of the form
-  2^exp - 1. See http://www.mersenne.org/various/math.php
+  Aa program for trial factoring of Mersenne numbers on a CUDA GPU.
 
-  For a given mersenne number 2^exp-1, i.e. for a given value "exp", exp being prime,
-  the trial factors are of the form q = 2*k*exp + 1, and we're interested only in prime factors.
+  Mersenne numbers are of the form 2**exp - 1; see http://www.mersenne.org/various/math.php
+  This is inpired by mfaktc: http://www.mersenneforum.org/mfaktc/
 
-  Range: exp < 2^30. q < 2^94.
+  For a given mersenne number 2**exp-1, where exp is prime, the factors are of the form
+  m = 2*k*exp + 1, and we're interested only in prime factors.
 
-  A first step consist in generating prime candidate factors -- this is called "sieving" because
-  it uses Erathostene's sieve. Next each factor q is tested by computing "modular exponentiation",
-  reminder r = 2^exp modulo q. If this reminder is equal to 1, it means that q is a factor of
-  2^exp-1, and thus the mersenne number is not prime.
+  Limits: exp < 2**31; 2**64 < m < 2**76.
 
-  Both the sieving and the testing is run on the GPU.
+  First prime candidate factors are generated -- this is called "sieving" because it uses
+  Erathostene's sieve. Next each candidate m is tested by the computing the modular
+  exponentiation reminder r = 2**exp modulo m. If this reminder is equal to 1, it means
+  that m is a factor of 2^exp-1, and thus the mersenne number is not prime.
 
-  Some naming conventions used:
-  shl: shift left.
-  shr: shift right.
-  U3: unsigned int using 3 words (i.e. 96bits).
-  u32: unsigned int using 32 bits.
- */
+  
+  Naming conventions used:
+
+  1. type names:
+     - u8, u16, u32, u64, u128: unsigned integer with the given number of *bits*.
+     - U2, U3, U4, etc: unsigned long integer with the given number of 32-bit words.
+       The words of a long integer are named "a", "b", "c", etc, a being the least-significant.
+       
+  2. operators on long integers:
+     - usual: +, -, *.
+     - bit shifts: <<, >>.
+     - shr1w(): word shift right
+     - funnel shift returning one word: shl, shr
+     - cast to larger type, e.g. _U4(U3 x)
+     - mulLow(): multiplication computing only the lower words
+     - shr3wMul(): multiplication computing  only the higher words
+     - equality ==
+     - square
+*/
 
 #include <stdio.h>
 #include <assert.h>
@@ -79,139 +92,95 @@ __managed__ u64 foundFactor;  // If a factor k is found, save it here.
 DEVICE u32 invTab[NPRIMES];
 DEVICE int btcTab[NPRIMES];
 
-// returns x * x; 6 MULs.
-DEVICE U4 square(U2 x) {
-  u32 a, b, c, d;
-  asm(
-      "mul.lo.u32     %1, %4, %5;"
-      "mul.hi.u32     %2, %4, %5;"
-      "mul.lo.u32     %0, %4, %4;"
-      "add.cc.u32     %1, %1, %1;"
-      "addc.cc.u32    %2, %2, %2;"
-      "addc.u32       %3, 0, 0;"
-      
-      "mad.hi.cc.u32  %1, %4, %4, %1;"
-      "madc.lo.cc.u32 %2, %5, %5, %2;"
-      "madc.hi.u32    %3, %5, %5, %3;"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d)
-      : "r"(x.a), "r"(x.b));
-  return (U4) {a, b, c, d};
-}
+#ifndef DNDEBUG
 
-// X at most 79bits. Computes x * x; 11 MULs.
-DEVICE U5 square(U3 x) {
-  assert(!(x.c & 0xffff8000));
-  U2 ab = {x.a, x.b};
-  U4 ab2 = square(ab);
-  // U3 abc = mul(ab, x.c + x.c);
-  U3 abc = ab * (x.c + x.c);
-  
-  u32 c, d, e;
-  asm(
-      "add.cc.u32  %0, %3, %5;"
-      "addc.cc.u32 %1, %4, %6;"
-      "madc.lo.u32 %2, %8, %8, %7;"
-      : "=r"(c), "=r"(d), "=r"(e)
-      : "r"(ab2.c), "r"(ab2.d), "r"(abc.a), "r"(abc.b), "r"(abc.c), "r"(x.c));
-  assert(!(e & 0xc0000000));
-  return (U5) {ab2.a, ab2.b, c, d, e};
-}
+DEVICE void p(const char *s, U4 x) { printf("%6s 0x%08x%08x%08x%08x\n", s, x.d, x.c, x.b, x.a); }
+DEVICE void p(const char *s, U3 x) { printf("%6s 0x%08x%08x%08x\n", s, x.c, x.b, x.a); }
 
-// X at most 79bits. 11MULs.
-/*
-DEVICE U5 square80(U3 x) {
-  assert(!(x.c & 0xffff8000));
-  u32 a, b, c, d, e;
-  asm("{\n\t"
-      ".reg .u32 a2;\n\t"
+#endif
 
-      "mul.lo.u32     %0, %5, %5;\n\t"
-      "mul.lo.u32     %1, %5, %6;\n\t"
-      "mul.hi.u32     %2, %5, %6;\n\t"
-
-      "add.u32        a2, %7, %7;\n\t"
-
-      "add.cc.u32     %1, %1, %1;\n\t"
-      "addc.cc.u32    %2, %2, %2;\n\t"
-      "madc.hi.u32    %3, %5, a2, 0;\n\t"
-
-      "mad.hi.cc.u32  %1, %5, %5, %1;\n\t"
-      "madc.lo.cc.u32 %2, %6, %6, %2;\n\t"
-      "madc.hi.cc.u32 %3, %6, %6, %3;\n\t"
-      "madc.lo.u32    %4, %7, %7, 0;\n\t"
-      
-      "mad.lo.cc.u32  %2, %5, a2, %2;\n\t"
-      "madc.lo.cc.u32 %3, %6, a2, %3;\n\t"
-      "madc.hi.u32    %4, %6, a2, %4;\n\t"
-      "}"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e)
-      : "r"(x.a), "r"(x.b), "r"(x.c));
-  return (U6) {a, b, c, d, e, 0};
-}
-*/
-
-/*
-DEVICE U5 modStep(U5 t, U3 m, u32 R, int sh, int bits) {
-  u32 n = mulhi(shl(t.c, t.d, 32 - bits), R);
-  t = (U5){0, t.a, t.b, t.c, t.d} - (_U5(m * n) << (sh + bits));
-  assert(!t.e && !(t.d & (0xfffffff8 << bits)));
-  return t;
-}
-*/
-
-// m at most 78 bits.
-DEVICE U3 mod(U5 x, U3 m, u32 R, int b) {  
-  u32 n = mulhi(x.e, R);
-  U3 t = mulLow(m, n);
-  x = x << (b - 1);
-  U3 xup = (U3) {x.c, x.d, x.e} - t;
-  assert(!(xup.c >> (b + 2)));
-  
-  n = mulhi(shr(xup.b, xup.c, b + 2), R);
-  t = mulLow(m, n);
-  x = (U5){x.a, x.b, xup.a, xup.b, xup.c} << 29;
-  xup = (U3){x.c, x.d, x.e} - t;
-  if ((xup.c >> (b + 2))) {
-    printf("%08x%08x%08x %08x%08x%08x %08x%08x%08x %u\n", x.c, x.d, x.e, xup.a, xup.b, xup.c, m.a, m.b, m.c, n);
-  }
-  
-  assert(!(xup.c >> (b + 2)));
-
-  U4 tmp = (U4){x.b, xup.a, xup.b, xup.c} << (36 - b);
-  xup = (U3) {tmp.b, tmp.c, tmp.d};
-  n = mulhi(xup.c, R) >> (30 - b);
-  t = mulLow(m, n);
-  xup = xup - t;
-  assert(!(xup.c >> (b + 1)));
-  return xup;
+// Returns x % m, given u the "inverse" of m (2**160 / m); m at most 77 bits.
+DEVICE U3 mod(U5 x, U3 m, U3 u) {
+  return (U3){x.a, x.b, x.c} - mulLow(m, shr3wMul((U3) {x.c, x.d, x.e}, u));
 }
 
 // Returns the position of the most significant bit that is set.
 DEVICE int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
 
-// returns 2^exp % m
+#define TWO16f  65536.0f
+#define TWO17f  131072.0f
+#define TWO28f  268435456.0f
+#define TWO32f  4294967296.0f
+#define TWO64f  18446744073709551616.0f
+#define TWO32m1 0xffffffff
+
+// Returns float lower approximation of 2**32 / x
+DEVICE float floatInv(U3 x) { return __frcp_rd(__ull2float_ru(_u64(shr1w(x)) + 1)); }
+
+// Returns float lower approximation of a + b * 2**32; (__fmaf_rz(b, TWO32f, a))
+DEVICE float floatOf(u32 a, u32 b) { return __ull2float_rz(_u64((U2) {a, b})); }
+
+DEVICE float floatOf(u32 a, u32 b, float nf) { return __fmul_rz(floatOf(a, b), nf); }
+
+// Returns 2**160 / n
+DEVICE U3 inv160(U3 n, float nf) {
+  // 1
+  assert(nf * TWO64f < TWO32f);
+  u32 rc = (u32) __fmul_rz(TWO64f, nf);
+  U4 q = shl1w((~mulLow(n, rc)) + 1);
+
+  // 2
+  float qf = floatOf(q.c, q.d, nf) * TWO16f;
+  assert(qf < TWO28f);
+  u32 qi = (u32) qf;
+  u32 rb = (qi << 16);
+  rc += (qi >> 16);
+  q = q - ((n * qi) << 16);
+  assert(q.d == 0);
+
+  // 3
+  qf = floatOf(q.b, q.c, nf);
+  assert(qf < (1 << 24));
+  qi = (u32) qf;
+  U2 rup = (U2){rb, rc} + qi;
+  q = q - n * qi;
+  assert(q.d == 0);
+  
+  // 4
+  qf = floatOf(q.b, q.c, nf) * TWO17f;
+  assert(qf < (1 << 22));
+  qi = (u32) qf;
+  rup = rup + (qi >> 17);
+  U3 ret = (U3) {(qi << 15), rup.a, rup.b};
+
+  // p("n ", n); p("q ", q);
+  q = ((U4) {0, q.a, q.b, q.c}) - ((n * qi) << 15);
+  // if (q.d) { printf("qi %d qf %.2f %.10f %.10f %.10f %f nf %f", qi, qf, t1, t2, t3, TWO32f, (nf * TWO64f)); p("q4 ", q); }
+  assert(q.d == 0);
+  
+  // 5
+  qf = floatOf(q.b, q.c, nf);
+  assert(qf < (1 << 20));
+  return ret + (u32) qf;
+}
+
+// Returns 2**exp % m
 DEVICE U3 expMod(u32 exp, U3 m) {
   assert(exp & 0x80000000);
-  int sh = exp >> 24;
-  assert(sh >= 128 && sh < 256);
-  if (sh < 160) {
-    exp <<= 8;
-  } else {
-    sh >>= 1;
-    exp <<= 7;
-  }
-
   assert(m.c && !(m.c & 0xffffc000));
-  int b = bfind(m.c);
-  assert(b >= 4);
-  u32 R = 0xffffffffffffffffULL / ((0x100000000ULL | shl(m.b, m.c, 32 - b)) + 1);
-  
-  U3 a = mod((U5){0, 0, 0, 1 << (sh - 96), 1 << (sh - 128)}, m, R, b);
+  int sh = exp >> 25;
+  assert(sh >= 64 && sh < 128);
+  exp <<= 7;
+
+  float nf = floatInv(m);
+  U3 u = inv160(m, nf);
+  U3 a = mod((U5){0, 0, 1 << (sh - 64), 1 << (sh - 96), 0}, m, u);
   do {
-    a = mod(square(a), m, R, b);
-    if (exp & 0x80000000) { a <<= 1; }  // Alternative: a <<= exp >> 31;
+    a = mod(square(a), m, u);
+    if (exp & 0x80000000) { a <<= 1; }
   } while (exp += exp);
-  return a;
+  a = a - mulLow(m, (u32) floatOf(a.b, a.c, nf));
+  return (a.c >= m.c && a == (m + 1)) ? (U3) {1, 0, 0} : a;
 }
 
 DEVICE u32 modInv32(u64 step, u32 prime) {
@@ -255,25 +224,32 @@ __global__ void __launch_bounds__(1024) initBtcTab(u32 exp, u64 k) {
 
 // Less than 20% of bits survive sieving.
 #define KTAB_SIZE (SIEV_BITS / 5)
-DEVICE u32 kTabA[KTAB_SIZE];
+__managed__ u32 kTabA[KTAB_SIZE];
 DEVICE u32 kTabB[KTAB_SIZE];
 __managed__ int kTabSizeA;
 __managed__ int kTabSizeB;
+__managed__ U3 testOut;
 
-DEVICE void test(u32 doubleExp, u32 flushedExp, u64 k, u32 *kTab) {
+DEVICE void test(u32 doubleExp, u32 flushedExp, u64 kBase, u32 *kTab) {
   int n = TEST_REPEAT;
   int pos = TEST_THREADS * TEST_REPEAT * blockIdx.x + threadIdx.x;
   do {
-    u32 delta = kTab[pos];
-    U3 kk = _U2(k + delta) * doubleExp;
-    ++kk.a;
-    //incMul(_U2(k + delta), doubleExp)
-    U3 r = expMod(flushedExp, kk);
-    if (r.a == 1 && !(r.b | r.c)) {
-      foundFactor = k;
+    U3 m = _U2(kBase + kTab[pos] * (u64) NCLASS) * doubleExp;
+    m.a |= 1;
+    U3 r = expMod(flushedExp, m);
+    if (r == (U3) {1, 0, 0}) {
+      p("factor k: ", m);
+      foundFactor = kTab[pos];
     }
     pos += TEST_THREADS;
   } while (--n);
+}
+
+__global__ void testSingle(u32 doubleExp, u32 flushedExp, u64 k) {
+  U3 m = _U2(k) * doubleExp;
+  m.a |= 1;
+  U3 r = expMod(flushedExp, m);
+  testOut = r;
 }
 
 __global__ void __launch_bounds__(TEST_THREADS, 4) testA(u32 doubleExp, u32 flushedExp, u64 k) {
@@ -305,7 +281,6 @@ DEVICE void sieve(int *pSize, u32 *kTab) {
     
     int popc = 0;
     
-    // for (int i = 0, idx = threadIdx.x; i < NWORDS / SIEVE_THREADS; ++i, idx += SIEVE_THREADS) { popc += __popc(words[idx] = ~words[idx]); }
     for (int i = tid; i < NWORDS; i += SIEV_THREADS) { popc += __popc(words[i] = ~words[i]); }
   
     u32 bits = words[tid];
@@ -371,19 +346,48 @@ u64 calculateK(u32 exp, int bits) {
   return (((u128) 1) << (bits - 1)) / exp;
 }
 
-#define CUDA_CHECK_ERR  err = cudaGetLastError(); if (err) { printf("CUDA error: %s\n", cudaGetErrorString(err)); return 0; }
+#define CUDA_CHECK_ERR  {cudaError_t _err = cudaGetLastError(); if (_err) { printf("CUDA error: %s\n", cudaGetErrorString(_err)); return 0; }}
 
 int testBlocks(int kSize) {
   return kSize / (TEST_THREADS * TEST_REPEAT); // FIXME round up instead of down.
 }
 
-int main() {
-  assert(NPRIMES % 1024 == 0);
-  
-  cudaError_t err;
-  // cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
+struct Test { u32 exp; u64 k; };
+
+#include "tests.inc"
+
+bool testOne(u32 exp, u64 k) {  
+  u32 flushedExp = exp << __builtin_clz(exp);
+  u32 doubleExp = exp + exp;
+  printf("\r%10u %20llu", exp, k);
+  testSingle<<<1, 1>>>(doubleExp, flushedExp, k);
+  cudaDeviceSynchronize(); CUDA_CHECK_ERR;
+  if (testOut.a != 1 || testOut.b || testOut.c) {
+    printf("ERROR %10u %20llu m ", exp, k);
+    return false;
+  }
+  return true;
+}
+
+int main(int argc, char **argv) {
   // cudaSetDevice(1);
+  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
   CUDA_CHECK_ERR;
+  
+  assert(argc > 0);
+  if (argc == 1) {
+    printf("Running selftest..\n");
+    for (Test *t = tests, *end = tests + ASIZE(tests); t < end; ++t) {
+      if (!testOne(t->exp, t->k)) { return -1; }
+    }
+    printf("\n%lu tests passed ok\n", ASIZE(tests));
+    return 0;
+  }
+  // const u32 exp = 119904229;
+  u32 exp = (u32) atol(argv[1]);
+  int startPow2 = (argc >= 3) ? atoi(argv[2]) : 65;
+  
+  assert(NPRIMES % 1024 == 0);
 
   int p1=-1, p2=-1;
   cudaDeviceGetStreamPriorityRange(&p1, &p2);
@@ -396,14 +400,11 @@ int main() {
   cudaStreamCreateWithPriority(&testStream, cudaStreamNonBlocking, 1);
   CUDA_CHECK_ERR;
   
-  
-  const u32 exp = 119904229;
   u64 t1 = timeMillis();
   u64 t0 = t1;
   initClasses(exp);
   printf("initClasses: %llu ms\n", timeMillis() - t1);
 
-  int startPow2 = 69;
   u64 kStart = calculateK(exp, startPow2);
   u64 kEnd   = calculateK(exp, startPow2 + 1);
   u64 k0Start = kStart - (kStart % NCLASS);
@@ -412,18 +413,35 @@ int main() {
   u32 blocks = (kEnd - k0Start + (blockSize - 1)) / blockSize;
   u32 flushedExp = exp << __builtin_clz(exp);
   u32 doubleExp = exp + exp;
-  
+
   printf("exp %u kStart %llu kEnd %llu k0Start %llu k0End %llu, %llu blocks %u, actual %u\n",
          exp, kStart, kEnd, k0Start, k0End, (k0Start + blocks * (u64) blockSize), blocks, 512 * 3 * 1024 / NWORDS);
   
   t1 = timeMillis();
   initInvTab<<<NPRIMES/1024, 1024>>>(exp);
   cudaDeviceSynchronize();
+  CUDA_CHECK_ERR;
   printf("initInvTab: %llu ms\n", timeMillis() - t1);
   t1 = timeMillis();
   kTabSizeA = 0;
   kTabSizeB = 0;
-  
+
+  int c = 992;
+  u64 k = k0Start + c;
+  foundFactor = 0;
+  initBtcTab<<<NPRIMES/1024, 1024>>>(exp, k);
+  sievA<<<SIEV_BLOCKS, SIEV_THREADS>>>();
+  cudaDeviceSynchronize();
+  CUDA_CHECK_ERR;
+  int testBlocksA = testBlocks(kTabSizeA);
+  kTabSizeA = 0;
+  testA<<<testBlocksA, TEST_THREADS>>>(doubleExp, flushedExp, k);
+  cudaDeviceSynchronize();
+  if (foundFactor) { printf("Factor K: %llu\n", foundFactor); }
+  CUDA_CHECK_ERR;
+  return 0;
+
+  /*
   for (int cid = 0; cid < NGOODCLASS; ++cid) {
     int c = classTab[cid];
     u64 k = k0Start + c;
@@ -435,8 +453,12 @@ int main() {
     // if (!cid)
     sievA<<<SIEV_BLOCKS, SIEV_THREADS, 0, sieveStream>>>();
     usleep(100);
-    testB<<<testBlocksB, TEST_THREADS, 0, testStream>>>(doubleExp, flushedExp, k);
+    if (testBlocksB) {
+      testB<<<testBlocksB, TEST_THREADS, 0, testStream>>>(doubleExp, flushedExp, k);
+    }
+    //testB<<<1, 1, 0, testStream>>>(doubleExp, flushedExp, k);
     cudaDeviceSynchronize();
+    CUDA_CHECK_ERR;
     int sizeA = kTabSizeA;
     int testBlocksA = testBlocks(sizeA);
     kTabSizeA = 0;
@@ -444,17 +466,19 @@ int main() {
     sievB<<<SIEV_BLOCKS, SIEV_THREADS, 0, sieveStream>>>();
     usleep(100);
     testA<<<testBlocksA, TEST_THREADS, 0, testStream>>>(doubleExp, flushedExp, k);
+    // testA<<<1, 1, 0, testStream>>>(doubleExp, flushedExp, k);
     cudaDeviceSynchronize();
     u64 t2 = timeMillis();
     printf("%5d: class %5d: %llu; A %d (%d), B %d (%d)\n", cid, c, t2 - t1, sizeA, testBlocksA, sizeB, testBlocksB);
     t1 = t2;    
-    // if (foundFactor) { printf("Factor K: %llu\n", foundFactor); break; }
+    if (foundFactor) { printf("Factor K: %llu\n", foundFactor); break; }
+    CUDA_CHECK_ERR;
   }
   printf("Total time: %llu ms\n", timeMillis() - t0);
   cudaStreamDestroy(sieveStream);
   cudaStreamDestroy(testStream);
   CUDA_CHECK_ERR;
-  // cudaDeviceReset();
+  */
 }
 
 

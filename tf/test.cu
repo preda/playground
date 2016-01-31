@@ -44,13 +44,15 @@
 
 #define ASIZE(a) (sizeof(a) / sizeof(a[0]))
 
+// Thread for initBtcTabs()
+#define INIT_BTC_THREADS 256
 // Threads per sieving block.
-#define SIEV_THREADS 256
+#define SIEVE_THREADS 512
 // Threads per testing block.
 #define TEST_THREADS 512
 
 // How many words of shared memory to use for sieving.
-#define NWORDS (6 * 1024)
+#define NWORDS (8 * 1024)
 
 // Must update acceptClass() when changing these.
 #define NCLASS     (4 * 3 * 5 * 7 * 11)
@@ -88,9 +90,12 @@ DEVICE const u32 primes[] = {
 #include "primes-1M.inc"
 };
 
-__managed__ u64 foundFactor;  // If a factor k is found, save it here.
 DEVICE u32 invTab[NPRIMES];
-DEVICE int btcTab[NPRIMES];
+DEVICE int btcTabs[NGOODCLASS][NPRIMES];
+
+__managed__ u32 sievedBits[NGOODCLASS][NWORDS];
+__managed__ u64 foundFactor;  // If a factor k is found, save it here.
+__managed__ int classTab[NGOODCLASS];
 
 #ifndef DNDEBUG
 
@@ -210,10 +215,15 @@ __global__ void __launch_bounds__(1024) initInvTab(u32 exp) {
   invTab[id] = modInv32(2 * NCLASS * (u64) exp, primes[id]);
 }
 
-__global__ void __launch_bounds__(1024) initBtcTab(u32 exp, u64 k) {
-  assert(gridDim.x * blockDim.x == NPRIMES);
-  u32 id = blockIdx.x * blockDim.x + threadIdx.x;
-  btcTab[id] = bitToClear(exp, k, primes[id], invTab[id]);
+__global__ void __launch_bounds__(INIT_BTC_THREADS) initBtcTabs(u32 exp, u64 kBase) {
+  assert(gridDim.x == NGOODCLASS);
+  int *btcTab = btcTabs[blockIdx.x];
+  u64 k = kBase + classTab[blockIdx.x];
+  // if (!threadIdx.x) { printf("start class %d (%d)\n", classTab[blockIdx.x], blockIdx.x); }
+  for (int id = threadIdx.x; id < NPRIMES; id += blockDim.x) {
+    btcTab[id] = bitToClear(exp, k, primes[id], invTab[id]);
+  }
+  // if (!threadIdx.x) { printf("ended class %d (%d)\n", classTab[blockIdx.x], blockIdx.x); }
 }
 
 // 128 blocks, times an internal repeat of 32, times shared memory per block of 24KB, times 8 bits per byte == 3*2^28
@@ -260,25 +270,41 @@ __global__ void __launch_bounds__(TEST_THREADS, 4) testB(u32 doubleExp, u32 flus
   test(doubleExp, flushedExp, k, kTabB);
 }
 
-DEVICE void sieve(int *pSize, u32 *kTab) {
+/*
+  int btc0  = btcTabs[0][i];
+  int btcAux = btc0 - (NCLASS * NBITS % prime) * blockIdx.x % prime;
+  int btc = (btcAux < 0) ? btcAux + prime : btcAux;
+*/
+
+__global__ void __launch_bounds__(SIEVE_THREADS) sieve() {
   __shared__ u32 words[NWORDS];
-  const int tid = threadIdx.x;
-  int rep = SIEV_REPEAT;
-  do {
-    for (int i = 0; i < NWORDS / SIEV_THREADS; ++i) { words[tid + i * SIEV_THREADS] = 0; }
-    __syncthreads();
-    for (int i = tid; i < NPRIMES; i += SIEV_THREADS) {
-      int prime = primes[i];
-      int btc0  = btcTab[i];
-      int btcAux = btc0 - (NCLASS * NBITS % prime) * blockIdx.x % prime;
-      int btc = (btcAux < 0) ? btcAux + prime : btcAux;
-      while (btc < NBITS) {
-        atomicOr(words + (btc >> 5), 1 << (btc & 0x1f));
-        btc += prime;
-      }
+
+  // Set shared memory to zero.
+  for (int i = threadIdx.x; i < NWORDS; i += blockDim.x) {
+    words[i] = 0;
+  }
+  __syncthreads();
+
+  // Sieve bits.
+  int *btcTab = btcTabs[blockIdx.x];
+  for (int i = threadIdx.x; i < NPRIMES; i += blockDim.x) {
+    int prime = primes[i];
+    int btc = btcTab[i];
+    while (btc < NBITS) {
+      atomicOr(words + (btc >> 5), 1 << (btc & 0x1f));
+      btc += prime;
     }
-    __syncthreads();
-    
+    btcTab[i] = btc - NBITS;
+  }
+  __syncthreads();
+
+  // Copy shared memory to global memory.
+  u32 *out = sievedBits[blockIdx.x];
+  for (int i = threadIdx.x; i < NWORDS; i += blockDim.x) {
+    out[i] = words[i];
+  }
+}
+/*
     int popc = 0;
     
     for (int i = tid; i < NWORDS; i += SIEV_THREADS) { popc += __popc(words[i] = ~words[i]); }
@@ -329,8 +355,7 @@ DEVICE void sieve(int *pSize, u32 *kTab) {
 
 __global__ void __launch_bounds__(SIEV_THREADS) sievA() { sieve(&kTabSizeA, kTabA); }
 __global__ void __launch_bounds__(SIEV_THREADS) sievB() { sieve(&kTabSizeB, kTabB); }
-
-int classTab[NGOODCLASS];
+*/
 
 void initClasses(u32 exp) {
   int nClass = 0;
@@ -414,6 +439,39 @@ int main(int argc, char **argv) {
   u32 flushedExp = exp << __builtin_clz(exp);
   u32 doubleExp = exp + exp;
 
+  t1 = timeMillis();
+  initInvTab<<<NPRIMES/1024, 1024>>>(exp);
+  cudaDeviceSynchronize(); CUDA_CHECK_ERR;
+  printf("initInvTab: %llu ms\n", timeMillis() - t1);
+
+  t1 = timeMillis();
+  initBtcTabs<<<NGOODCLASS, INIT_BTC_THREADS>>>(exp, k0Start);
+  cudaDeviceSynchronize(); CUDA_CHECK_ERR;
+  printf("initBtcTabs: %llu ms\n", timeMillis() - t1);
+
+  t1 = timeMillis();
+  sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
+  cudaDeviceSynchronize(); CUDA_CHECK_ERR;
+  printf("Sieve: %llu ms\n", timeMillis() - t1);
+
+  t1 = timeMillis();
+  u8 deltas[NBITS / 5];
+  for (int ci = 0; ci < NGOODCLASS; ++ci) {
+    u8 *out = deltas;
+    for (u32 *p = sievedBits[ci], *end = p + NWORDS; p < end; ++p) {
+      u32 w = ~*p;
+      while (w) {
+        int bit = __builtin_ctz(w);
+        w &= ~(1 << bit);
+        *out++ = bit;
+      }
+    }
+    // int c = classTab[i];    
+  }
+  printf("Extract %llu ms\n", timeMillis() - t1);
+  
+  
+  /*
   printf("exp %u kStart %llu kEnd %llu k0Start %llu k0End %llu, %llu blocks %u, actual %u\n",
          exp, kStart, kEnd, k0Start, k0End, (k0Start + blocks * (u64) blockSize), blocks, 512 * 3 * 1024 / NWORDS);
   
@@ -440,6 +498,7 @@ int main(int argc, char **argv) {
   if (foundFactor) { printf("Factor K: %llu\n", foundFactor); }
   CUDA_CHECK_ERR;
   return 0;
+  */
 
   /*
   for (int cid = 0; cid < NGOODCLASS; ++cid) {
