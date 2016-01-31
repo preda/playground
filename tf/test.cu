@@ -117,11 +117,10 @@ DEVICE int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); retu
 // Returns float lower approximation of 2**32 / x
 DEVICE float floatInv(U3 x) { return __frcp_rd(__ull2float_ru(_u64(shr1w(x)) + 1)); }
 
-// Returns float lower approximation of a + b*2**32
-DEVICE float floatOf(u32 a, u32 b) {
-  return __ull2float_rz(_u64((U2) {a, b}));
-  // __fmaf_rz(b, TWO32f, a);
-}
+// Returns float lower approximation of a + b * 2**32; (__fmaf_rz(b, TWO32f, a))
+DEVICE float floatOf(u32 a, u32 b) { return __ull2float_rz(_u64((U2) {a, b})); }
+
+DEVICE float floatOf(u32 a, u32 b, float nf) { return __fmul_rz(floatOf(a, b), nf); }
 
 // Returns 2**160 / n
 DEVICE U3 inv160(U3 n, float nf) {
@@ -131,8 +130,7 @@ DEVICE U3 inv160(U3 n, float nf) {
   U4 q = shl1w((~mulLow(n, rc)) + 1);
 
   // 2
-  float qf = floatOf(q.c, q.d) * nf * TWO16f;
-  
+  float qf = floatOf(q.c, q.d, nf) * TWO16f;
   assert(qf < TWO28f);
   u32 qi = (u32) qf;
   u32 rb = (qi << 16);
@@ -141,7 +139,7 @@ DEVICE U3 inv160(U3 n, float nf) {
   assert(q.d == 0);
 
   // 3
-  qf = floatOf(q.b, q.c) * nf;
+  qf = floatOf(q.b, q.c, nf);
   assert(qf < (1 << 24));
   qi = (u32) qf;
   U2 rup = (U2){rb, rc} + qi;
@@ -149,10 +147,9 @@ DEVICE U3 inv160(U3 n, float nf) {
   assert(q.d == 0);
   
   // 4
-  qf = floatOf(q.b, q.c) * nf * TWO17f;
+  qf = floatOf(q.b, q.c, nf) * TWO17f;
   assert(qf < (1 << 22));
   qi = (u32) qf;
-
   rup = rup + (qi >> 17);
   U3 ret = (U3) {(qi << 15), rup.a, rup.b};
 
@@ -162,7 +159,7 @@ DEVICE U3 inv160(U3 n, float nf) {
   assert(q.d == 0);
   
   // 5
-  qf = floatOf(q.b, q.c) * nf;
+  qf = floatOf(q.b, q.c, nf);
   assert(qf < (1 << 20));
   return ret + (u32) qf;
 }
@@ -182,8 +179,8 @@ DEVICE U3 expMod(u32 exp, U3 m) {
     a = mod(square(a), m, u);
     if (exp & 0x80000000) { a <<= 1; }
   } while (exp += exp);
-  a = a - mulLow(m, (u32) ((a.c * TWO32f + a.b) * nf));
-  return a;
+  a = a - mulLow(m, (u32) floatOf(a.b, a.c, nf));
+  return (a.c >= m.c && a == (m + 1)) ? (U3) {1, 0, 0} : a;
 }
 
 DEVICE u32 modInv32(u64 step, u32 prime) {
@@ -227,7 +224,7 @@ __global__ void __launch_bounds__(1024) initBtcTab(u32 exp, u64 k) {
 
 // Less than 20% of bits survive sieving.
 #define KTAB_SIZE (SIEV_BITS / 5)
-DEVICE u32 kTabA[KTAB_SIZE];
+__managed__ u32 kTabA[KTAB_SIZE];
 DEVICE u32 kTabB[KTAB_SIZE];
 __managed__ int kTabSizeA;
 __managed__ int kTabSizeB;
@@ -236,13 +233,12 @@ __managed__ U3 testOut;
 DEVICE void test(u32 doubleExp, u32 flushedExp, u64 kBase, u32 *kTab) {
   int n = TEST_REPEAT;
   int pos = TEST_THREADS * TEST_REPEAT * blockIdx.x + threadIdx.x;
-  U3 m = _U2(kBase) * doubleExp;
-  assert(!(m.a & 1));
-  m.a |= 1;
   do {
-    m = m + _U2(kTab[pos] * doubleExp);
+    U3 m = _U2(kBase + kTab[pos] * (u64) NCLASS) * doubleExp;
+    m.a |= 1;
     U3 r = expMod(flushedExp, m);
-    if (r.a == 1 && !(r.b | r.c)) {
+    if (r == (U3) {1, 0, 0}) {
+      p("factor k: ", m);
       foundFactor = kTab[pos];
     }
     pos += TEST_THREADS;
@@ -253,7 +249,6 @@ __global__ void testSingle(u32 doubleExp, u32 flushedExp, u64 k) {
   U3 m = _U2(k) * doubleExp;
   m.a |= 1;
   U3 r = expMod(flushedExp, m);
-  if (r.c >= m.c && r == (m + 1)) { r = (U3) {1, 0, 0}; }
   testOut = r;
 }
 
@@ -425,11 +420,28 @@ int main(int argc, char **argv) {
   t1 = timeMillis();
   initInvTab<<<NPRIMES/1024, 1024>>>(exp);
   cudaDeviceSynchronize();
+  CUDA_CHECK_ERR;
   printf("initInvTab: %llu ms\n", timeMillis() - t1);
   t1 = timeMillis();
   kTabSizeA = 0;
   kTabSizeB = 0;
-  
+
+  int c = 992;
+  u64 k = k0Start + c;
+  foundFactor = 0;
+  initBtcTab<<<NPRIMES/1024, 1024>>>(exp, k);
+  sievA<<<SIEV_BLOCKS, SIEV_THREADS>>>();
+  cudaDeviceSynchronize();
+  CUDA_CHECK_ERR;
+  int testBlocksA = testBlocks(kTabSizeA);
+  kTabSizeA = 0;
+  testA<<<testBlocksA, TEST_THREADS>>>(doubleExp, flushedExp, k);
+  cudaDeviceSynchronize();
+  if (foundFactor) { printf("Factor K: %llu\n", foundFactor); }
+  CUDA_CHECK_ERR;
+  return 0;
+
+  /*
   for (int cid = 0; cid < NGOODCLASS; ++cid) {
     int c = classTab[cid];
     u64 k = k0Start + c;
@@ -441,9 +453,12 @@ int main(int argc, char **argv) {
     // if (!cid)
     sievA<<<SIEV_BLOCKS, SIEV_THREADS, 0, sieveStream>>>();
     usleep(100);
-    testB<<<testBlocksB, TEST_THREADS, 0, testStream>>>(doubleExp, flushedExp, k);
-    // testB<<<1, 1, 0, testStream>>>(doubleExp, flushedExp, k);
+    if (testBlocksB) {
+      testB<<<testBlocksB, TEST_THREADS, 0, testStream>>>(doubleExp, flushedExp, k);
+    }
+    //testB<<<1, 1, 0, testStream>>>(doubleExp, flushedExp, k);
     cudaDeviceSynchronize();
+    CUDA_CHECK_ERR;
     int sizeA = kTabSizeA;
     int testBlocksA = testBlocks(sizeA);
     kTabSizeA = 0;
@@ -456,13 +471,14 @@ int main(int argc, char **argv) {
     u64 t2 = timeMillis();
     printf("%5d: class %5d: %llu; A %d (%d), B %d (%d)\n", cid, c, t2 - t1, sizeA, testBlocksA, sizeB, testBlocksB);
     t1 = t2;    
-    // if (foundFactor) { printf("Factor K: %llu\n", foundFactor); break; }
+    if (foundFactor) { printf("Factor K: %llu\n", foundFactor); break; }
+    CUDA_CHECK_ERR;
   }
   printf("Total time: %llu ms\n", timeMillis() - t0);
   cudaStreamDestroy(sieveStream);
   cudaStreamDestroy(testStream);
   CUDA_CHECK_ERR;
-  // cudaDeviceReset();
+  */
 }
 
 
