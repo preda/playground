@@ -232,8 +232,27 @@ __global__ void __launch_bounds__(INIT_BTC_THREADS) initBtcTabs(u32 exp, u64 kBa
 
 __managed__ U3 testOut;
 
+__global__ void __launch_bounds__(TEST_THREADS) test(u32 doubleExp, u32 flushedExp, u64 k0) {
+  // if (!threadIdx.x) { printf("Start %d\n", blockIdx.x); }
+  k0 += classTab[blockIdx.x];
+  U3 m = _U2(k0) * doubleExp;
+  m.a |= 1;
+  int n = 0;
+  for (u16 *deltas = kDeltas[blockIdx.x]; ; deltas += blockDim.x) {
+    u16 delta = deltas[threadIdx.x];
+    if (delta == 0xffff) { break; }
+    m = m + _U2(delta * (u32) NCLASS * (u64) doubleExp);
+    U3 r = expMod(flushedExp, m);
+    ++n;
+    if (r == (U3) {1, 0, 0}) {
+      p("factor k: ", m);
+      // foundFactor = k0 + kTab[pos];
+    }
+  }
+  if (!threadIdx.x) { printf("End %d %d\n", blockIdx.x, n); }
+}
+
 /*
-DEVICE void test(u32 doubleExp, u32 flushedExp, u64 kBase, u32 *kTab) {
   int n = TEST_REPEAT;
   int pos = TEST_THREADS * TEST_REPEAT * blockIdx.x + threadIdx.x;
   do {
@@ -434,6 +453,11 @@ int main(int argc, char **argv) {
   t1 = timeMillis();
   checkCuda(cudaMemcpyToSymbol(kDeltas, deltas, NGOODCLASS * sizeof(deltas[0])));
   printf("Copy %llu ms\n", timeMillis() - t1);
+
+  t1 = timeMillis();
+  test<<<NGOODCLASS, TEST_THREADS>>>(doubleExp, flushedExp, k0Start);
+  cudaDeviceSynchronize(); CUDA_CHECK_ERR;
+  printf("Test %llu ms\n", timeMillis() - t1);
   
   /*
   printf("exp %u kStart %llu kEnd %llu k0Start %llu k0End %llu, %llu blocks %u, actual %u\n",
