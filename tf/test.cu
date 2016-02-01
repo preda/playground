@@ -398,7 +398,7 @@ bool testOne(u32 exp, u64 k) {
   return true;
 }
 
-u16 deltas[NGOODCLASS][(NBITS / 5) & ~(TEST_THREADS - 1)];
+// u16 deltas[NGOODCLASS][NBITS / 5 / TEST_THREADS + 1][TEST_THREADS];
 
 int main(int argc, char **argv) {
   // cudaSetDevice(1);
@@ -469,19 +469,28 @@ int main(int argc, char **argv) {
   CUDA_CHECK_ERR;
   printf("Copy: %llu ms\n", timeMillis() - t1);
   
+#define DELTA_LINES (NBITS / 5 / TEST_THREADS + 1)
+#define DELTA_BLOCK_SIZE (DELTA_LINES * TEST_THREADS)
+#define DELTAS_BYTES (NGOODCLASS * DELTA_BLOCK_SIZE * 2)
+  u16 *deltas;
   t1 = timeMillis();
+  checkCuda(cudaHostAlloc(&deltas, DELTAS_BYTES, 0));
+  // memset(deltas, 0xff, DELTAS_BYTES);
+  printf("Alloc: %llu ms\n", timeMillis() - t1);
 
-  u32 nLines[NGOODCLASS];
-  memset(deltas, 0, sizeof(deltas));
-  u32 prev[TEST_THREADS] = {0};
+  t1 = timeMillis();
+  u32 prev[TEST_THREADS];
   u32 *prevEnd = prev + TEST_THREADS;
   
   u64 *p = hostBits;
-  for (int ci = 0; ci < NGOODCLASS; ++ci) {
-    u32 currentWordPos = 0;
-    u16 *deltap = deltas[ci];
+  u16 *delta = (u16 *) deltas;
+  for (int ci = 0; ci < NGOODCLASS; ++ci, delta += DELTA_BLOCK_SIZE) {
+    u16 *deltap = delta;
     u32 *prevp  = prev;
-    memset(prev, 0xff, sizeof(prev));
+
+    memset(prev, 0, sizeof(prev));
+    u32 currentWordPos = 0;
+
     for (u64 *end = p + (NWORDS/2); p < end; ++p) {
       u64 w = ~*p;
       while (w) {
@@ -493,10 +502,10 @@ int main(int argc, char **argv) {
       }
       currentWordPos += 64;
     }
-    int n = deltap - deltas[ci];
-    int nl = (n + TEST_THREADS) / TEST_THREADS;
-    // printf("lines %d\n", nl);
-    nLines[ci] = nl;
+    assert(deltap + TEST_THREADS <= delta + DELTA_BLOCK_SIZE);
+    if (int partial = (deltap - delta) & (TEST_THREADS - 1)) { memset(deltap, 0xff, partial * 2); }
+    int n = deltap - delta;
+    // printf("lines %d\n", n / TEST_THREADS + 1);
   }
   printf("Extract %llu ms\n", timeMillis() - t1);
   
