@@ -398,6 +398,8 @@ bool testOne(u32 exp, u64 k) {
   return true;
 }
 
+u16 deltas[NGOODCLASS][(NBITS / 5) & ~(TEST_THREADS - 1)];
+
 int main(int argc, char **argv) {
   // cudaSetDevice(1);
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
@@ -456,7 +458,7 @@ int main(int argc, char **argv) {
   t1 = timeMillis();
   sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
 
-  u32 *hostBits = 0;
+  u64 *hostBits = 0;
   checkCuda(cudaHostAlloc(&hostBits, NGOODCLASS * NWORDS * 4, 0));
 
   cudaDeviceSynchronize(); CUDA_CHECK_ERR;
@@ -468,26 +470,35 @@ int main(int argc, char **argv) {
   printf("Copy: %llu ms\n", timeMillis() - t1);
   
   t1 = timeMillis();
-  u8 deltas[NBITS / 5];
-  int min = 100000, max = 0;
-  for (int ci = 0; ci < NGOODCLASS; ++ci) {
-    u8 *out = deltas;
-    for (u32 *p = hostBits + ci * NWORDS, *end = p + NWORDS; p < end; ++p) {
-      u32 w = ~*p;
-      while (w) {
-        int bit = __builtin_ctz(w);
-        w = w & (w - 1); // w &= ~(1 << bit);
-        *out++ = bit;
-      }
-    }
-    int n = out - deltas;
-    if (n < min) { min = n; }
-    if (n > max) { max = n; }
-    // int c = classTab[i];    
-  }
-  printf("%d %d %ld\n", min, max, sizeof(deltas));
-  printf("Extract %llu ms\n", timeMillis() - t1);
+
+  u32 nLines[NGOODCLASS];
+  memset(deltas, 0, sizeof(deltas));
+  u32 prev[TEST_THREADS] = {0};
+  u32 *prevEnd = prev + TEST_THREADS;
   
+  u64 *p = hostBits;
+  for (int ci = 0; ci < NGOODCLASS; ++ci) {
+    u32 currentWordPos = 0;
+    u16 *deltap = deltas[ci];
+    u32 *prevp  = prev;
+    memset(prev, 0xff, sizeof(prev));
+    for (u64 *end = p + (NWORDS/2); p < end; ++p) {
+      u64 w = ~*p;
+      while (w) {
+        u32 bit = currentWordPos + __builtin_ctzl(w);
+        w &= (w - 1);
+        *deltap++ = (u16) (bit - *prevp);
+        *prevp++ = bit;
+        if (prevp == prevEnd) { prevp = prev; }
+      }
+      currentWordPos += 64;
+    }
+    int n = deltap - deltas[ci];
+    int nl = (n + TEST_THREADS) / TEST_THREADS;
+    // printf("lines %d\n", nl);
+    nLines[ci] = nl;
+  }
+  printf("Extract %llu ms\n", timeMillis() - t1);
   
   /*
   printf("exp %u kStart %llu kEnd %llu k0Start %llu k0End %llu, %llu blocks %u, actual %u\n",

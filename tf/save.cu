@@ -197,3 +197,16 @@ __device__ u16 classBtc(u32 exp, u16 c, u16 prime, u16 inv) {
   p("tmp ", tmp); p("x   ", (U3){x.a, x.b, x.c}); p("d   ", d); p("r   ", r);  
   return (U3){x.a, x.b, x.c} - mulLow(tmp, m);  
   */
+
+
+    for (u64 *end = p + (NWORDS/2); p < end; ++p) {
+      u64 w = ~*p;
+      while (w) {
+        u32 bit = currentWordPos + __builtin_ctzl(w);
+        w &= (w - 1);
+        // assert(bit < prev + 256);
+        *out++ = (u8) (bit - prev);
+        prev = bit;
+      }
+      currentWordPos += 64;
+    }
