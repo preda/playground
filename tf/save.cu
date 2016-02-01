@@ -210,3 +210,56 @@ __device__ u16 classBtc(u32 exp, u16 c, u16 prime, u16 inv) {
       }
       currentWordPos += 64;
     }
+
+/*
+    int popc = 0;
+    
+    for (int i = tid; i < NWORDS; i += SIEV_THREADS) { popc += __popc(words[i] = ~words[i]); }
+  
+    u32 bits = words[tid];
+    if (tid < 32) {
+      words[0] = 0;
+      words[1] = 0xffffffff;
+    }
+    __syncthreads();
+    u32 pos = atomicAdd(words, popc | (1 << 20));
+    atomicMin(words + 1, popc);
+    __syncthreads();
+    if (tid == 0) {
+      words[0] = atomicAdd(pSize, words[0] & 0xfffff);
+    }
+    int min = words[1];
+    pos = (pos & 0xfffff) - min * (pos >> 20);
+    __syncthreads();
+    int p = words[0] + tid;
+    int i = tid;
+    u32 delta = (tid + blockIdx.x * NWORDS) * 32;
+    do {
+      while (!bits) {
+        bits = words[i += SIEV_THREADS];
+        delta += SIEV_THREADS * 32;
+      }
+      int bit = bfind(bits);
+      bits &= ~(1 << bit);
+      kTab[p] = delta + bit;
+      p += SIEV_THREADS;
+    } while (--min);
+    p += -tid + (int)pos;
+    while (true) {
+      while (!bits) {
+        i += SIEV_THREADS;
+        if (i >= NWORDS) { goto out; }
+        bits = words[i];
+        delta += SIEV_THREADS * 32;
+      }
+      int bit = bfind(bits);
+      bits &= ~(1 << bit);
+      kTab[p++] = delta + bit;
+    }
+  out:;
+  } while (--rep);
+}
+
+__global__ void __launch_bounds__(SIEV_THREADS) sievA() { sieve(&kTabSizeA, kTabA); }
+__global__ void __launch_bounds__(SIEV_THREADS) sievB() { sieve(&kTabSizeB, kTabB); }
+*/

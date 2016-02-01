@@ -80,6 +80,8 @@ bool acceptClass(u32 exp, u32 c) {
 // Number of pre-computed primes for sieving.
 #define NPRIMES (ASIZE(primes))
 
+#define TEST_LINES (NBITS / 5 / TEST_THREADS + 1)
+
 u64 timeMillis() {
   struct timeval tv;
   gettimeofday(&tv, 0);
@@ -94,6 +96,8 @@ DEVICE u32 invTab[NPRIMES];
 DEVICE int btcTabs[NGOODCLASS][NPRIMES];
 
 DEVICE u32 sievedBits[NGOODCLASS][NWORDS];
+DEVICE u16 kDeltas[NGOODCLASS][TEST_LINES * TEST_THREADS];
+
 __managed__ u64 foundFactor;  // If a factor k is found, save it here.
 __managed__ int classTab[NGOODCLASS];
 
@@ -226,20 +230,9 @@ __global__ void __launch_bounds__(INIT_BTC_THREADS) initBtcTabs(u32 exp, u64 kBa
   // if (!threadIdx.x) { printf("ended class %d (%d)\n", classTab[blockIdx.x], blockIdx.x); }
 }
 
-// 128 blocks, times an internal repeat of 32, times shared memory per block of 24KB, times 8 bits per byte == 3*2^28
-#define SIEV_BITS (128 * 32 * 24 * 1024 * 8)
-#define SIEV_REPEAT 64
-#define SIEV_BLOCKS (SIEV_BITS / (SIEV_REPEAT * NBITS))
-#define TEST_REPEAT 256
-
-// Less than 20% of bits survive sieving.
-#define KTAB_SIZE (SIEV_BITS / 5)
-__managed__ u32 kTabA[KTAB_SIZE];
-DEVICE u32 kTabB[KTAB_SIZE];
-__managed__ int kTabSizeA;
-__managed__ int kTabSizeB;
 __managed__ U3 testOut;
 
+/*
 DEVICE void test(u32 doubleExp, u32 flushedExp, u64 kBase, u32 *kTab) {
   int n = TEST_REPEAT;
   int pos = TEST_THREADS * TEST_REPEAT * blockIdx.x + threadIdx.x;
@@ -254,20 +247,13 @@ DEVICE void test(u32 doubleExp, u32 flushedExp, u64 kBase, u32 *kTab) {
     pos += TEST_THREADS;
   } while (--n);
 }
+*/
 
 __global__ void testSingle(u32 doubleExp, u32 flushedExp, u64 k) {
   U3 m = _U2(k) * doubleExp;
   m.a |= 1;
   U3 r = expMod(flushedExp, m);
   testOut = r;
-}
-
-__global__ void __launch_bounds__(TEST_THREADS, 4) testA(u32 doubleExp, u32 flushedExp, u64 k) {
-  test(doubleExp, flushedExp, k, kTabA);
-}
-
-__global__ void __launch_bounds__(TEST_THREADS, 4) testB(u32 doubleExp, u32 flushedExp, u64 k) {
-  test(doubleExp, flushedExp, k, kTabB);
 }
 
 /*
@@ -304,58 +290,6 @@ __global__ void __launch_bounds__(SIEVE_THREADS) sieve() {
     out[i] = words[i];
   }
 }
-/*
-    int popc = 0;
-    
-    for (int i = tid; i < NWORDS; i += SIEV_THREADS) { popc += __popc(words[i] = ~words[i]); }
-  
-    u32 bits = words[tid];
-    if (tid < 32) {
-      words[0] = 0;
-      words[1] = 0xffffffff;
-    }
-    __syncthreads();
-    u32 pos = atomicAdd(words, popc | (1 << 20));
-    atomicMin(words + 1, popc);
-    __syncthreads();
-    if (tid == 0) {
-      words[0] = atomicAdd(pSize, words[0] & 0xfffff);
-    }
-    int min = words[1];
-    pos = (pos & 0xfffff) - min * (pos >> 20);
-    __syncthreads();
-    int p = words[0] + tid;
-    int i = tid;
-    u32 delta = (tid + blockIdx.x * NWORDS) * 32;
-    do {
-      while (!bits) {
-        bits = words[i += SIEV_THREADS];
-        delta += SIEV_THREADS * 32;
-      }
-      int bit = bfind(bits);
-      bits &= ~(1 << bit);
-      kTab[p] = delta + bit;
-      p += SIEV_THREADS;
-    } while (--min);
-    p += -tid + (int)pos;
-    while (true) {
-      while (!bits) {
-        i += SIEV_THREADS;
-        if (i >= NWORDS) { goto out; }
-        bits = words[i];
-        delta += SIEV_THREADS * 32;
-      }
-      int bit = bfind(bits);
-      bits &= ~(1 << bit);
-      kTab[p++] = delta + bit;
-    }
-  out:;
-  } while (--rep);
-}
-
-__global__ void __launch_bounds__(SIEV_THREADS) sievA() { sieve(&kTabSizeA, kTabA); }
-__global__ void __launch_bounds__(SIEV_THREADS) sievB() { sieve(&kTabSizeB, kTabB); }
-*/
 
 void initClasses(u32 exp) {
   int nClass = 0;
@@ -377,10 +311,6 @@ inline void checkCuda(cudaError_t result) {
   if (result != cudaSuccess) { printf("CUDA Runtime Error: %s\n", cudaGetErrorString(result)); }
 }
 
-int testBlocks(int kSize) {
-  return kSize / (TEST_THREADS * TEST_REPEAT); // FIXME round up instead of down.
-}
-
 struct Test { u32 exp; u64 k; };
 
 #include "tests.inc"
@@ -397,8 +327,6 @@ bool testOne(u32 exp, u64 k) {
   }
   return true;
 }
-
-// u16 deltas[NGOODCLASS][NBITS / 5 / TEST_THREADS + 1][TEST_THREADS];
 
 int main(int argc, char **argv) {
   // cudaSetDevice(1);
@@ -423,7 +351,7 @@ int main(int argc, char **argv) {
   int p1=-1, p2=-1;
   cudaDeviceGetStreamPriorityRange(&p1, &p2);
   CUDA_CHECK_ERR;
-  printf("Priority %d %d %d\n", p1, p2, SIEV_BLOCKS);
+  printf("Priority %d %d\n", p1, p2);
   
   cudaStream_t sieveStream, testStream;
   cudaStreamCreateWithPriority(&sieveStream, cudaStreamNonBlocking, 0);
@@ -457,25 +385,22 @@ int main(int argc, char **argv) {
 
   t1 = timeMillis();
   sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
-
-  u64 *hostBits = 0;
-  checkCuda(cudaHostAlloc(&hostBits, NGOODCLASS * NWORDS * 4, 0));
-
   cudaDeviceSynchronize(); CUDA_CHECK_ERR;
   printf("Sieve: %llu ms\n", timeMillis() - t1);
 
+  t1 = timeMillis();
+  u64 *hostBits = 0;
+  checkCuda(cudaHostAlloc(&hostBits, NGOODCLASS * NWORDS * 4, 0));
+  printf("Alloc: %llu ms\n", timeMillis() - t1);
+  
   t1 = timeMillis();
   cudaMemcpyFromSymbol(hostBits, sievedBits, NGOODCLASS * NWORDS * 4, 0, cudaMemcpyDeviceToHost);
   CUDA_CHECK_ERR;
   printf("Copy: %llu ms\n", timeMillis() - t1);
   
-#define DELTA_LINES (NBITS / 5 / TEST_THREADS + 1)
-#define DELTA_BLOCK_SIZE (DELTA_LINES * TEST_THREADS)
-#define DELTAS_BYTES (NGOODCLASS * DELTA_BLOCK_SIZE * 2)
-  u16 *deltas;
+  u16 (*deltas)[TEST_LINES * TEST_THREADS];
   t1 = timeMillis();
-  checkCuda(cudaHostAlloc(&deltas, DELTAS_BYTES, 0));
-  // memset(deltas, 0xff, DELTAS_BYTES);
+  checkCuda(cudaHostAlloc(&deltas, NGOODCLASS * sizeof(deltas[0]), 0));
   printf("Alloc: %llu ms\n", timeMillis() - t1);
 
   t1 = timeMillis();
@@ -483,9 +408,8 @@ int main(int argc, char **argv) {
   u32 *prevEnd = prev + TEST_THREADS;
   
   u64 *p = hostBits;
-  u16 *delta = (u16 *) deltas;
-  for (int ci = 0; ci < NGOODCLASS; ++ci, delta += DELTA_BLOCK_SIZE) {
-    u16 *deltap = delta;
+  for (int ci = 0; ci < NGOODCLASS; ++ci) {
+    u16 *deltap = deltas[ci];
     u32 *prevp  = prev;
 
     memset(prev, 0, sizeof(prev));
@@ -502,12 +426,14 @@ int main(int argc, char **argv) {
       }
       currentWordPos += 64;
     }
-    assert(deltap + TEST_THREADS <= delta + DELTA_BLOCK_SIZE);
-    if (int partial = (deltap - delta) & (TEST_THREADS - 1)) { memset(deltap, 0xff, partial * 2); }
-    int n = deltap - delta;
-    // printf("lines %d\n", n / TEST_THREADS + 1);
+    assert(deltap + TEST_THREADS <= deltas[ci + 1]);
+    memset(deltap, 0xff, sizeof(u16) * TEST_THREADS);
   }
   printf("Extract %llu ms\n", timeMillis() - t1);
+
+  t1 = timeMillis();
+  checkCuda(cudaMemcpyToSymbol(kDeltas, deltas, NGOODCLASS * sizeof(deltas[0])));
+  printf("Copy %llu ms\n", timeMillis() - t1);
   
   /*
   printf("exp %u kStart %llu kEnd %llu k0Start %llu k0End %llu, %llu blocks %u, actual %u\n",
