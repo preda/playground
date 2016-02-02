@@ -12,8 +12,6 @@ struct U4 { u32 a, b, c, d; };
 struct U5 { u32 a, b, c, d, e; };
 struct U6 { u32 a, b, c, d, e, f; };
 
-#define DEVICE __device__ static
-
 DEVICE U6 _U6(U3 x)  { return (U6) {x.a, x.b, x.c, 0, 0, 0}; }
 DEVICE U5 _U5(U4 x)  { return (U5) {x.a, x.b, x.c, x.d, 0}; }
 DEVICE U4 _U4(U3 x)  { return (U4) {x.a, x.b, x.c, 0}; }

@@ -383,3 +383,8 @@ __global__ void __launch_bounds__(SIEV_THREADS) sievB() { sieve(&kTabSizeB, kTab
 }
 */
 
+/*
+  int btc0  = btcTabs[0][i];
+  int btcAux = btc0 - (NCLASS * NBITS % prime) * blockIdx.x % prime;
+  int btc = (btcAux < 0) ? btcAux + prime : btcAux;
+*/

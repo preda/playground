@@ -40,11 +40,25 @@
 #include <assert.h>
 #include <sys/time.h>
 #include <sys/unistd.h>
-#include "widemath.h"
 
+#define DEVICE __device__ static
 #define ASIZE(a) (sizeof(a) / sizeof(a[0]))
 
-// Thread for initBtcTabs()
+#include "widemath.h"
+#include "debug.h"
+
+// Table of small primes.
+DEVICE const u32 primes[] = {
+#include "primes-1M.inc"
+};
+// Number of pre-computed primes for sieving.
+#define NPRIMES (ASIZE(primes))
+
+// Unit tests. A series of pairs (exponent, k) where k represents a factor.
+struct Test { u32 exp; u64 k; };
+#include "tests.inc"
+
+// Threads for initBtcTabs()
 #define INIT_BTC_THREADS 256
 // Threads per sieving block.
 #define SIEVE_THREADS 512
@@ -53,20 +67,37 @@
 
 // How many words of shared memory to use for sieving.
 #define NWORDS (8 * 1024)
+// Bits for sieving (each word is 32 bits).
+#define NBITS (NWORDS << 5)
+// How many rows are needed at most in a testing block of TEST_THREADS colums.
+#define TEST_ROWS (NBITS / 5 / TEST_THREADS + 1)
 
 // Must update acceptClass() when changing these.
 #define NCLASS     (4 * 3 * 5 * 7 * 11)
 // Out of NCLASS, how many classes pass acceptClass(). Sync with NCLASS.
 #define NGOODCLASS (2 * 2 * 4 * 6 * 10)
 
-// Returns whether 2 * c * exp + 1 is 1 or 7 modulo 8.
-// Any Marsenne factor must be of this form. See http://www.mersenne.org/various/math.php
-bool q1or7mod8(u32 exp, u32 c) {
-  return !(c & 3) || ((c & 3) + (exp & 3) == 4);
+// Some powers of 2 as floats, used by inv160()
+#define TWO16f  65536.0f
+#define TWO17f  131072.0f
+#define TWO28f  268435456.0f
+#define TWO32f  4294967296.0f
+#define TWO64f  18446744073709551616.0f
+
+// Helper to check and bail out on any CUDA error.
+#define CUDA_CHECK  {cudaError_t _err = cudaGetLastError(); if (_err) { printf("CUDA error: %s\n", cudaGetErrorString(_err)); return 0; }}
+
+inline void checkCuda(cudaError_t result) {
+  if (result != cudaSuccess) { printf("CUDA Runtime Error: %s\n", cudaGetErrorString(result)); }
 }
 
+// Returns whether 2 * c * exp + 1 is 1 or 7 modulo 8.
+// Any Marsenne factor must be of this form. See http://www.mersenne.org/various/math.php
+bool q1or7mod8(u32 exp, u32 c) { return !(c & 3) || ((c & 3) + (exp & 3) == 4); }
+
 // whether 2 * c * exp + 1 != 0 modulo prime
-bool notMultiple(u32 exp, u32 c, unsigned prime) { return (2 * c * (u64) exp + 1) % prime; }
+bool notMultiple(u32 exp, u32 c, unsigned prime) { return (2 * c * (u64) exp) % prime != prime - 1; }
+// { return (2 * c * (u64) exp + 1) % prime; }
 
 bool acceptClass(u32 exp, u32 c) {
 #define P(p) notMultiple(exp, c, p)
@@ -74,39 +105,26 @@ bool acceptClass(u32 exp, u32 c) {
 #undef P
 }
 
-// Bits for sieving.
-#define NBITS (NWORDS << 5)
-
-// Number of pre-computed primes for sieving.
-#define NPRIMES (ASIZE(primes))
-
-#define TEST_LINES (NBITS / 5 / TEST_THREADS + 1)
-
 u64 timeMillis() {
   struct timeval tv;
   gettimeofday(&tv, 0);
   return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
-DEVICE const u32 primes[] = {
-#include "primes-1M.inc"
-};
-
+// Table with inv(exp). Initialized once per exponent.
 DEVICE u32 invTab[NPRIMES];
+
+// "Bit to clear" table, depends on exponent, k0, and class; initialized once per exponent.
 DEVICE int btcTabs[NGOODCLASS][NPRIMES];
 
+// Sieved bits are aggregated from shared memory after sieve() to this global memory block.
 DEVICE u32 sievedBits[NGOODCLASS][NWORDS];
-DEVICE u16 kDeltas[NGOODCLASS][TEST_LINES * TEST_THREADS];
 
-__managed__ u64 foundFactor;  // If a factor k is found, save it here.
+// Deltas of Ks for testing. This is a derivate of the sieved bits.
+DEVICE u16 kDeltas[NGOODCLASS][TEST_ROWS * TEST_THREADS];
+
+__managed__ U3 testOut; // If a factor m is found, save it here.
 __managed__ int classTab[NGOODCLASS];
-
-#ifndef DNDEBUG
-
-DEVICE void p(const char *s, U4 x) { printf("%6s 0x%08x%08x%08x%08x\n", s, x.d, x.c, x.b, x.a); }
-DEVICE void p(const char *s, U3 x) { printf("%6s 0x%08x%08x%08x\n", s, x.c, x.b, x.a); }
-
-#endif
 
 // Returns x % m, given u the "inverse" of m (2**160 / m); m at most 77 bits.
 DEVICE U3 mod(U5 x, U3 m, U3 u) {
@@ -116,19 +134,13 @@ DEVICE U3 mod(U5 x, U3 m, U3 u) {
 // Returns the position of the most significant bit that is set.
 DEVICE int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
 
-#define TWO16f  65536.0f
-#define TWO17f  131072.0f
-#define TWO28f  268435456.0f
-#define TWO32f  4294967296.0f
-#define TWO64f  18446744073709551616.0f
-#define TWO32m1 0xffffffff
-
-// Returns float lower approximation of 2**32 / x
+// float lower approximation of 2**32 / x
 DEVICE float floatInv(U3 x) { return __frcp_rd(__ull2float_ru(_u64(shr1w(x)) + 1)); }
 
-// Returns float lower approximation of a + b * 2**32; (__fmaf_rz(b, TWO32f, a))
+// float lower approximation of a + b * 2**32; (__fmaf_rz(b, TWO32f, a))
 DEVICE float floatOf(u32 a, u32 b) { return __ull2float_rz(_u64((U2) {a, b})); }
 
+// float lower approximation of (a + b * 2**32) * nf
 DEVICE float floatOf(u32 a, u32 b, float nf) { return __fmul_rz(floatOf(a, b), nf); }
 
 // Returns 2**160 / n
@@ -230,8 +242,6 @@ __global__ void __launch_bounds__(INIT_BTC_THREADS) initBtcTabs(u32 exp, u64 kBa
   // if (!threadIdx.x) { printf("ended class %d (%d)\n", classTab[blockIdx.x], blockIdx.x); }
 }
 
-__managed__ U3 testOut;
-
 __global__ void __launch_bounds__(TEST_THREADS) test(u32 doubleExp, u32 flushedExp, u64 k0) {
   // if (!threadIdx.x) { printf("Start %d\n", blockIdx.x); }
   k0 += classTab[blockIdx.x];
@@ -245,28 +255,12 @@ __global__ void __launch_bounds__(TEST_THREADS) test(u32 doubleExp, u32 flushedE
     U3 r = expMod(flushedExp, m);
     ++n;
     if (r == (U3) {1, 0, 0}) {
-      p("factor k: ", m);
-      // foundFactor = k0 + kTab[pos];
+      print("factor k: ", m);
+      testOut = m;
     }
   }
   // if (!threadIdx.x) { printf("End %d %d\n", blockIdx.x, n); }
 }
-
-/*
-  int n = TEST_REPEAT;
-  int pos = TEST_THREADS * TEST_REPEAT * blockIdx.x + threadIdx.x;
-  do {
-    U3 m = _U2(kBase + kTab[pos] * (u64) NCLASS) * doubleExp;
-    m.a |= 1;
-    U3 r = expMod(flushedExp, m);
-    if (r == (U3) {1, 0, 0}) {
-      p("factor k: ", m);
-      foundFactor = kTab[pos];
-    }
-    pos += TEST_THREADS;
-  } while (--n);
-}
-*/
 
 __global__ void testSingle(u32 doubleExp, u32 flushedExp, u64 k) {
   U3 m = _U2(k) * doubleExp;
@@ -275,19 +269,16 @@ __global__ void testSingle(u32 doubleExp, u32 flushedExp, u64 k) {
   testOut = r;
 }
 
-/*
-  int btc0  = btcTabs[0][i];
-  int btcAux = btc0 - (NCLASS * NBITS % prime) * blockIdx.x % prime;
-  int btc = (btcAux < 0) ? btcAux + prime : btcAux;
-*/
-
+// Sieve bits using shared memory.
+// For each prime from the primes[] table, starting at a position corresponding to a
+// multiple of prime ("btc"), periodically set the bit to indicate a non-prime.
+// At the end copy the sieved bits (negated, so that the prime candidates correspond to 1-bits)
+// to global memory.
 __global__ void __launch_bounds__(SIEVE_THREADS) sieve() {
   __shared__ u32 words[NWORDS];
 
   // Set shared memory to zero.
-  for (int i = threadIdx.x; i < NWORDS; i += blockDim.x) {
-    words[i] = 0;
-  }
+  for (int i = threadIdx.x; i < NWORDS; i += blockDim.x) { words[i] = 0; }
   __syncthreads();
 
   // Sieve bits.
@@ -306,10 +297,12 @@ __global__ void __launch_bounds__(SIEVE_THREADS) sieve() {
   // Copy shared memory to global memory.
   u32 *out = sievedBits[blockIdx.x];
   for (int i = threadIdx.x; i < NWORDS; i += blockDim.x) {
-    out[i] = words[i];
+    out[i] = ~words[i];
   }
 }
 
+// Among all the NCLASS classes, select the ones that are "good",
+// i.e. not corresponding to a multiple of a small prime.
 void initClasses(u32 exp) {
   int nClass = 0;
   for (int c = 0; c < NCLASS; ++c) {
@@ -323,26 +316,16 @@ void initClasses(u32 exp) {
   assert(nClass == NGOODCLASS);
 }
 
-u64 calculateK(u32 exp, int bits) {
-  return (((u128) 1) << (bits - 1)) / exp;
-}
+// The smallest k that produces a factor m = (2*k*exp + 1) such that m >= 2**bits
+u64 calculateK(u32 exp, int bits) { return ((((u128) 1) << (bits - 1)) + (exp - 2)) / exp; }
 
-#define CUDA_CHECK_ERR  {cudaError_t _err = cudaGetLastError(); if (_err) { printf("CUDA error: %s\n", cudaGetErrorString(_err)); return 0; }}
-
-inline void checkCuda(cudaError_t result) {
-  if (result != cudaSuccess) { printf("CUDA Runtime Error: %s\n", cudaGetErrorString(result)); }
-}
-
-struct Test { u32 exp; u64 k; };
-
-#include "tests.inc"
-
+// Run one unit-test case.
 bool testOne(u32 exp, u64 k) {  
   u32 flushedExp = exp << __builtin_clz(exp);
   u32 doubleExp = exp + exp;
   printf("\r%10u %20llu", exp, k);
   testSingle<<<1, 1>>>(doubleExp, flushedExp, k);
-  cudaDeviceSynchronize(); CUDA_CHECK_ERR;
+  cudaDeviceSynchronize(); CUDA_CHECK;
   if (testOut.a != 1 || testOut.b || testOut.c) {
     printf("ERROR %10u %20llu m ", exp, k);
     return false;
@@ -353,7 +336,7 @@ bool testOne(u32 exp, u64 k) {
 int main(int argc, char **argv) {
   // cudaSetDevice(1);
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
-  CUDA_CHECK_ERR;
+  CUDA_CHECK;
   
   assert(argc > 0);
   if (argc == 1) {
@@ -372,14 +355,14 @@ int main(int argc, char **argv) {
 
   int p1=-1, p2=-1;
   cudaDeviceGetStreamPriorityRange(&p1, &p2);
-  CUDA_CHECK_ERR;
+  CUDA_CHECK;
   printf("Priority %d %d\n", p1, p2);
   
   cudaStream_t sieveStream, testStream;
   cudaStreamCreateWithPriority(&sieveStream, cudaStreamNonBlocking, 0);
-  CUDA_CHECK_ERR;
+  CUDA_CHECK;
   cudaStreamCreateWithPriority(&testStream, cudaStreamNonBlocking, 1);
-  CUDA_CHECK_ERR;
+  CUDA_CHECK;
   
   u64 t1 = timeMillis();
   u64 t0 = t1;
@@ -399,17 +382,17 @@ int main(int argc, char **argv) {
   
   t1 = timeMillis();
   initInvTab<<<NPRIMES/1024, 1024>>>(exp);
-  cudaDeviceSynchronize(); CUDA_CHECK_ERR;
+  cudaDeviceSynchronize(); CUDA_CHECK;
   printf("initInvTab: %llu ms\n", timeMillis() - t1);
 
   t1 = timeMillis();
   initBtcTabs<<<NGOODCLASS, INIT_BTC_THREADS>>>(exp, k0Start);
-  cudaDeviceSynchronize(); CUDA_CHECK_ERR;
+  cudaDeviceSynchronize(); CUDA_CHECK;
   printf("initBtcTabs: %llu ms\n", timeMillis() - t1);
 
   t1 = timeMillis();
   sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
-  cudaDeviceSynchronize(); CUDA_CHECK_ERR;
+  cudaDeviceSynchronize(); CUDA_CHECK;
   printf("Sieve: %llu ms\n", timeMillis() - t1);
 
   t1 = timeMillis();
@@ -419,10 +402,10 @@ int main(int argc, char **argv) {
   
   t1 = timeMillis();
   cudaMemcpyFromSymbol(hostBits, sievedBits, NGOODCLASS * NWORDS * 4, 0, cudaMemcpyDeviceToHost);
-  CUDA_CHECK_ERR;
+  CUDA_CHECK;
   printf("Copy: %llu ms\n", timeMillis() - t1);
   
-  u16 (*deltas)[TEST_LINES * TEST_THREADS];
+  u16 (*deltas)[TEST_ROWS * TEST_THREADS];
   t1 = timeMillis();
   checkCuda(cudaHostAlloc(&deltas, NGOODCLASS * sizeof(deltas[0]), 0));
   printf("Alloc: %llu ms\n", timeMillis() - t1);
@@ -440,7 +423,7 @@ int main(int argc, char **argv) {
     u32 currentWordPos = 0;
 
     for (u64 *end = p + (NWORDS/2); p < end; ++p) {
-      u64 w = ~*p;
+      u64 w = *p;
       while (w) {
         u32 bit = currentWordPos + __builtin_ctzl(w);
         w &= (w - 1);
@@ -461,6 +444,6 @@ int main(int argc, char **argv) {
 
   t1 = timeMillis();
   test<<<NGOODCLASS, TEST_THREADS>>>(doubleExp, flushedExp, k0Start);
-  cudaDeviceSynchronize(); CUDA_CHECK_ERR;
+  cudaDeviceSynchronize(); CUDA_CHECK;
   printf("Test %llu ms\n", timeMillis() - t1); 
 }
