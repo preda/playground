@@ -123,6 +123,11 @@ DEVICE u32 sievedBits[NGOODCLASS][NWORDS];
 // Deltas of Ks for testing. This is a derivate of the sieved bits.
 DEVICE u16 kDeltas[NGOODCLASS][TEST_ROWS * TEST_THREADS];
 
+// Alternative tab, see sieve()
+DEVICE u32 kTab[NGOODCLASS][NBITS / 5];
+// kTabSize[i] has the number of elements in kTab[i]
+DEVICE u32 kTabSize[NGOODCLASS];
+
 __managed__ U3 foundFactor; // If a factor m is found, save it here.
 __managed__ int classTab[NGOODCLASS];
 
@@ -266,6 +271,9 @@ __global__ void testSingle(u32 doubleExp, u32 flushedExp, u64 k) {
   foundFactor = r;
 }
 
+// Returns the position of the most significant bit that is set.
+DEVICE int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
+
 // Sieve bits using shared memory.
 // For each prime from the primes[] table, starting at a position corresponding to a
 // multiple of prime ("btc"), periodically set the bit to indicate a non-prime.
@@ -291,10 +299,33 @@ __global__ void __launch_bounds__(SIEVE_THREADS) sieve() {
   }
   __syncthreads();
 
+  /*
   // Copy shared memory to global memory.
   u32 *out = sievedBits[blockIdx.x];
   for (int i = threadIdx.x; i < NWORDS; i += blockDim.x) {
     out[i] = ~words[i];
+  }
+  */
+
+  u32 bits = ~words[threadIdx.x];
+  words[threadIdx.x] = 0;
+  __syncthreads();
+  
+  int popc = __popc(bits);
+  for (int i = blockDim.x + threadIdx.x; i < NWORDS; i += blockDim.x) { popc += __popc(~words[i]); }
+  u32 *out = kTab[blockIdx.x] + atomicAdd(words, popc);
+  __syncthreads();
+
+  if (threadIdx.x == 0) { kTabSize[blockIdx.x] = words[0]; }
+  int i = threadIdx.x;
+  while (true) {
+    while (bits) {
+      int bit = bfind(bits);
+      bits &= ~(1 << bit);
+      *out++ = (i << 5) + bit;
+    }
+    if ((i += blockDim.x) >= NWORDS) { break; }
+    bits = ~words[i];
   }
 }
 
@@ -414,6 +445,10 @@ int main(int argc, char **argv) {
   time("Alloc deltas");
   cudaDeviceSynchronize(); time("init inv + btc");
 
+  sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
+  cudaDeviceSynchronize(); CUDA_CHECK; time("Sieve");
+  
+  /*
   for (int i = 0; i < 40; ++i, k0 += kStep) {
     sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
     cudaDeviceSynchronize(); CUDA_CHECK; time("Sieve");
@@ -431,6 +466,7 @@ int main(int argc, char **argv) {
 
     // if (foundFactor.a || foundFactor.b || foundFactor.c) { break; }
   }
+  */
 }
 
   /*
