@@ -131,9 +131,6 @@ DEVICE U3 mod(U5 x, U3 m, U3 u) {
   return (U3){x.a, x.b, x.c} - mulLow(m, shr3wMul((U3) {x.c, x.d, x.e}, u));
 }
 
-// Returns the position of the most significant bit that is set.
-DEVICE int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
-
 // float lower approximation of 2**32 / x
 DEVICE float floatInv(U3 x) { return __frcp_rd(__ull2float_ru(_u64(shr1w(x)) + 1)); }
 
@@ -333,12 +330,23 @@ bool testOne(u32 exp, u64 k) {
   return true;
 }
 
+void time(const char *s = 0) {
+  static u64 prev = 0;
+  u64 now = timeMillis();
+  if (prev && s) {
+    printf("%s: %llu ms\n", s, now - prev);
+  }
+  prev = now;
+}
+
 int main(int argc, char **argv) {
   // cudaSetDevice(1);
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
   CUDA_CHECK;
   
   assert(argc > 0);
+  assert(NPRIMES % 1024 == 0);
+  
   if (argc == 1) {
     printf("Running selftest..\n");
     for (Test *t = tests, *end = tests + ASIZE(tests); t < end; ++t) {
@@ -351,66 +359,49 @@ int main(int argc, char **argv) {
   u32 exp = (u32) atol(argv[1]);
   int startPow2 = (argc >= 3) ? atoi(argv[2]) : 65;
   
-  assert(NPRIMES % 1024 == 0);
-
-  int p1=-1, p2=-1;
-  cudaDeviceGetStreamPriorityRange(&p1, &p2);
-  CUDA_CHECK;
-  printf("Priority %d %d\n", p1, p2);
-  
-  cudaStream_t sieveStream, testStream;
-  cudaStreamCreateWithPriority(&sieveStream, cudaStreamNonBlocking, 0);
-  CUDA_CHECK;
-  cudaStreamCreateWithPriority(&testStream, cudaStreamNonBlocking, 1);
-  CUDA_CHECK;
-  
-  u64 t1 = timeMillis();
-  u64 t0 = t1;
+  time();
   initClasses(exp);
-  printf("initClasses: %llu ms\n", timeMillis() - t1);
+  time("initClasses");
 
-  u64 kStart = calculateK(exp, startPow2);
-  u64 kEnd   = calculateK(exp, startPow2 + 1);
-  u64 k0Start = kStart - (kStart % NCLASS);
-  u64 k0End   = kEnd + (NCLASS - (kEnd % NCLASS)) % NCLASS;
+  u64 k0 = calculateK(exp, startPow2);
+  k0 -= k0 % NCLASS;
+  
+  u64 kEnd = calculateK(exp, startPow2 + 1);
+  kEnd += (NCLASS - (kEnd % NCLASS)) % NCLASS;
+
   u32 blockSize = NBITS * NCLASS;
-  u32 blocks = (kEnd - k0Start + (blockSize - 1)) / blockSize;
+  u32 repeat = (kEnd - k0 + (blockSize - 1)) / blockSize;
+
   u32 flushedExp = exp << __builtin_clz(exp);
   u32 doubleExp = exp + exp;
 
-  printf("k0 %llu\n", k0Start);
+  printf("k range: %llu - %llu. %u iterations.\n", k0, kEnd, repeat);
   
-  t1 = timeMillis();
+  time();
   initInvTab<<<NPRIMES/1024, 1024>>>(exp);
   cudaDeviceSynchronize(); CUDA_CHECK;
-  printf("initInvTab: %llu ms\n", timeMillis() - t1);
+  time("initInvTab");
 
-  t1 = timeMillis();
-  initBtcTabs<<<NGOODCLASS, INIT_BTC_THREADS>>>(exp, k0Start);
+  initBtcTabs<<<NGOODCLASS, INIT_BTC_THREADS>>>(exp, k0);
   cudaDeviceSynchronize(); CUDA_CHECK;
-  printf("initBtcTabs: %llu ms\n", timeMillis() - t1);
+  time("initBtcTabs");
 
-  t1 = timeMillis();
   sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
   cudaDeviceSynchronize(); CUDA_CHECK;
-  printf("Sieve: %llu ms\n", timeMillis() - t1);
+  time("Sieve");
 
-  t1 = timeMillis();
   u64 *hostBits = 0;
   checkCuda(cudaHostAlloc(&hostBits, NGOODCLASS * NWORDS * 4, 0));
-  printf("Alloc: %llu ms\n", timeMillis() - t1);
+  time("Alloc hostBits");
   
-  t1 = timeMillis();
   cudaMemcpyFromSymbol(hostBits, sievedBits, NGOODCLASS * NWORDS * 4, 0, cudaMemcpyDeviceToHost);
   CUDA_CHECK;
-  printf("Copy: %llu ms\n", timeMillis() - t1);
+  time("Copy from device");
   
   u16 (*deltas)[TEST_ROWS * TEST_THREADS];
-  t1 = timeMillis();
   checkCuda(cudaHostAlloc(&deltas, NGOODCLASS * sizeof(deltas[0]), 0));
-  printf("Alloc: %llu ms\n", timeMillis() - t1);
+  time("Alloc deltas");
 
-  t1 = timeMillis();
   u32 prev[TEST_THREADS];
   u32 *prevEnd = prev + TEST_THREADS;
   
@@ -436,14 +427,25 @@ int main(int argc, char **argv) {
     assert(deltap + TEST_THREADS <= deltas[ci + 1]);
     memset(deltap, 0xff, sizeof(u16) * TEST_THREADS);
   }
-  printf("Extract %llu ms\n", timeMillis() - t1);
+  time("Extract bits");
 
-  t1 = timeMillis();
   checkCuda(cudaMemcpyToSymbol(kDeltas, deltas, NGOODCLASS * sizeof(deltas[0])));
-  printf("Copy %llu ms\n", timeMillis() - t1);
+  time("Copy to device");
 
-  t1 = timeMillis();
-  test<<<NGOODCLASS, TEST_THREADS>>>(doubleExp, flushedExp, k0Start);
+  test<<<NGOODCLASS, TEST_THREADS>>>(doubleExp, flushedExp, k0);
   cudaDeviceSynchronize(); CUDA_CHECK;
-  printf("Test %llu ms\n", timeMillis() - t1); 
+  time("Test");
 }
+
+  /*
+  int p1=-1, p2=-1;
+  cudaDeviceGetStreamPriorityRange(&p1, &p2);
+  CUDA_CHECK;
+  printf("Priority %d %d\n", p1, p2);
+  
+  cudaStream_t sieveStream, testStream;
+  cudaStreamCreateWithPriority(&sieveStream, cudaStreamNonBlocking, 0);
+  CUDA_CHECK;
+  cudaStreamCreateWithPriority(&testStream, cudaStreamNonBlocking, 1);
+  CUDA_CHECK;
+  */

@@ -388,3 +388,6 @@ __global__ void __launch_bounds__(SIEV_THREADS) sievB() { sieve(&kTabSizeB, kTab
   int btcAux = btc0 - (NCLASS * NBITS % prime) * blockIdx.x % prime;
   int btc = (btcAux < 0) ? btcAux + prime : btcAux;
 */
+
+// Returns the position of the most significant bit that is set.
+DEVICE int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
