@@ -388,3 +388,75 @@ __global__ void __launch_bounds__(SIEV_THREADS) sievB() { sieve(&kTabSizeB, kTab
   int btcAux = btc0 - (NCLASS * NBITS % prime) * blockIdx.x % prime;
   int btc = (btcAux < 0) ? btcAux + prime : btcAux;
 */
+
+
+--------------- below bit expand on cpu  --------
+
+void extractBits(u64 *bits, u16 (*deltas)[TEST_ROWS * TEST_THREADS]) {
+  u32 prev[TEST_THREADS];
+  u32 *prevEnd = prev + TEST_THREADS;
+  
+  u64 *p = bits;
+  for (int ci = 0; ci < NGOODCLASS; ++ci) {
+    u16 *deltap = deltas[ci];
+    u32 *prevp  = prev;
+
+    memset(prev, 0, sizeof(prev));
+    u32 currentWordPos = 0;
+
+    for (u64 *end = p + (NWORDS/2); p < end; ++p) {
+      u64 w = *p;
+      while (w) {
+        u32 bit = currentWordPos + __builtin_ctzl(w);
+        w &= (w - 1);
+        *deltap++ = (u16) (bit - *prevp);
+        *prevp++ = bit;
+        if (prevp == prevEnd) { prevp = prev; }
+      }
+      currentWordPos += 64;
+    }
+    assert(deltap + TEST_THREADS <= deltas[ci + 1]);
+    memset(deltap, 0xff, sizeof(u16) * TEST_THREADS);
+  }
+}
+
+  u64 *hostBits = 0;
+  checkCuda(cudaHostAlloc(&hostBits, NGOODCLASS * NWORDS * 4, 0));
+  time("Alloc hostBits");
+
+  u16 (*deltas)[TEST_ROWS * TEST_THREADS];
+  checkCuda(cudaHostAlloc(&deltas, NGOODCLASS * sizeof(deltas[0]), 0));
+  time("Alloc deltas");
+  cudaDeviceSynchronize(); time("init inv + btc");
+
+    /*
+    cudaMemcpyFromSymbol(hostBits, sievedBits, NGOODCLASS * NWORDS * 4, 0, cudaMemcpyDeviceToHost);
+    CUDA_CHECK; time("Copy from device");
+  
+    extractBits(hostBits, deltas); time("Extract bits");
+
+    cudaMemcpyToSymbol(kDeltas, deltas, NGOODCLASS * sizeof(deltas[0]));
+    CUDA_CHECK; time("Copy to device");
+    */
+
+// Sieved bits are aggregated from shared memory after sieve() to this global memory block.
+DEVICE u32 sievedBits[NGOODCLASS][NWORDS];
+
+// Deltas of Ks for testing. This is a derivate of the sieved bits.
+DEVICE u16 kDeltas[NGOODCLASS][TEST_ROWS * TEST_THREADS];
+
+
+
+
+  /*
+  int p1=-1, p2=-1;
+  cudaDeviceGetStreamPriorityRange(&p1, &p2);
+  CUDA_CHECK;
+  printf("Priority %d %d\n", p1, p2);
+  
+  cudaStream_t sieveStream, testStream;
+  cudaStreamCreateWithPriority(&sieveStream, cudaStreamNonBlocking, 0);
+  CUDA_CHECK;
+  cudaStreamCreateWithPriority(&testStream, cudaStreamNonBlocking, 1);
+  CUDA_CHECK;
+  */
