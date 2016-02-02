@@ -123,7 +123,7 @@ DEVICE u32 sievedBits[NGOODCLASS][NWORDS];
 // Deltas of Ks for testing. This is a derivate of the sieved bits.
 DEVICE u16 kDeltas[NGOODCLASS][TEST_ROWS * TEST_THREADS];
 
-__managed__ U3 testOut; // If a factor m is found, save it here.
+__managed__ U3 foundFactor; // If a factor m is found, save it here.
 __managed__ int classTab[NGOODCLASS];
 
 // Returns x % m, given u the "inverse" of m (2**160 / m); m at most 77 bits.
@@ -253,7 +253,7 @@ __global__ void __launch_bounds__(TEST_THREADS) test(u32 doubleExp, u32 flushedE
     ++n;
     if (r == (U3) {1, 0, 0}) {
       print("factor k: ", m);
-      testOut = m;
+      foundFactor = m;
     }
   }
   // if (!threadIdx.x) { printf("End %d %d\n", blockIdx.x, n); }
@@ -263,7 +263,7 @@ __global__ void testSingle(u32 doubleExp, u32 flushedExp, u64 k) {
   U3 m = _U2(k) * doubleExp;
   m.a |= 1;
   U3 r = expMod(flushedExp, m);
-  testOut = r;
+  foundFactor = r;
 }
 
 // Sieve bits using shared memory.
@@ -305,9 +305,7 @@ void initClasses(u32 exp) {
   for (int c = 0; c < NCLASS; ++c) {
     if (acceptClass(exp, c)) {
       classTab[nClass++] = c;
-      if (c == 992) {
-        printf("class id %d\n", nClass - 1);
-      }
+      // if (c == 992) { printf("class id %d\n", nClass - 1); }
     }
   }
   assert(nClass == NGOODCLASS);
@@ -323,89 +321,18 @@ bool testOne(u32 exp, u64 k) {
   printf("\r%10u %20llu", exp, k);
   testSingle<<<1, 1>>>(doubleExp, flushedExp, k);
   cudaDeviceSynchronize(); CUDA_CHECK;
-  if (testOut.a != 1 || testOut.b || testOut.c) {
+  if (foundFactor.a != 1 || foundFactor.b || foundFactor.c) {
     printf("ERROR %10u %20llu m ", exp, k);
     return false;
   }
   return true;
 }
 
-void time(const char *s = 0) {
-  static u64 prev = 0;
-  u64 now = timeMillis();
-  if (prev && s) {
-    printf("%s: %llu ms\n", s, now - prev);
-  }
-  prev = now;
-}
-
-int main(int argc, char **argv) {
-  // cudaSetDevice(1);
-  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
-  CUDA_CHECK;
-  
-  assert(argc > 0);
-  assert(NPRIMES % 1024 == 0);
-  
-  if (argc == 1) {
-    printf("Running selftest..\n");
-    for (Test *t = tests, *end = tests + ASIZE(tests); t < end; ++t) {
-      if (!testOne(t->exp, t->k)) { return -1; }
-    }
-    printf("\n%lu tests passed ok\n", ASIZE(tests));
-    return 0;
-  }
-
-  u32 exp = (u32) atol(argv[1]);
-  int startPow2 = (argc >= 3) ? atoi(argv[2]) : 65;
-  
-  time();
-  initClasses(exp);
-  time("initClasses");
-
-  u64 k0 = calculateK(exp, startPow2);
-  k0 -= k0 % NCLASS;
-  
-  u64 kEnd = calculateK(exp, startPow2 + 1);
-  kEnd += (NCLASS - (kEnd % NCLASS)) % NCLASS;
-
-  u32 blockSize = NBITS * NCLASS;
-  u32 repeat = (kEnd - k0 + (blockSize - 1)) / blockSize;
-
-  u32 flushedExp = exp << __builtin_clz(exp);
-  u32 doubleExp = exp + exp;
-
-  printf("k range: %llu - %llu. %u iterations.\n", k0, kEnd, repeat);
-  
-  time();
-  initInvTab<<<NPRIMES/1024, 1024>>>(exp);
-  cudaDeviceSynchronize(); CUDA_CHECK;
-  time("initInvTab");
-
-  initBtcTabs<<<NGOODCLASS, INIT_BTC_THREADS>>>(exp, k0);
-  cudaDeviceSynchronize(); CUDA_CHECK;
-  time("initBtcTabs");
-
-  sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
-  cudaDeviceSynchronize(); CUDA_CHECK;
-  time("Sieve");
-
-  u64 *hostBits = 0;
-  checkCuda(cudaHostAlloc(&hostBits, NGOODCLASS * NWORDS * 4, 0));
-  time("Alloc hostBits");
-  
-  cudaMemcpyFromSymbol(hostBits, sievedBits, NGOODCLASS * NWORDS * 4, 0, cudaMemcpyDeviceToHost);
-  CUDA_CHECK;
-  time("Copy from device");
-  
-  u16 (*deltas)[TEST_ROWS * TEST_THREADS];
-  checkCuda(cudaHostAlloc(&deltas, NGOODCLASS * sizeof(deltas[0]), 0));
-  time("Alloc deltas");
-
+void extractBits(u64 *bits, u16 (*deltas)[TEST_ROWS * TEST_THREADS]) {
   u32 prev[TEST_THREADS];
   u32 *prevEnd = prev + TEST_THREADS;
   
-  u64 *p = hostBits;
+  u64 *p = bits;
   for (int ci = 0; ci < NGOODCLASS; ++ci) {
     u16 *deltap = deltas[ci];
     u32 *prevp  = prev;
@@ -427,14 +354,83 @@ int main(int argc, char **argv) {
     assert(deltap + TEST_THREADS <= deltas[ci + 1]);
     memset(deltap, 0xff, sizeof(u16) * TEST_THREADS);
   }
-  time("Extract bits");
+}
 
-  checkCuda(cudaMemcpyToSymbol(kDeltas, deltas, NGOODCLASS * sizeof(deltas[0])));
-  time("Copy to device");
+void time(const char *s = 0) {
+  static u64 prev = 0;
+  u64 now = timeMillis();
+  if (prev && s) {
+    printf("%s: %llu ms\n", s, now - prev);
+  }
+  prev = now;
+}
 
-  test<<<NGOODCLASS, TEST_THREADS>>>(doubleExp, flushedExp, k0);
-  cudaDeviceSynchronize(); CUDA_CHECK;
-  time("Test");
+int main(int argc, char **argv) {
+  assert(argc > 0);
+  assert(NPRIMES % 1024 == 0);
+  
+  // cudaSetDevice(1);
+  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync); CUDA_CHECK;
+  
+  // foundFactor = (U3) {0, 0, 0};
+    
+  if (argc == 1) {
+    printf("Running selftest..\n");
+    for (Test *t = tests, *end = tests + ASIZE(tests); t < end; ++t) {
+      if (!testOne(t->exp, t->k)) { return -1; }
+    }
+    printf("\n%lu tests passed ok\n", ASIZE(tests));
+    return 0;
+  }
+
+  u32 exp = (u32) atol(argv[1]);
+  int startPow2 = (argc >= 3) ? atoi(argv[2]) : 65;
+  
+  time();
+  initClasses(exp);
+  time("initClasses");
+
+  u64 k0 = calculateK(exp, startPow2);
+  k0 -= k0 % NCLASS;
+  u64 kEnd = calculateK(exp, startPow2 + 1);
+  kEnd += (NCLASS - (kEnd % NCLASS)) % NCLASS;
+  u32 kStep = NBITS * NCLASS;
+  u32 repeat = (kEnd - k0 + (kStep - 1)) / kStep;
+  u32 flushedExp = exp << __builtin_clz(exp);
+  u32 doubleExp = exp + exp;
+  printf("k range: %llu - %llu. %u iterations.\n", k0, kEnd, repeat);
+    
+  initInvTab<<<NPRIMES/1024, 1024>>>(exp); CUDA_CHECK;
+  // cudaDeviceSynchronize(); time("initInvTab");
+  initBtcTabs<<<NGOODCLASS, INIT_BTC_THREADS>>>(exp, k0); CUDA_CHECK;
+  // cudaDeviceSynchronize(); time("initBtcTabs");
+
+  u64 *hostBits = 0;
+  checkCuda(cudaHostAlloc(&hostBits, NGOODCLASS * NWORDS * 4, 0));
+  time("Alloc hostBits");
+
+  u16 (*deltas)[TEST_ROWS * TEST_THREADS];
+  checkCuda(cudaHostAlloc(&deltas, NGOODCLASS * sizeof(deltas[0]), 0));
+  time("Alloc deltas");
+  cudaDeviceSynchronize(); time("init inv + btc");
+
+  for (int i = 0; i < 40; ++i, k0 += kStep) {
+    sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
+    cudaDeviceSynchronize(); CUDA_CHECK; time("Sieve");
+
+    cudaMemcpyFromSymbol(hostBits, sievedBits, NGOODCLASS * NWORDS * 4, 0, cudaMemcpyDeviceToHost);
+    CUDA_CHECK; time("Copy from device");
+  
+    extractBits(hostBits, deltas); time("Extract bits");
+
+    cudaMemcpyToSymbol(kDeltas, deltas, NGOODCLASS * sizeof(deltas[0]));
+    CUDA_CHECK; time("Copy to device");
+
+    test<<<NGOODCLASS, TEST_THREADS>>>(doubleExp, flushedExp, k0);
+    cudaDeviceSynchronize(); CUDA_CHECK; time("Test");
+
+    // if (foundFactor.a || foundFactor.b || foundFactor.c) { break; }
+  }
 }
 
   /*
