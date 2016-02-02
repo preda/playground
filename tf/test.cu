@@ -129,6 +129,7 @@ DEVICE u32 kTab[NGOODCLASS][NBITS / 5];
 DEVICE u32 kTabSize[NGOODCLASS];
 
 __managed__ U3 foundFactor; // If a factor m is found, save it here.
+__managed__ u64 foundK; //K for a found factor.
 __managed__ int classTab[NGOODCLASS];
 
 // Returns x % m, given u the "inverse" of m (2**160 / m); m at most 77 bits.
@@ -246,19 +247,17 @@ __global__ void __launch_bounds__(INIT_BTC_THREADS) initBtcTabs(u32 exp, u64 kBa
 
 __global__ void __launch_bounds__(TEST_THREADS) test(u32 doubleExp, u32 flushedExp, u64 k0) {
   // if (!threadIdx.x) { printf("Start %d\n", blockIdx.x); }
-  k0 += classTab[blockIdx.x];
-  U3 m = _U2(k0) * doubleExp;
-  m.a |= 1;
+  U3 m0 = _U2(k0 + classTab[blockIdx.x]) * doubleExp;
+  m0.a |= 1;
   int n = 0;
-  for (u16 *deltas = kDeltas[blockIdx.x]; ; deltas += blockDim.x) {
-    u16 delta = deltas[threadIdx.x];
-    if (delta == 0xffff) { break; }
-    m = m + _U2(delta * (u32) NCLASS * (u64) doubleExp);
-    U3 r = expMod(flushedExp, m);
+  u32 *kTabBase = kTab[blockIdx.x];
+  for (u32 *p = kTabBase + threadIdx.x, *end = kTabBase + kTabSize[blockIdx.x]; p < end; p += blockDim.x) {
+    u32 delta = *p;
+    U3 r = expMod(flushedExp, m0 + _U2(NCLASS * (u64) delta * doubleExp));
     ++n;
     if (r == (U3) {1, 0, 0}) {
-      print("factor k: ", m);
-      foundFactor = m;
+      foundK = k0 + classTab[blockIdx.x] + NCLASS * (u64) delta;
+      printf("factor k: %llu\n", foundK);
     }
   }
   // if (!threadIdx.x) { printf("End %d %d\n", blockIdx.x, n); }
@@ -277,8 +276,6 @@ DEVICE int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); retu
 // Sieve bits using shared memory.
 // For each prime from the primes[] table, starting at a position corresponding to a
 // multiple of prime ("btc"), periodically set the bit to indicate a non-prime.
-// At the end copy the sieved bits (negated, so that the prime candidates correspond to 1-bits)
-// to global memory.
 __global__ void __launch_bounds__(SIEVE_THREADS) sieve() {
   __shared__ u32 words[NWORDS];
 
@@ -299,14 +296,6 @@ __global__ void __launch_bounds__(SIEVE_THREADS) sieve() {
   }
   __syncthreads();
 
-  /*
-  // Copy shared memory to global memory.
-  u32 *out = sievedBits[blockIdx.x];
-  for (int i = threadIdx.x; i < NWORDS; i += blockDim.x) {
-    out[i] = ~words[i];
-  }
-  */
-
   u32 bits = ~words[threadIdx.x];
   words[threadIdx.x] = 0;
   __syncthreads();
@@ -320,14 +309,25 @@ __global__ void __launch_bounds__(SIEVE_THREADS) sieve() {
   int i = threadIdx.x;
   while (true) {
     while (bits) {
-      int bit = bfind(bits);
-      bits &= ~(1 << bit);
+      int bit = __clz(__brev(bits)); // Equivalent to: __ffs(bits) - 1; 
+      bits &= bits - 1;  // Equivalent to: bits &= ~(1 << bit); but likely faster
+      
+      // int bit = bfind(bits);
+      // bits &= ~(1 << bit);
       *out++ = (i << 5) + bit;
     }
     if ((i += blockDim.x) >= NWORDS) { break; }
     bits = ~words[i];
   }
 }
+
+  /*
+  // Copy shared memory to global memory.
+  u32 *out = sievedBits[blockIdx.x];
+  for (int i = threadIdx.x; i < NWORDS; i += blockDim.x) {
+    out[i] = ~words[i];
+  }
+  */
 
 // Among all the NCLASS classes, select the ones that are "good",
 // i.e. not corresponding to a multiple of a small prime.
@@ -403,8 +403,6 @@ int main(int argc, char **argv) {
   // cudaSetDevice(1);
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync); CUDA_CHECK;
   
-  // foundFactor = (U3) {0, 0, 0};
-    
   if (argc == 1) {
     printf("Running selftest..\n");
     for (Test *t = tests, *end = tests + ASIZE(tests); t < end; ++t) {
@@ -445,14 +443,17 @@ int main(int argc, char **argv) {
   time("Alloc deltas");
   cudaDeviceSynchronize(); time("init inv + btc");
 
+  /*
   sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
   cudaDeviceSynchronize(); CUDA_CHECK; time("Sieve");
+  */
   
-  /*
-  for (int i = 0; i < 40; ++i, k0 += kStep) {
+  for (int i = 0; i < repeat; ++i, k0 += kStep) {
     sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
-    cudaDeviceSynchronize(); CUDA_CHECK; time("Sieve");
+    cudaDeviceSynchronize(); CUDA_CHECK;
+    // time("Sieve");
 
+    /*
     cudaMemcpyFromSymbol(hostBits, sievedBits, NGOODCLASS * NWORDS * 4, 0, cudaMemcpyDeviceToHost);
     CUDA_CHECK; time("Copy from device");
   
@@ -460,13 +461,21 @@ int main(int argc, char **argv) {
 
     cudaMemcpyToSymbol(kDeltas, deltas, NGOODCLASS * sizeof(deltas[0]));
     CUDA_CHECK; time("Copy to device");
+    */
 
     test<<<NGOODCLASS, TEST_THREADS>>>(doubleExp, flushedExp, k0);
-    cudaDeviceSynchronize(); CUDA_CHECK; time("Test");
-
-    // if (foundFactor.a || foundFactor.b || foundFactor.c) { break; }
+    cudaDeviceSynchronize(); CUDA_CHECK;
+    // time("Test");
+    char buf[64];
+    snprintf(buf, sizeof(buf), "cycle %4d", i);
+    time(buf);
+    
+    if (foundK) {
+      printf("*** K *** %lld\n", foundK);
+      break;
+    }
   }
-  */
+  cudaDeviceSynchronize();
 }
 
   /*
