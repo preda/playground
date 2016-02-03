@@ -48,7 +48,7 @@
 #include "debug.h"
 
 // Table of small primes.
-DEVICE const u32 primes[] = {
+DEVICE const __restrict__ u32 primes[] = {
 #include "primes-1M.inc"
 };
 // Number of pre-computed primes for sieving.
@@ -401,7 +401,7 @@ int main(int argc, char **argv) {
   initBtcTabs<<<NGOODCLASS, INIT_BTC_THREADS>>>(exp, k0);
   CUDA_CHECK; cudaDeviceSynchronize(); time("initBtcTabs");
   
-  for (int i = 0; i < 20; ++i, k0 += kStep) {
+  for (int i = 0; i < 40; ++i, k0 += kStep) {
     sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
     cudaDeviceSynchronize(); CUDA_CHECK;
     // time("Sieve");
