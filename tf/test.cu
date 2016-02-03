@@ -97,27 +97,13 @@ DEVICE u32 kTabSize[NGOODCLASS];
 
 __managed__ U3 foundFactor; // If a factor m is found, save it here.
 DEVICE u64 foundK;     // K for a found factor.
-__managed__ int classTab[NGOODCLASS];
+DEVICE u16 classTab[NGOODCLASS];
 
 // Helper to check and bail out on any CUDA error.
 #define CUDA_CHECK  {cudaError_t _err = cudaGetLastError(); if (_err) { printf("CUDA error: %s\n", cudaGetErrorString(_err)); return 0; }}
 
 inline void checkCuda(cudaError_t result) {
   if (result != cudaSuccess) { printf("CUDA Runtime Error: %s\n", cudaGetErrorString(result)); }
-}
-
-// Returns whether 2 * c * exp + 1 is 1 or 7 modulo 8.
-// Any Marsenne factor must be of this form. See http://www.mersenne.org/various/math.php
-bool q1or7mod8(u32 exp, u32 c) { return !(c & 3) || ((c & 3) + (exp & 3) == 4); }
-
-// whether 2 * c * exp + 1 != 0 modulo prime
-bool notMultiple(u32 exp, u32 c, unsigned prime) { return (2 * c * (u64) exp) % prime != prime - 1; }
-// { return (2 * c * (u64) exp + 1) % prime; }
-
-bool acceptClass(u32 exp, u32 c) {
-#define P(p) notMultiple(exp, c, p)
-  return q1or7mod8(exp, c) && P(3) && P(5) && P(7) && P(11);
-#undef P
 }
 
 u64 timeMillis() {
@@ -239,6 +225,32 @@ __global__ void __launch_bounds__(INIT_BTC_THREADS) initBtcTabs(u32 exp, u64 kBa
   // if (!threadIdx.x) { printf("ended class %d (%d)\n", classTab[blockIdx.x], blockIdx.x); }
 }
 
+// Returns whether 2 * c * exp + 1 is 1 or 7 modulo 8.
+// Any Marsenne factor must be of this form. See http://www.mersenne.org/various/math.php
+DEVICE bool q1or7mod8(u32 exp, u32 c) { return !(c & 3) || ((c & 3) + (exp & 3) == 4); }
+
+// whether 2 * c * exp + 1 != 0 modulo prime
+DEVICE bool multiple(u32 exp, u32 c, unsigned prime) { return (2 * c * (u64) exp) % prime == (prime - 1); }
+
+// Among all the NCLASS classes, select the ones that are "good",
+// i.e. not corresponding to a multiple of a small prime.
+__global__ void initClasses(u32 exp) {
+  __shared__ u32 pos;
+  pos = 0; __syncthreads();
+  
+  for (int c = threadIdx.x; c < NCLASS; c += blockDim.x) {
+    if (q1or7mod8(exp, c) && !multiple(exp, c, 3) && !multiple(exp, c, 5)
+        && !multiple(exp, c, 7) && !multiple(exp, c, 11)) {
+      classTab[atomicAdd(&pos, 1)] = c;
+    }
+  }
+
+#ifndef NDEBUG
+  __syncthreads();
+  assert(pos == NGOODCLASS);
+#endif
+}
+
 __global__ void __launch_bounds__(TEST_THREADS) test(u32 doubleExp, u32 flushedExp, u64 k0) {
   // if (!threadIdx.x) { printf("Start %d\n", blockIdx.x); }
   U3 m0 = _U2(k0 + classTab[blockIdx.x]) * doubleExp;
@@ -251,7 +263,7 @@ __global__ void __launch_bounds__(TEST_THREADS) test(u32 doubleExp, u32 flushedE
     ++n;
     if (r == (U3) {1, 0, 0}) {
       foundK = k0 + classTab[blockIdx.x] + NCLASS * (u64) delta;
-      // printf("factor k: %llu\n", foundK);
+      printf("factor k: %llu\n", foundK);
       asm("trap;"); // Stop the block and report an error.
     }
   }
@@ -324,19 +336,6 @@ __global__ void __launch_bounds__(SIEVE_THREADS) sieve() {
   }
   */
 
-// Among all the NCLASS classes, select the ones that are "good",
-// i.e. not corresponding to a multiple of a small prime.
-void initClasses(u32 exp) {
-  int nClass = 0;
-  for (int c = 0; c < NCLASS; ++c) {
-    if (acceptClass(exp, c)) {
-      classTab[nClass++] = c;
-      // if (c == 992) { printf("class id %d\n", nClass - 1); }
-    }
-  }
-  assert(nClass == NGOODCLASS);
-}
-
 // The smallest k that produces a factor m = (2*k*exp + 1) such that m >= 2**bits
 u64 calculateK(u32 exp, int bits) { return ((((u128) 1) << (bits - 1)) + (exp - 2)) / exp; }
 
@@ -382,9 +381,8 @@ int main(int argc, char **argv) {
   u32 exp = (u32) atol(argv[1]);
   int startPow2 = (argc >= 3) ? atoi(argv[2]) : 65;
   
-  time();
-  initClasses(exp);
-  time("initClasses");
+  initClasses<<<1, 1024>>>(exp);
+  time("CUDA init:");
 
   u64 k0 = calculateK(exp, startPow2);
   k0 -= k0 % NCLASS;
@@ -401,7 +399,7 @@ int main(int argc, char **argv) {
   initBtcTabs<<<NGOODCLASS, INIT_BTC_THREADS>>>(exp, k0);
   CUDA_CHECK; cudaDeviceSynchronize(); time("initBtcTabs");
   
-  for (int i = 0; i < 40; ++i, k0 += kStep) {
+  for (int i = 0; i < repeat; ++i, k0 += kStep) {
     sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
     cudaDeviceSynchronize(); CUDA_CHECK;
     // time("Sieve");

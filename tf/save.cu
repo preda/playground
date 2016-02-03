@@ -460,3 +460,38 @@ DEVICE u16 kDeltas[NGOODCLASS][TEST_ROWS * TEST_THREADS];
   cudaStreamCreateWithPriority(&testStream, cudaStreamNonBlocking, 1);
   CUDA_CHECK;
   */
+
+
+
+// Among all the NCLASS classes, select the ones that are "good",
+// i.e. not corresponding to a multiple of a small prime.
+__global__ void initClasses(u32 exp) {
+  __shared__ u32 pos;
+  __shared__ u32 blockPos;
+  pos = 0; __syncthreads();
+  
+  int c = blockIdx.x * blockDim.x + threadIdx.x;
+  int myPos = -1;
+  if (c < NCLASS && q1or7mod8(exp, c)
+      && !multiple(exp, c, 3) && !multiple(exp, c, 5)
+      && !multiple(exp, c, 7) && !multiple(exp, c, 11)) {
+    myPos = atomicAdd(&pos, 1);
+  }
+  __syncthreads();
+  
+  if (threadIdx.x == 0) {
+    blockPos = atomicAdd(&classTabPos, pos);
+  }
+  __syncthreads();
+
+  if (myPos >= 0) {
+    classTab[blockPos + myPos] = c;
+  }
+  /*
+#ifndef NDEBUG
+  __syncthreads();
+  assert(pos == NGOODCLASS);
+#endif
+  */
+}
+
