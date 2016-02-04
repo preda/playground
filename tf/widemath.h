@@ -1,17 +1,3 @@
-typedef unsigned char u8;
-typedef unsigned short u16;
-typedef unsigned u32;
-typedef unsigned long long u64;
-typedef __uint128_t u128;
-
-// Multi-precision unsigned ints with the given number of words.
-// The least-significant word is "a".
-struct U2 { u32 a, b; };
-struct U3 { u32 a, b, c; };
-struct U4 { u32 a, b, c, d; };
-struct U5 { u32 a, b, c, d, e; };
-struct U6 { u32 a, b, c, d, e, f; };
-
 DEVICE U6 _U6(U3 x)  { return (U6) {x.a, x.b, x.c, 0, 0, 0}; }
 DEVICE U5 _U5(U4 x)  { return (U5) {x.a, x.b, x.c, x.d, 0}; }
 DEVICE U4 _U4(U3 x)  { return (U4) {x.a, x.b, x.c, 0}; }
@@ -277,6 +263,7 @@ DEVICE U4 square(U2 x) {
 
 // Computes x * x; 11 MULs. x at most 80bits. 
 DEVICE U5 square(U3 x) {
+  // if (x.c & 0xffff0000) { print("m ", m); }
   assert(!(x.c & 0xffff0000));
   U2 ab = {x.a, x.b};
   U4 ab2 = square(ab);
