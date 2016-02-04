@@ -91,9 +91,11 @@ DEVICE u32 invTab[NPRIMES];
 DEVICE int btcTabs[NGOODCLASS][NPRIMES];
 
 // Sieved Ks. sieve() outputs here, test() reads from here.
-DEVICE u32 kTab[NGOODCLASS][NBITS / 5];
+DEVICE u32 kTab[(int)(NGOODCLASS * NBITS * 0.195f)];
+__managed__ u32 kTabSize = 0;
+
 // kTabSize[i] has the number of elements in kTab[i]
-DEVICE u32 kTabSize[NGOODCLASS];
+// DEVICE u32 kTabSize[NGOODCLASS];
 
 __managed__ U3 foundFactor; // If a factor m is found, save it here.
 DEVICE u64 foundK;     // K for a found factor.
@@ -168,8 +170,8 @@ DEVICE U3 inv160(U3 n, float nf) {
   return ret + (u32) qf;
 }
 
-// Returns 2**exp % m
-DEVICE U3 expMod(u32 exp, U3 m) {
+// Returns (2**exp % m) == 1
+DEVICE bool expMod(u32 exp, U3 m) {
   assert(exp & 0x80000000);
   assert(m.c && !(m.c & 0xffffc000));
   int sh = exp >> 25;
@@ -184,7 +186,8 @@ DEVICE U3 expMod(u32 exp, U3 m) {
     if (exp & 0x80000000) { a <<= 1; }
   } while (exp += exp);
   a = a - mulLow(m, (u32) floatOf(a.b, a.c, nf));
-  return (a.c >= m.c && a == (m + 1)) ? (U3) {1, 0, 0} : a;
+  return (a.c >= m.c && a == (m + 1)) || (a.a == 1 && !(a.b || a.c));
+  // ? (U3) {1, 0, 0} : a;
 }
 
 DEVICE u32 modInv32(u64 step, u32 prime) {
@@ -251,30 +254,21 @@ __global__ void initClasses(u32 exp) {
 #endif
 }
 
-__global__ void __launch_bounds__(TEST_THREADS) test(u32 doubleExp, u32 flushedExp, u64 k0) {
-  // if (!threadIdx.x) { printf("Start %d\n", blockIdx.x); }
-  U3 m0 = _U2(k0 + classTab[blockIdx.x]) * doubleExp;
-  m0.a |= 1;
-  int n = 0;
-  u32 *kTabBase = kTab[blockIdx.x];
-  for (u32 *p = kTabBase + threadIdx.x, *end = kTabBase + kTabSize[blockIdx.x]; p < end; p += blockDim.x) {
-    u32 delta = *p;
-    U3 r = expMod(flushedExp, m0 + _U2(NCLASS * (u64) delta * doubleExp));
-    ++n;
-    if (r == (U3) {1, 0, 0}) {
-      foundK = k0 + classTab[blockIdx.x] + NCLASS * (u64) delta;
-      printf("factor k: %llu\n", foundK);
-      asm("trap;"); // Stop the block and report an error.
+// __launch_bounds__(1024, 2)
+__global__ void test(u32 doubleExp, u32 flushedExp, U3 m0) {
+  for (u32 i = blockIdx.x * blockDim.x + threadIdx.x, end = kTabSize; i < end; i += blockDim.x * gridDim.x) {
+    if (expMod(flushedExp, m0 + _U2(kTab[i] * (u64) doubleExp))) {
+      // foundK = k0 + *p;
+      // printf("factor k: %llu\n", foundK);
+      asm("trap;"); // Stop the kernel abruptly.
     }
   }
-  // if (!threadIdx.x) { printf("End %d %d\n", blockIdx.x, n); }
 }
 
 __global__ void testSingle(u32 doubleExp, u32 flushedExp, u64 k) {
   U3 m = _U2(k) * doubleExp;
   m.a |= 1;
-  U3 r = expMod(flushedExp, m);
-  foundFactor = r;
+  if (expMod(flushedExp, m)) { foundFactor = (U3) {1, 0, 0}; }
 }
 
 // Returns the position of the most significant bit that is set.
@@ -283,7 +277,7 @@ __global__ void testSingle(u32 doubleExp, u32 flushedExp, u64 k) {
 // Sieve bits using shared memory.
 // For each prime from the primes[] table, starting at a position corresponding to a
 // multiple of prime ("btc"), periodically set the bit to indicate a non-prime.
-__global__ void __launch_bounds__(SIEVE_THREADS) sieve() {
+__global__ void sieve() {
   __shared__ u32 words[NWORDS];
 
   // Set shared memory to zero.
@@ -309,10 +303,15 @@ __global__ void __launch_bounds__(SIEVE_THREADS) sieve() {
   
   int popc = __popc(bits);
   for (int i = blockDim.x + threadIdx.x; i < NWORDS; i += blockDim.x) { popc += __popc(~words[i]); }
-  u32 *out = kTab[blockIdx.x] + atomicAdd(words, popc);
+  // u32 *out = kTab[blockIdx.x] + atomicAdd(words, popc);
+  popc = atomicAdd(words, popc);
   __syncthreads();
 
-  if (threadIdx.x == 0) { kTabSize[blockIdx.x] = words[0]; }
+  if (threadIdx.x == 0) {  words[0] = atomicAdd(&kTabSize, words[0]); }
+  __syncthreads();
+  
+  u32 *out = kTab + words[0] + popc;
+  u32 c = classTab[blockIdx.x];
   int i = threadIdx.x;
   while (true) {
     while (bits) {
@@ -321,7 +320,7 @@ __global__ void __launch_bounds__(SIEVE_THREADS) sieve() {
       
       // int bit = bfind(bits);
       // bits &= ~(1 << bit);
-      *out++ = (i << 5) + bit;
+      *out++ = c + ((i << 5) + bit) * NCLASS;
     }
     if ((i += blockDim.x) >= NWORDS) { break; }
     bits = ~words[i];
@@ -401,15 +400,18 @@ int main(int argc, char **argv) {
   
   for (int i = 0; i < repeat; ++i, k0 += kStep) {
     sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
-    cudaDeviceSynchronize(); CUDA_CHECK;
-    // time("Sieve");
+    // cudaDeviceSynchronize(); CUDA_CHECK; time("Sieve");
 
-    test<<<NGOODCLASS, TEST_THREADS>>>(doubleExp, flushedExp, k0);
+    u128 m = doubleExp * (u128) k0;
+    U3 m0 = {((u32) m ) | 1, (u32)(((u64)m) >> 32), (u32)(m >> 64)};
+    
+    test<<<128, TEST_THREADS>>>(doubleExp, flushedExp, m0);
     cudaDeviceSynchronize(); CUDA_CHECK;
     // time("Test");
 
     char buf[64];
-    snprintf(buf, sizeof(buf), "cycle %4d", i);
+    snprintf(buf, sizeof(buf), "cycle %4d tabSize %u", i, kTabSize);
+    kTabSize = 0;
     time(buf);
     
     /*
