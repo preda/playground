@@ -171,6 +171,7 @@ DEVICE U3 inv160(U3 n, float nf) {
 
   // 5
   return ret + (u32) floatOf(p.b, p.c, nf);
+  
 #else
   q = q - ((n * qi) << 16);
   assert(q.d == 0);
@@ -220,7 +221,9 @@ DEVICE bool expMod(u32 exp, U3 m) {
     if (exp & 0x80000000) { a <<= 1; }
   } while (exp += exp);
   a = a - mulLow(m, (u32) floatOf(a.b, a.c, nf));
-  return (a.c >= m.c && a == (m + 1)) || (a.a == 1 && !(a.b || a.c));
+  if (a.c >= m.c && a.a == (m.a + 1)) { a = a - m; }
+  return !(a.b | a.c | (a.a - 1)); // a.a == 1 && !a.b && !a.c;
+  // || (a.c >= m.c && a.a == (m.a + 1) && a == (m + 1));
 }
 
 DEVICE u32 modInv32(u64 step, u32 prime) {
