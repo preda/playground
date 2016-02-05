@@ -263,7 +263,6 @@ DEVICE U4 square(U2 x) {
 
 // Computes x * x; 11 MULs. x at most 80bits.
 DEVICE U5 square(U3 x) {
-  // if (x.c & 0xffff0000) { print("m ", m); }
   assert(!(x.c & 0xffff0000));
   U2 ab = {x.a, x.b};
   U4 ab2 = square(ab);

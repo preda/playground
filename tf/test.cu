@@ -83,8 +83,6 @@ struct Test { u32 exp; u64 k; };
 #define NWORDS (8 * 1024)
 // Bits for sieving (each word is 32 bits).
 #define NBITS (NWORDS << 5)
-// How many rows are needed at most in a testing block of TEST_THREADS colums.
-#define TEST_ROWS (NBITS / 5 / TEST_THREADS + 1)
 
 // Must update acceptClass() when changing these.
 #define NCLASS     (4 * 3 * 5 * 7 * 11)
@@ -101,23 +99,22 @@ struct Test { u32 exp; u64 k; };
 // Table with inv(exp). Initialized once per exponent.
 DEVICE u32 invTab[NPRIMES];
 
-// "Bit to clear" table, depends on exponent, k0, and class; initialized once per exponent.
+// "Bit to clear" table, depends on exponent and k0; initialized once per exponent.
 DEVICE int btcTabs[NGOODCLASS][NPRIMES];
 
-// Sieved Ks. sieve() outputs here, test() reads from here.
+// Sieved Ks table. sieve() outputs here, test() reads from here.
 DEVICE u32 kTab[(int)(NGOODCLASS * NBITS * 0.195f)];
-// Number of elements in kTab. Needs to be set to 0 before each sieve().
+// Number of elements in kTab. Must be set to 0 before each sieve().
 __managed__ u32 kTabSize = 0;
 
-__managed__ U3 foundFactor = (U3) {0, 0, 0}; // If a factor m is found, save it here.
+// If a factor m is found, save it here.
+__managed__ U3 foundFactor = (U3) {0, 0, 0};
+
+// The class id for each good class; set by initClassTab().
 DEVICE u16 classTab[NGOODCLASS];
 
 // Helper to check and bail out on any CUDA error.
 #define CUDA_CHECK  {cudaError_t _err = cudaGetLastError(); if (_err) { printf("CUDA error: %s\n", cudaGetErrorString(_err)); return 0; }}
-
-inline void checkCuda(cudaError_t result) {
-  if (result != cudaSuccess) { printf("CUDA Runtime Error: %s\n", cudaGetErrorString(result)); }
-}
 
 u64 timeMillis() {
   struct timeval tv;
@@ -144,14 +141,37 @@ DEVICE U3 inv160(U3 n, float nf) {
   // 1
   assert(nf * TWO64f < TWO32f);
   u32 rc = (u32) __fmul_rz(TWO64f, nf);
-  U4 q = shl1w((~mulLow(n, rc)) + 1);
-
-  // 2
+  U4 q = shl1w(~mulLow(n, rc) + 1);
+  
+  // 2  
   float qf = floatOf(q.c, q.d, nf) * TWO16f;
   assert(qf < TWO28f);
   u32 qi = (u32) qf;
   u32 rb = (qi << 16);
   rc += (qi >> 16);
+  
+#ifdef NDEBUG
+  assert(false); // Verify that assert is compiled out in NDEBUG.
+  U3 p = (U3) {q.a, q.b, q.c} - (mulLow(n, qi) << 16);
+  
+  // 3
+  qf = floatOf(p.b, p.c, nf);
+  assert(qf < (1 << 24));
+  qi = (u32) qf;
+  U2 rup = (U2){rb, rc} + qi;
+  p = p - mulLow(n, qi);
+
+  // 4
+  qf = floatOf(p.b, p.c, nf) * TWO17f;
+  assert(qf < (1 << 22));
+  qi = (u32) qf;
+  rup = rup + (qi >> 17);
+  U3 ret = (U3) {(qi << 15), rup.a, rup.b};
+  p = (U3) {0, p.a, p.b} - (mulLow(n, qi) << 15);
+
+  // 5
+  return ret + (u32) floatOf(p.b, p.c, nf);
+#else
   q = q - ((n * qi) << 16);
   assert(q.d == 0);
 
@@ -179,6 +199,7 @@ DEVICE U3 inv160(U3 n, float nf) {
   qf = floatOf(q.b, q.c, nf);
   assert(qf < (1 << 20));
   return ret + (u32) qf;
+#endif
 }
 
 // Returns (2**exp % m) == 1
