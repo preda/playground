@@ -105,7 +105,7 @@ DEVICE u32 invTab[NPRIMES];
 DEVICE int btcTabs[NGOODCLASS][NPRIMES];
 
 // Sieved Ks. sieve() outputs here, test() reads from here.
-DEVICE u32 kTab[(int)(NGOODCLASS * NBITS * 0.1948f)];
+DEVICE u32 kTab[(int)(NGOODCLASS * NBITS * 0.195f)];
 // Number of elements in kTab. Needs to be set to 0 before each sieve().
 __managed__ u32 kTabSize = 0;
 
@@ -344,22 +344,6 @@ __global__ void sieve() {
 // The smallest k that produces a factor m = (2*k*exp + 1) such that m >= 2**bits
 u64 calculateK(u32 exp, int bits) { return ((((u128) 1) << (bits - 1)) + (exp - 2)) / exp; }
 
-// Run one unit-test case.
-/*
-bool testOne(u32 exp, u64 k) {  
-  u32 flushedExp = exp << __builtin_clz(exp);
-  u32 doubleExp = exp + exp;
-  printf("\r%10u %20llu", exp, k);
-  testSingle<<<1, 1>>>(doubleExp, flushedExp, k);
-  cudaDeviceSynchronize(); CUDA_CHECK;
-  if (foundFactor.a != 1 || foundFactor.b || foundFactor.c) {
-    printf("ERROR %10u %20llu m ", exp, k);
-    return false;
-  }
-  return true;
-}
-*/
-
 void time(const char *s = 0) {
   static u64 prev = 0;
   u64 now = timeMillis();
@@ -372,8 +356,7 @@ void time(const char *s = 0) {
 void initExponent(u32 exp) {
   initClasses<<<1, 1024>>>(exp);
   initInvTab<<<NPRIMES/1024, 1024>>>(exp);
-  // cudaDeviceSynchronize();
-  // time("init exponent");
+  time("init Exp");
 }
 
 u128 _u128(U3 x) {
@@ -384,7 +367,7 @@ U3 _U3(u128 x) {
   return (U3) {(u32) x, (u32)(((u64)x) >> 32), (u32)(x >> 64)};
 }
 
-__managed__ u32 zero[1] = {0};
+__managed__ u32 zeroDelta[1] = {0};
 u128 factorOne(u32 exp, u64 k) {
   u32 flushedExp = exp << __builtin_clz(exp);
   u32 doubleExp = exp + exp;
@@ -392,7 +375,7 @@ u128 factorOne(u32 exp, u64 k) {
   kTabSize = 1;
   U3 m = _U3(doubleExp * (u128) k);
   m.a |= 1;
-  test<<<1, 1>>>(doubleExp, flushedExp, m, zero);
+  test<<<1, 1>>>(doubleExp, flushedExp, m, zeroDelta);
   cudaDeviceSynchronize();
   return _u128(foundFactor);
 }
@@ -404,7 +387,7 @@ u128 factor(u32 exp, u64 k0, u32 repeat) {
   u32 doubleExp = exp + exp;
   // printf("k0: %llu  repeat: %u  (end: %llu)\n", k0, repeat, k0 + repeat * NBITS * NCLASS);
   initBtcTabs<<<NGOODCLASS, INIT_BTC_THREADS>>>(exp, k0);
-  // cudaDeviceSynchronize(); CUDA_CHECK; // time("initBtcTabs");
+  cudaDeviceSynchronize(); CUDA_CHECK; time("init K");
   u32 *kTabHost;
   cudaGetSymbolAddress((void **)&kTabHost, kTab);
   for (int i = 0; i < repeat; ++i, k0 += NBITS * NCLASS) {
@@ -412,6 +395,10 @@ u128 factor(u32 exp, u64 k0, u32 repeat) {
     // cudaDeviceSynchronize(); CUDA_CHECK; time("Sieve");
 
     U3 m = _U3(doubleExp * (u128) k0);
+    if (m.c == 0) {
+      printf("skipped: <2**64\n");
+      return 0;
+    }
     m.a |= 1;
     cudaDeviceSynchronize();
     test<<<128, TEST_THREADS>>>(doubleExp, flushedExp, m, kTabHost);
@@ -464,14 +451,18 @@ int main(int argc, char **argv) {
   assert(NPRIMES % 1024 == 0);  
   // cudaSetDevice(1);
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync); CUDA_CHECK;
-
+  time();
   /*
-  u32 exp = 53113309;
-  u64 k = 1360921839095724ull;  
-  u128 m = factorOne(exp, k);
+  u32 exp = 57003631;
+  //  u64 k = 359804871144;
+  u128 m = factorOne(exp, 327227286441ull);
+  printf("m found: 0x%016llx%016llx\n", (u64) (m >> 64), (u64) m);
+  
+  // assert(testOk(exp, k));
+  // printf("m2 found: 0x%08llx%08llx\n", (u64) (m >> 64), (u64) m);
   return 0;
-  testOk(exp, k); return 0;
   */
+
   
   if (argc == 1) {
     printf("Running selftest..\n");
@@ -492,15 +483,13 @@ int main(int argc, char **argv) {
       }
     }
     return 0;
+  } else {
+    u32 exp = (u32) atol(argv[1]);
+    int startPow2 = (argc >= 3) ? atoi(argv[2]) : 65;
+    initExponent(exp);
+    u128 m = factor(exp, startPow2);
+    printf("m found: 0x%016llx%016llx\n", (u64) (m >> 64), (u64) m);
   }
-
-  /*
-  u32 exp = (u32) atol(argv[1]);
-  int startPow2 = (argc >= 3) ? atoi(argv[2]) : 65;
-  
-  initClasses<<<1, 1024>>>(exp);
-  time("CUDA init:");
-  */
   
   cudaDeviceSynchronize();
 }
