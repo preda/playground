@@ -380,7 +380,6 @@ u128 factorOne(u32 exp, u64 k) {
   return _u128(foundFactor);
 }
 
-int minExtra = 100000;
 u128 factor(u32 exp, u64 k0, u32 repeat) {
   printf("repeat %u\n", repeat);
   u32 flushedExp = exp << __builtin_clz(exp);
@@ -404,9 +403,6 @@ u128 factor(u32 exp, u64 k0, u32 repeat) {
     test<<<128, TEST_THREADS>>>(doubleExp, flushedExp, m, kTabHost);
     cudaDeviceSynchronize(); 
     CUDA_CHECK;
-    int extra = ASIZE(kTab) - kTabSize;
-    if (extra < minExtra) { minExtra = extra; }
-    printf("kTabSize extra %d min %d; ", extra, minExtra);
     time("Test");
     kTabSize = 0;
     /*
@@ -488,7 +484,9 @@ int main(int argc, char **argv) {
     int startPow2 = (argc >= 3) ? atoi(argv[2]) : 65;
     initExponent(exp);
     u128 m = factor(exp, startPow2);
-    printf("m found: 0x%016llx%016llx\n", (u64) (m >> 64), (u64) m);
+    if (m != 0) {
+      printf("m: 0x%016llx%016llx\n", (u64) (m >> 64), (u64) m);
+    }
   }
   
   cudaDeviceSynchronize();

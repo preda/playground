@@ -261,7 +261,7 @@ DEVICE U4 square(U2 x) {
   return (U4) {a, b, c, d};
 }
 
-// Computes x * x; 11 MULs. x at most 80bits. 
+// Computes x * x; 11 MULs. x at most 80bits.
 DEVICE U5 square(U3 x) {
   // if (x.c & 0xffff0000) { print("m ", m); }
   assert(!(x.c & 0xffff0000));
@@ -270,47 +270,3 @@ DEVICE U5 square(U3 x) {
   U3 abc = ab * (x.c + x.c) + (U3) {ab2.c, ab2.d, x.c * x.c};
   return (U5) {ab2.a, ab2.b, abc.a, abc.b, abc.c};
 }
-  /*
-  u32 c, d, e;
-  asm(
-      "add.cc.u32  %0, %3, %5;"
-      "addc.cc.u32 %1, %4, %6;"
-      "madc.lo.u32 %2, %8, %8, %7;"
-      : "=r"(c), "=r"(d), "=r"(e)
-      : "r"(ab2.c), "r"(ab2.d), "r"(abc.a), "r"(abc.b), "r"(abc.c), "r"(x.c));
-  assert(!(e & 0xc0000000));
-  return (U5) {ab2.a, ab2.b, c, d, e};
-  */
-
-
-/*
-DEVICE U5 square(U3 x) {
-  assert(!(x.c & 0xffff8000));
-  u32 a, b, c, d, e;
-  asm("{\n\t"
-      ".reg .u32 a2;\n\t"
-
-      "mul.lo.u32     %0, %5, %5;\n\t"
-      "mul.lo.u32     %1, %5, %6;\n\t"
-      "mul.hi.u32     %2, %5, %6;\n\t"
-
-      "add.u32        a2, %7, %7;\n\t"
-
-      "add.cc.u32     %1, %1, %1;\n\t"
-      "addc.cc.u32    %2, %2, %2;\n\t"
-      "madc.hi.u32    %3, %5, a2, 0;\n\t"
-
-      "mad.hi.cc.u32  %1, %5, %5, %1;\n\t"
-      "madc.lo.cc.u32 %2, %6, %6, %2;\n\t"
-      "madc.hi.cc.u32 %3, %6, %6, %3;\n\t"
-      "madc.lo.u32    %4, %7, %7, 0;\n\t"
-      
-      "mad.lo.cc.u32  %2, %5, a2, %2;\n\t"
-      "madc.lo.cc.u32 %3, %6, a2, %3;\n\t"
-      "madc.hi.u32    %4, %6, a2, %4;\n\t"
-      "}"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e)
-      : "r"(x.a), "r"(x.b), "r"(x.c));
-  return (U6) {a, b, c, d, e, 0};
-}
-*/
