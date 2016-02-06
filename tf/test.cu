@@ -203,29 +203,6 @@ DEVICE U3 inv160(U3 n, float nf) {
 #endif
 }
 
-// Returns (2**exp % m) == 1
-DEVICE bool expMod(u32 exp, U3 m) {
-  // print("m", m);
-  assert(exp & 0x80000000);
-  assert(m.c && !(m.c & 0xffffc000));
-  int sh = exp >> 25;
-  assert(sh >= 64 && sh < 128);
-  exp <<= 7;
-
-  float nf = floatInv(m);
-  U3 u = inv160(m, nf);
-  U3 a = mod((U5){0, 0, 1 << (sh - 64), 1 << (sh - 96), 0}, m, u);
-  do {
-    // print("a", a);
-    a = mod(square(a), m, u);
-    if (exp & 0x80000000) { a <<= 1; }
-  } while (exp += exp);
-  a = a - mulLow(m, (u32) floatOf(a.b, a.c, nf));
-  if (a.c >= m.c && a.a == (m.a + 1)) { a = a - m; }
-  return !(a.b | a.c | (a.a - 1)); // a.a == 1 && !a.b && !a.c;
-  // || (a.c >= m.c && a.a == (m.a + 1) && a == (m + 1));
-}
-
 DEVICE u32 modInv32(u64 step, u32 prime) {
   int n = step % prime;
   int q = prime / n;
@@ -290,14 +267,34 @@ __global__ void initClasses(u32 exp) {
 #endif
 }
 
+// Returns (2**exp % m) == 1
+DEVICE bool expMod(u32 exp, U3 m, U3 b) {
+  assert(m.c && !(m.c & 0xffffc000));
+  /*
+  int sh = exp >> 25;
+  assert(sh >= 64 && sh < 128);
+  exp <<= 7;
+  */
+  
+  float nf = floatInv(m);
+  U3 u = inv160(m, nf);
+
+  U3 a = mod((U5) {0, 0, b.a, b.b, b.c}, m, u);
+  // U3 a = mod((U5){0, 0, 1 << (sh - 64), 1 << (sh - 96), 0}, m, u);
+  do {
+    a = mod(square(a), m, u);
+    if (exp & 0x80000000) { a <<= 1; }
+  } while (exp += exp);
+  a = a - mulLow(m, (u32) floatOf(a.b, a.c, nf));
+  if (a.c >= m.c && a.a == (m.a + 1)) { a = a - m; }
+  return !(a.b | a.c | (a.a - 1)); // a.a == 1 && !a.b && !a.c;
+}
+
 // __launch_bounds__(1024, 2)
-__global__ void test(u32 doubleExp, u32 flushedExp, U3 m0, u32 *kTab) {
-  // if (foundFactor.a != 0) { return; }
+__global__ void test(u32 doubleExp, u32 flushedExp, U3 m0, U3 b, u32 *kTab) {
   for (u32 i = blockIdx.x * blockDim.x + threadIdx.x, end = kTabSize; i < end; i += blockDim.x * gridDim.x) {
     U3 m = m0 + _U2(kTab[i] * (u64) doubleExp);
-    if (expMod(flushedExp, m)) {
-      foundFactor = m;
-    }
+    if (expMod(flushedExp, m, b)) { foundFactor = m; kTabSize = 0; }
   }
 }
 
@@ -380,7 +377,7 @@ void time(const char *s = 0) {
 void initExponent(u32 exp) {
   initClasses<<<1, 1024>>>(exp);
   initInvTab<<<NPRIMES/1024, 1024>>>(exp);
-  time("init Exp");
+  // time("init Exp");
 }
 
 u128 _u128(U3 x) {
@@ -391,6 +388,7 @@ U3 _U3(u128 x) {
   return (U3) {(u32) x, (u32)(((u64)x) >> 32), (u32)(x >> 64)};
 }
 
+/*
 __managed__ u32 zeroDelta[1] = {0};
 u128 factorOne(u32 exp, u64 k) {
   u32 flushedExp = exp << __builtin_clz(exp);
@@ -403,42 +401,50 @@ u128 factorOne(u32 exp, u64 k) {
   cudaDeviceSynchronize();
   return _u128(foundFactor);
 }
+*/
+
+u32 oneShl(unsigned sh) { return (sh < 32) ? (1 << sh) : 0; }
 
 u128 factor(u32 exp, u64 k0, u32 repeat) {
-  printf("repeat %u\n", repeat);
-  u32 flushedExp = exp << __builtin_clz(exp);
-  u32 doubleExp = exp + exp;
-  // printf("k0: %llu  repeat: %u  (end: %llu)\n", k0, repeat, k0 + repeat * NBITS * NCLASS);
+  // printf("repeat %u\n", repeat);
   initBtcTabs<<<NGOODCLASS, INIT_BTC_THREADS>>>(exp, k0);
-  cudaDeviceSynchronize(); CUDA_CHECK; time("init K");
+  // cudaDeviceSynchronize(); CUDA_CHECK; time("init K");
+  
   u32 *kTabHost;
   cudaGetSymbolAddress((void **)&kTabHost, kTab);
+
+  u32 doubleExp = exp + exp;
+  u32 flushedExp = exp << __builtin_clz(exp);
+  assert(flushedExp & 0x80000000);
+  unsigned sh;
+  if ((flushedExp >> 25) < 80) {
+    sh = flushedExp >> 24;
+    flushedExp <<= 8;
+  } else {
+    sh = flushedExp >> 25;
+    flushedExp <<= 7;
+  }
+  assert(sh >= 80 && sh < 160);
+  U3 b = (U3) {oneShl(sh - 64), oneShl(sh - 96), oneShl(sh - 128)};
+  
   for (int i = 0; i < repeat; ++i, k0 += NBITS * NCLASS) {
     sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
     // cudaDeviceSynchronize(); CUDA_CHECK; time("Sieve");
 
     U3 m = _U3(doubleExp * (u128) k0);
-    if (m.c == 0) {
-      printf("skipped: <2**64\n");
-      return 0;
-    }
     m.a |= 1;
-    cudaDeviceSynchronize();
-    test<<<128, TEST_THREADS>>>(doubleExp, flushedExp, m, kTabHost);
-    cudaDeviceSynchronize(); 
-    CUDA_CHECK;
-    time("Test");
-    kTabSize = 0;
-    /*
-    char buf[64];
-    snprintf(buf, sizeof(buf), "cycle %4d tabSize %u", i, kTabSize);
-    time(buf);
-    */
-    if (foundFactor.a != 0) {
+    assert(m.c);
+
+    test<<<128, TEST_THREADS>>>(doubleExp, flushedExp, m, b, kTabHost);
+    cudaDeviceSynchronize(); CUDA_CHECK; time("Test");
+    if (kTabSize == 0) {
+      assert(foundFactor.a != 0);
       u128 m = _u128(foundFactor);
       foundFactor = (U3) {0, 0, 0};
-      printf("Did %d cycles out of %d\n", i + 1, repeat);
+      if (repeat > 1) { printf("Did %d cycles out of %d\n", i + 1, repeat); }
       return m;
+    } else {
+      kTabSize = 0;
     }
   }
   return 0;
@@ -455,8 +461,7 @@ u128 factor(u32 exp, u32 startPow2) {
   return factor(exp, k0, repeat);
 }
 
-bool testOk(u32 exp, u64 k) {
-  initExponent(exp);
+bool verifyFactor(u32 exp, u64 k) {
   u64 k0 = k - (k % NCLASS);
   u128 m = factor(exp, k0, 1);
   if (m != 2 * exp * (u128) k + 1) {
@@ -488,10 +493,18 @@ int main(int argc, char **argv) {
     printf("Running selftest..\n");
     for (Test *t = tests, *end = tests + ASIZE(tests); t < end; ++t) {
       u32 exp = t->exp;
-      u64 k = t->k;
-      printf("\r%4d: %9u %16llu  ", (int) (t - tests), exp, k);
+      u64 k   = t->k;
+      printf("\r%4d: %9u %15llu  ", (int) (t - tests), exp, k);
       initExponent(exp);
-      // if (!testOk(exp, k)) { break; }
+      if (!verifyFactor(exp, k)) {
+        printf("\nFAIL: %u %llu\n", exp, k); return 1;
+      }
+    }    
+    for (Test *t = tests, *end = tests + ASIZE(tests); t < end; ++t) {
+      u32 exp = t->exp;
+      u64 k = t->k;
+      printf("\r%4d: %9u %15llu\n", (int) (t - tests), exp, k);
+      initExponent(exp);
       u128 m = 2 * exp * (u128) k + 1;
       u32 mup = (u32)(m >> 64);
       assert(mup);
@@ -502,7 +515,6 @@ int main(int argc, char **argv) {
         printf("\nFAIL: %u %llu\n", exp, k); return 1;
       }
     }
-    return 0;
   } else {
     u32 exp = (u32) atol(argv[1]);
     int startPow2 = (argc >= 3) ? atoi(argv[2]) : 65;
