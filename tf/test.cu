@@ -99,15 +99,18 @@ DEVICE u32 invTab[NPRIMES];
 DEVICE int btcTabs[NGOODCLASS][NPRIMES];
 
 // Sieved Ks table. sieve() outputs here, test() reads from here.
+// kTab[0] contains the size of the remainder of the array.
+// kTab[0] must be set to 0 before each sieve() invocation.
 DEVICE u32 kTab[(int)(NGOODCLASS * NBITS * 0.195f)];
-// Number of elements in kTab. Must be set to 0 before each sieve().
-__managed__ u32 kTabSize = 0;
 
 // If a factor m is found, save it here.
-__managed__ U3 foundFactor = (U3) {0, 0, 0};
+DEVICE U3 foundFactor = (U3) {0, 0, 0};
 
 // The class id for each good class; set by initClassTab().
 DEVICE u16 classTab[NGOODCLASS];
+
+// Pinned piece of host memory used to copy to/from GPU.
+U3 *hostFactor;
 
 // Helper to check and bail out on any CUDA error.
 #define CUDA_CHECK  {cudaError_t _err = cudaGetLastError(); if (_err) { printf("CUDA error: %s\n", cudaGetErrorString(_err)); return 0; }}
@@ -280,9 +283,9 @@ DEVICE bool expMod(u32 exp, U3 m, U3 b) {
 
 // __launch_bounds__(1024, 2)
 __global__ void test(u32 doubleExp, u32 flushedExp, U3 m0, U3 b, u32 *kTab) {
-  for (u32 i = blockIdx.x * blockDim.x + threadIdx.x, end = kTabSize; i < end; i += blockDim.x * gridDim.x) {
+  for (u32 i = blockIdx.x * blockDim.x + threadIdx.x + 1, end = kTab[0] + 1; i < end; i += blockDim.x * gridDim.x) {
     U3 m = m0 + _U2(kTab[i] * (u64) doubleExp);
-    if (expMod(flushedExp, m, b)) { foundFactor = m; kTabSize = 0; }
+    if (expMod(flushedExp, m, b)) { foundFactor = m; /*kTab[0] = 0;*/ }
   }
 }
 
@@ -322,10 +325,10 @@ __global__ void sieve() {
   popc = atomicAdd(words, popc);
   __syncthreads();
 
-  if (threadIdx.x == 0) {  words[0] = atomicAdd(&kTabSize, words[0]); }
+  if (threadIdx.x == 0) {  words[0] = atomicAdd(&kTab[0], words[0]); }
   __syncthreads();
   
-  u32 *out = kTab + words[0] + popc;
+  u32 *out = kTab + words[0] + popc + 1;
   u32 c = classTab[blockIdx.x];
   int i = threadIdx.x;
   while (true) {
@@ -391,6 +394,9 @@ u128 factor(u32 exp, u64 k0, u32 repeat) {
   }
   assert(sh >= 80 && sh < 160);
   U3 b = (U3) {oneShl(sh - 64), oneShl(sh - 96), oneShl(sh - 128)};
+
+  *hostFactor = (U3) {0, 0, 0};
+  cudaMemcpyToSymbol(kTab, hostFactor, sizeof(u32));
   
   for (int i = 0; i < repeat; ++i, k0 += NBITS * NCLASS) {
     sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
@@ -402,14 +408,16 @@ u128 factor(u32 exp, u64 k0, u32 repeat) {
 
     test<<<128, TEST_THREADS>>>(doubleExp, flushedExp, m, b, kTabHost);
     cudaDeviceSynchronize(); CUDA_CHECK; time("Test");
-    if (kTabSize == 0) {
-      assert(foundFactor.a != 0);
-      u128 m = _u128(foundFactor);
-      foundFactor = (U3) {0, 0, 0};
+    assert(hostFactor->a == 0);
+    cudaMemcpyToSymbol(kTab, hostFactor, sizeof(u32));
+    cudaMemcpyFromSymbol(hostFactor, foundFactor, sizeof(u32));
+    if (hostFactor->a != 0) {
+      cudaMemcpyFromSymbol(hostFactor, foundFactor, sizeof(U3));
+      u128 m = _u128(*hostFactor);
+      *hostFactor = (U3) {0, 0, 0};
+      cudaMemcpyToSymbol(foundFactor, hostFactor, sizeof(U3));
       if (repeat > 1) { printf("Did %d cycles out of %d\n", i + 1, repeat); }
       return m;
-    } else {
-      kTabSize = 0;
     }
   }
   return 0;
@@ -481,8 +489,11 @@ int main(int argc, char **argv) {
   assert(NPRIMES % 1024 == 0);  
   // cudaSetDevice(1);
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync); CUDA_CHECK;
+  cudaHostAlloc((void **) &hostFactor, sizeof(U3), cudaHostAllocDefault);
+  
   time();
-  run(argc, argv);  
+  run(argc, argv);
   cudaDeviceSynchronize();
+  cudaFreeHost(hostFactor);
   cudaDeviceReset();
 }
