@@ -63,7 +63,7 @@ struct U6 { u32 a, b, c, d, e, f; };
 
 // Table of small primes.
 DEVICE const __restrict__ u32 primes[] = {
-#include "primes-1M.inc"
+#include "primes.inc"
 };
 // Number of pre-computed primes for sieving.
 #define NPRIMES (ASIZE(primes))
@@ -73,7 +73,7 @@ struct Test { u32 exp; u64 k; };
 #include "tests.inc"
 
 // Threads for initBtcTabs()
-#define INIT_BTC_THREADS 256
+#define INIT_BTC_THREADS 512
 // Threads per sieving block.
 #define SIEVE_THREADS 512
 // Threads per testing block.
@@ -224,13 +224,13 @@ DEVICE int bitToClear(u32 exp, u64 k, u32 prime, u32 inv) {
   return (prime - qmod) * (u64) inv % prime;
 }
 
-__global__ void __launch_bounds__(1024) initInvTab(u32 exp) {
+__global__ void initInvTab(u32 exp) {
   assert(gridDim.x * blockDim.x == NPRIMES);
   u32 id = blockIdx.x * blockDim.x + threadIdx.x;
   invTab[id] = modInv32(2 * NCLASS * (u64) exp, primes[id]);
 }
 
-__global__ void __launch_bounds__(INIT_BTC_THREADS) initBtcTabs(u32 exp, u64 kBase) {
+__global__ void initBtcTabs(u32 exp, u64 kBase) {
   assert(gridDim.x == NGOODCLASS);
   int *btcTab = btcTabs[blockIdx.x];
   u64 k = kBase + classTab[blockIdx.x];
@@ -354,14 +354,6 @@ __global__ void sieve() {
   }
 }
 
-  /*
-  // Copy shared memory to global memory.
-  u32 *out = sievedBits[blockIdx.x];
-  for (int i = threadIdx.x; i < NWORDS; i += blockDim.x) {
-    out[i] = ~words[i];
-  }
-  */
-
 // The smallest k that produces a factor m = (2*k*exp + 1) such that m >= 2**bits
 u64 calculateK(u32 exp, int bits) { return ((((u128) 1) << (bits - 1)) + (exp - 2)) / exp; }
 
@@ -376,7 +368,7 @@ void time(const char *s = 0) {
 
 void initExponent(u32 exp) {
   initClasses<<<1, 1024>>>(exp);
-  initInvTab<<<NPRIMES/1024, 1024>>>(exp);
+  initInvTab<<<NPRIMES/SIEVE_THREADS, SIEVE_THREADS>>>(exp);
   // time("init Exp");
 }
 
@@ -387,21 +379,6 @@ u128 _u128(U3 x) {
 U3 _U3(u128 x) {
   return (U3) {(u32) x, (u32)(((u64)x) >> 32), (u32)(x >> 64)};
 }
-
-/*
-__managed__ u32 zeroDelta[1] = {0};
-u128 factorOne(u32 exp, u64 k) {
-  u32 flushedExp = exp << __builtin_clz(exp);
-  u32 doubleExp = exp + exp;
-  cudaDeviceSynchronize();
-  kTabSize = 1;
-  U3 m = _U3(doubleExp * (u128) k);
-  m.a |= 1;
-  test<<<1, 1>>>(doubleExp, flushedExp, m, zeroDelta);
-  cudaDeviceSynchronize();
-  return _u128(foundFactor);
-}
-*/
 
 u32 oneShl(unsigned sh) { return (sh < 32) ? (1 << sh) : 0; }
 
@@ -477,20 +454,9 @@ int main(int argc, char **argv) {
   // cudaSetDevice(1);
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync); CUDA_CHECK;
   time();
-  /*
-  u32 exp = 57003631;
-  //  u64 k = 359804871144;
-  u128 m = factorOne(exp, 327227286441ull);
-  printf("m found: 0x%016llx%016llx\n", (u64) (m >> 64), (u64) m);
-  
-  // assert(testOk(exp, k));
-  // printf("m2 found: 0x%08llx%08llx\n", (u64) (m >> 64), (u64) m);
-  return 0;
-  */
-
   
   if (argc == 1) {
-    printf("Running selftest..\n");
+    printf("Quick selftest..\n");
     for (Test *t = tests, *end = tests + ASIZE(tests); t < end; ++t) {
       u32 exp = t->exp;
       u64 k   = t->k;
@@ -499,10 +465,11 @@ int main(int argc, char **argv) {
       if (!verifyFactor(exp, k)) {
         printf("\nFAIL: %u %llu\n", exp, k); return 1;
       }
-    }    
+    }
+    printf("\nExtended selftest..\n");
     for (Test *t = tests, *end = tests + ASIZE(tests); t < end; ++t) {
       u32 exp = t->exp;
-      u64 k = t->k;
+      u64 k   = t->k;
       printf("\r%4d: %9u %15llu\n", (int) (t - tests), exp, k);
       initExponent(exp);
       u128 m = 2 * exp * (u128) k + 1;

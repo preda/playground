@@ -1,16 +1,23 @@
 import pyprimes
 
-#f = 100.
-#for p in pyprimes.primes(11, 10000000):
-#    f *= (p - 1) / float(p)
-#print(f)
+if False:
+    f = 100.
+    for p in pyprimes.primes(500000, 1000000):
+        f *= (p - 1) / float(p)
+    print(f)
 
-n = 0
-#1047139
-#1047157
-for p in pyprimes.primes(17, 1024 * 1024):
-    print("%d, " % p, end='')
-    n += 1
-    if n >= 1024:
-        print()
-        n = 0
+if True:
+    n = 0
+    for p in list(pyprimes.nprimes(128 * 1024 + 5))[5:]:
+        print("%7d, " % p, end='')
+        n += 1
+        if n >= 16:
+            print()
+            n = 0
+
+#for p in pyprimes.primes(13, 2 * 1024 * 1024):
+#    print("%d, " % p, end='')
+#    n += 1
+#    if n >= 256:
+#        print()
+#        n = 0
