@@ -140,7 +140,7 @@ DEVICE U3 mulLow(U3 x, U3 y) {
 
 // (x * y) >> 96 (upper 3 words of x * y); 9 MULs.
 // Disregards carry from lower (not computed) digits, thus has an error of at most 4.
-DEVICE U3 shr3wMul(U3 x, U3 y) {
+DEVICE U3 mulHi(U3 x, U3 y) {
   u32 a, b, c;
   asm(
       "mul.hi.u32     %0, %5, %6;"

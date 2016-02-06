@@ -1,7 +1,6 @@
-// Copyright (c) Mihai Preda, 2015 - 2016
-
+// Ghepard: GPU trial factoring for Marsenne numbers. Copyright (c) Mihai Preda, 2015 - 2016.
 /*
-  Aa program for trial factoring of Mersenne numbers on a CUDA GPU.
+  "Ghepard" is a program for trial factoring of Mersenne numbers on a CUDA GPU.
 
   Mersenne numbers are of the form 2**exp - 1; see http://www.mersenne.org/various/math.php
   This is inpired by mfaktc: http://www.mersenneforum.org/mfaktc/
@@ -121,7 +120,7 @@ u64 timeMillis() {
 
 // Returns x % m, given u the "inverse" of m (2**160 / m); m at most 77 bits.
 DEVICE U3 mod(U5 x, U3 m, U3 u) {
-  return (U3){x.a, x.b, x.c} - mulLow(m, shr3wMul((U3) {x.c, x.d, x.e}, u));
+  return (U3){x.a, x.b, x.c} - mulLow(m, mulHi((U3) {x.c, x.d, x.e}, u));
 }
 
 // float lower approximation of 2**32 / x
@@ -188,9 +187,7 @@ DEVICE U3 inv160(U3 n, float nf) {
   rup = rup + (qi >> 17);
   U3 ret = (U3) {(qi << 15), rup.a, rup.b};
 
-  // p("n ", n); p("q ", q);
   q = ((U4) {0, q.a, q.b, q.c}) - ((n * qi) << 15);
-  // if (q.d) { printf("qi %d qf %.2f %.10f %.10f %.10f %f nf %f", qi, qf, t1, t2, t3, TWO32f, (nf * TWO64f)); p("q4 ", q); }
   assert(q.d == 0);
   
   // 5
@@ -267,17 +264,11 @@ __global__ void initClasses(u32 exp) {
 // Returns (2**exp % m) == 1
 DEVICE bool expMod(u32 exp, U3 m, U3 b) {
   assert(m.c && !(m.c & 0xffffc000));
-  /*
-  int sh = exp >> 25;
-  assert(sh >= 64 && sh < 128);
-  exp <<= 7;
-  */
   
   float nf = floatInv(m);
   U3 u = inv160(m, nf);
-
   U3 a = mod((U5) {0, 0, b.a, b.b, b.c}, m, u);
-  // U3 a = mod((U5){0, 0, 1 << (sh - 64), 1 << (sh - 96), 0}, m, u);
+
   do {
     a = mod(square(a), m, u);
     if (exp & 0x80000000) { a = (a << 1); }
@@ -445,13 +436,7 @@ bool verifyFactor(u32 exp, u64 k) {
   return true;
 }
 
-int main(int argc, char **argv) {
-  assert(argc > 0);
-  assert(NPRIMES % 1024 == 0);  
-  // cudaSetDevice(1);
-  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync); CUDA_CHECK;
-  time();
-  
+bool run(int argc, char **argv) {
   if (argc == 1) {
     printf("Quick selftest..\n");
     for (Test *t = tests, *end = tests + ASIZE(tests); t < end; ++t) {
@@ -460,7 +445,7 @@ int main(int argc, char **argv) {
       printf("\r%4d: %9u %15llu  ", (int) (t - tests), exp, k);
       initExponent(exp);
       if (!verifyFactor(exp, k)) {
-        printf("\nFAIL: %u %llu\n", exp, k); return 1;
+        printf("\nFAIL: %u %llu\n", exp, k); return false;
       }
     }
     printf("\nExtended selftest..\n");
@@ -476,7 +461,7 @@ int main(int argc, char **argv) {
       
       u128 m2 = factor(exp, pow2);
       if (m2 != m) {
-        printf("\nFAIL: %u %llu\n", exp, k); return 1;
+        printf("\nFAIL: %u %llu\n", exp, k); return false;
       }
     }
   } else {
@@ -488,6 +473,16 @@ int main(int argc, char **argv) {
       printf("m: 0x%016llx%016llx\n", (u64) (m >> 64), (u64) m);
     }
   }
-  
+  return true;
+}
+
+int main(int argc, char **argv) {
+  assert(argc > 0);
+  assert(NPRIMES % 1024 == 0);  
+  // cudaSetDevice(1);
+  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync); CUDA_CHECK;
+  time();
+  run(argc, argv);  
   cudaDeviceSynchronize();
+  cudaDeviceReset();
 }
