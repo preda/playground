@@ -1,48 +1,15 @@
-DEVICE U6 _U6(U3 x)  { return (U6) {x.a, x.b, x.c, 0, 0, 0}; }
 DEVICE U5 _U5(U4 x)  { return (U5) {x.a, x.b, x.c, x.d, 0}; }
 DEVICE U4 _U4(U3 x)  { return (U4) {x.a, x.b, x.c, 0}; }
-DEVICE U6 _U6(U5 x)  { return (U6) {x.a, x.b, x.c, x.d, x.e, 0}; }
-DEVICE U6 _U6(U4 x)  { return _U6(_U5(x)); }
 DEVICE U2 _U2(u64 x) { return (U2) {(u32) x, (u32) (x >> 32)}; }
 DEVICE u64 _u64(U2 x) { return (((u64) x.b) << 32) | x.a; }
 
-DEVICE U5 shr1w(U6 x) { return (U5) {x.b, x.c, x.d, x.e, x.f}; }
 DEVICE U4 shr1w(U5 x) { return (U4) {x.b, x.c, x.d, x.e}; }
 DEVICE U3 shr1w(U4 x) { return (U3) {x.b, x.c, x.d}; }
 DEVICE U2 shr1w(U3 x) { return (U2) {x.b, x.c}; }
 DEVICE U4 shl1w(U3 x) { return (U4) {0, x.a, x.b, x.c}; }
 
-DEVICE U3 operator~(U3 x) {
-  return (U3) {~x.a, ~x.b, ~x.c};
-}
-
-DEVICE bool operator==(U3 x, U3 y) {
-  return x.a == y.a && x.b == y.b && x.c == y.c;
-}
-
-DEVICE U5 operator+(U5 x, U3 y) {
- u32 a, b, c, d, e;
-  asm("add.cc.u32  %0, %5, %10;"
-      "addc.cc.u32 %1, %6, %11;"
-      "addc.cc.u32 %2, %7, %12;"
-      "addc.cc.u32 %3, %8, 0;"
-      "addc.u32    %4, %9, 0;"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e)
-      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(x.e),
-        "r"(y.a), "r"(y.b), "r"(y.c));
-  return (U5) {a, b, c, d, e};
-}
-
-DEVICE U4 operator+(U4 x, U3 y) {
-  u32 a, b, c, d;
-  asm("add.cc.u32  %0, %4, %8;"
-      "addc.cc.u32 %1, %5, %9;"
-      "addc.cc.u32 %2, %6, %10;"
-      "addc.u32    %3, %7, 0;"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d)
-      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(y.a), "r"(y.b), "r"(y.c));
-  return (U4) {a, b, c, d};
-}
+DEVICE U3 operator~(U3 x) { return (U3) {~x.a, ~x.b, ~x.c}; }
+DEVICE bool operator==(U3 x, U3 y) { return x.a == y.a && x.b == y.b && x.c == y.c; }
 
 DEVICE U3 operator+(U3 x, U3 y) {
   u32 a, b, c;
@@ -110,19 +77,6 @@ DEVICE U4 operator-(U4 x, U4 y) {
   return (U4) {a, b, c, d};
 }
 
-DEVICE U5 operator-(U5 x, U5 y) {
-  u32 a, b, c, d, e;
-  asm("sub.cc.u32  %0, %5, %10;"
-      "subc.cc.u32 %1, %6, %11;"
-      "subc.cc.u32 %2, %7, %12;"
-      "subc.cc.u32 %3, %8, %13;"
-      "subc.u32    %4, %9, %14;"
-      : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e)
-      : "r"(x.a), "r"(x.b), "r"(x.c), "r"(x.d), "r"(x.e),
-        "r"(y.a), "r"(y.b), "r"(y.c), "r"(y.d), "r"(y.e));
-  return (U5) {a, b, c, d, e};
-}
-
 // 4 MULs.
 DEVICE U3 operator*(U2 x, u32 n) {
   u32 a, b, c;
@@ -151,7 +105,7 @@ DEVICE U4 operator*(U3 x, u32 n) {
   return (U4) {a, b, c, d};
 }
 
-// 5 MULs.
+// Lower 3 words of x * n; 5 MULs.
 DEVICE U3 mulLow(U3 x, u32 n) {
   u32 a, b, c;
   asm(
@@ -165,7 +119,7 @@ DEVICE U3 mulLow(U3 x, u32 n) {
   return (U3) {a, b, c};
 }
 
-// 9 MULs
+// Lower 3 words of x * y; 9 MULs.
 DEVICE U3 mulLow(U3 x, U3 y) {
   u32 a, b, c;
   asm(
@@ -184,7 +138,8 @@ DEVICE U3 mulLow(U3 x, U3 y) {
   return (U3) {a, b, c};
 }
 
-// 9 MULs. Disregards carry from lower (not computed) digits, thus has an error of at most 4.
+// (x * y) >> 96 (upper 3 words of x * y); 9 MULs.
+// Disregards carry from lower (not computed) digits, thus has an error of at most 4.
 DEVICE U3 shr3wMul(U3 x, U3 y) {
   u32 a, b, c;
   asm(
@@ -215,32 +170,15 @@ DEVICE u32 shl(u32 a, u32 b, int n) {
   return r;
 }
 
-// Funnel shift right.
-DEVICE u32 shr(u32 a, u32 b, int n) {
-  u32 r;
-  asm("shf.r.wrap.b32 %0, %1, %2, %3;" : "=r"(r) : "r"(a), "r"(b), "r"(n));
-  return r;
-}
-
 DEVICE U3 operator<<(U3 x, int n) {
   assert(n >= 0 && n < 32 && !(x.c >> (32 - n)));
   return (U3) {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n)};
 }
 
 DEVICE U4 operator<<(U4 x, int n) {
-  // assert(n >= 0 && n < 32 && !(x.d >> (32 - n)));
+  assert(n >= 0 && n < 32 && !(x.d >> (32 - n)));
   return (U4) {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n), shl(x.c, x.d, n)};
 }
-
-DEVICE U5 operator<<(U5 x, int n) {
-  assert(n >= 0 && n < 32 && !(x.e >> (32 - n)));
-  U4 t = (U4) {x.a, x.b, x.c, x.d} << n;
-  return (U5) {t.a, t.b, t.c, t.d, shl(x.d, x.e, n)};
-}
-
-DEVICE void operator-=(U4 &x, U4 y) { x = x - y; }
-
-DEVICE void operator<<=(U3 &x, int n) { x = x << n; }
 
 // Computes x * x; 6 MULs.
 DEVICE U4 square(U2 x) {
@@ -261,7 +199,7 @@ DEVICE U4 square(U2 x) {
   return (U4) {a, b, c, d};
 }
 
-// Computes x * x; 11 MULs. x at most 80bits.
+// Computes x * x, x at most 80bits; 11 MULs. 
 DEVICE U5 square(U3 x) {
   assert(!(x.c & 0xffff0000));
   U2 ab = {x.a, x.b};

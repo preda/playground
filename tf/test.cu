@@ -56,7 +56,6 @@ struct U2 { u32 a, b; };
 struct U3 { u32 a, b, c; };
 struct U4 { u32 a, b, c, d; };
 struct U5 { u32 a, b, c, d, e; };
-struct U6 { u32 a, b, c, d, e, f; };
 
 #include "debug.h"
 #include "widemath.h"
@@ -72,8 +71,6 @@ DEVICE const __restrict__ u32 primes[] = {
 struct Test { u32 exp; u64 k; };
 #include "tests.inc"
 
-// Threads for initBtcTabs()
-#define INIT_BTC_THREADS 512
 // Threads per sieving block.
 #define SIEVE_THREADS 512
 // Threads per testing block.
@@ -283,7 +280,7 @@ DEVICE bool expMod(u32 exp, U3 m, U3 b) {
   // U3 a = mod((U5){0, 0, 1 << (sh - 64), 1 << (sh - 96), 0}, m, u);
   do {
     a = mod(square(a), m, u);
-    if (exp & 0x80000000) { a <<= 1; }
+    if (exp & 0x80000000) { a = (a << 1); }
   } while (exp += exp);
   a = a - mulLow(m, (u32) floatOf(a.b, a.c, nf));
   if (a.c >= m.c && a.a == (m.a + 1)) { a = a - m; }
@@ -384,7 +381,7 @@ u32 oneShl(unsigned sh) { return (sh < 32) ? (1 << sh) : 0; }
 
 u128 factor(u32 exp, u64 k0, u32 repeat) {
   // printf("repeat %u\n", repeat);
-  initBtcTabs<<<NGOODCLASS, INIT_BTC_THREADS>>>(exp, k0);
+  initBtcTabs<<<NGOODCLASS, SIEVE_THREADS>>>(exp, k0);
   // cudaDeviceSynchronize(); CUDA_CHECK; time("init K");
   
   u32 *kTabHost;
