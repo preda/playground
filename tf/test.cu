@@ -76,7 +76,7 @@ struct Test { u32 exp; u64 k; };
 #define TEST_THREADS 512
 
 // How many words of shared memory to use for sieving.
-#define NWORDS (8 * 1024 - 1)
+#define NWORDS (8 * 1024)
 // Bits for sieving (each word is 32 bits).
 #define NBITS (NWORDS << 5)
 
@@ -297,7 +297,6 @@ __global__ void test(u32 doubleExp, u32 flushedExp, U3 m0, U3 b, u32 *kTab) {
 // multiple of prime ("btc"), periodically set the bit to indicate a non-prime.
 __global__ void sieve() {
   __shared__ u32 words[NWORDS];
-  __shared__ u32 sum;
 
   // Set shared memory to zero.
   for (int i = threadIdx.x; i < NWORDS; i += blockDim.x) { words[i] = 0; }
@@ -314,18 +313,11 @@ __global__ void sieve() {
     }
     btcTab[i] = btc - NBITS;
   }
-  if (threadIdx.x == 0) { sum = 0; }
   __syncthreads();
   
   int popc = 0;
   for (int i = threadIdx.x; i < NWORDS; i += blockDim.x) { popc += __popc(~words[i]); }
-  popc = atomicAdd(&sum, popc);
-  __syncthreads();
-
-  if (threadIdx.x == 0) { sum = atomicAdd(&kTab[0], sum); }
-  __syncthreads();
-  
-  u32 *out = kTab + sum + popc + 1;
+  u32 *out = kTab + (1 + atomicAdd(&kTab[0], popc));
   u32 c = classTab[blockIdx.x];
 
   for (int i = threadIdx.x; i < NWORDS; i += blockDim.x) {
