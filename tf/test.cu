@@ -76,7 +76,7 @@ struct Test { u32 exp; u64 k; };
 #define TEST_THREADS 512
 
 // How many words of shared memory to use for sieving.
-#define NWORDS (8 * 1024)
+#define NWORDS (8 * 1024 - 1)
 // Bits for sieving (each word is 32 bits).
 #define NBITS (NWORDS << 5)
 
@@ -297,6 +297,7 @@ __global__ void test(u32 doubleExp, u32 flushedExp, U3 m0, U3 b, u32 *kTab) {
 // multiple of prime ("btc"), periodically set the bit to indicate a non-prime.
 __global__ void sieve() {
   __shared__ u32 words[NWORDS];
+  __shared__ u32 sum;
 
   // Set shared memory to zero.
   for (int i = threadIdx.x; i < NWORDS; i += blockDim.x) { words[i] = 0; }
@@ -313,37 +314,31 @@ __global__ void sieve() {
     }
     btcTab[i] = btc - NBITS;
   }
-  __syncthreads();
-
-  u32 bits = ~words[threadIdx.x];
-  words[threadIdx.x] = 0;
+  if (threadIdx.x == 0) { sum = 0; }
   __syncthreads();
   
-  int popc = __popc(bits);
-  for (int i = blockDim.x + threadIdx.x; i < NWORDS; i += blockDim.x) { popc += __popc(~words[i]); }
-  // u32 *out = kTab[blockIdx.x] + atomicAdd(words, popc);
-  popc = atomicAdd(words, popc);
+  int popc = 0;
+  for (int i = threadIdx.x; i < NWORDS; i += blockDim.x) { popc += __popc(~words[i]); }
+  popc = atomicAdd(&sum, popc);
   __syncthreads();
 
-  if (threadIdx.x == 0) {  words[0] = atomicAdd(&kTab[0], words[0]); }
+  if (threadIdx.x == 0) { sum = atomicAdd(&kTab[0], sum); }
   __syncthreads();
   
-  u32 *out = kTab + words[0] + popc + 1;
+  u32 *out = kTab + sum + popc + 1;
   u32 c = classTab[blockIdx.x];
-  int i = threadIdx.x;
-  while (true) {
+
+  for (int i = threadIdx.x; i < NWORDS; i += blockDim.x) {
+    u32 bits = ~words[i];
     while (bits) {
       int bit = __clz(__brev(bits)); // Equivalent to: __ffs(bits) - 1; 
+      *out++ = c + ((i << 5) + bit) * NCLASS;
       bits &= bits - 1;  // Equivalent to: bits &= ~(1 << bit); but likely faster
-      
+    }
+  }
+}      
       // int bit = bfind(bits);
       // bits &= ~(1 << bit);
-      *out++ = c + ((i << 5) + bit) * NCLASS;
-    }
-    if ((i += blockDim.x) >= NWORDS) { break; }
-    bits = ~words[i];
-  }
-}
 
 // The smallest k that produces a factor m = (2*k*exp + 1) such that m >= 2**bits
 u64 calculateK(u32 exp, int bits) { return ((((u128) 1) << (bits - 1)) + (exp - 2)) / exp; }
