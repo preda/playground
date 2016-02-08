@@ -10,6 +10,7 @@ DEVICE U4 shl1w(U3 x) { return (U4) {0, x.a, x.b, x.c}; }
 
 DEVICE U3 operator~(U3 x) { return (U3) {~x.a, ~x.b, ~x.c}; }
 DEVICE bool operator==(U3 x, U3 y) { return x.a == y.a && x.b == y.b && x.c == y.c; }
+U3 operator|(U3 x, u32 y) { return (U3) {x.a | y, x.b, x.c}; }
 
 DEVICE U3 operator+(U3 x, U3 y) {
   u32 a, b, c;
