@@ -71,9 +71,11 @@ struct Test { u32 exp; u64 k; };
 #include "tests.inc"
 
 // Threads per sieving block.
-#define SIEVE_THREADS 512
+#define SIEVE_THREADS (512 + 128)
+#define SIEVE_BLOCKS 48
 // Threads per testing block.
 #define TEST_THREADS 512
+#define TEST_BLOCKS 256
 
 // How many words of shared memory to use for sieving.
 #define NWORDS (8 * 1024)
@@ -402,19 +404,19 @@ u128 factor(u32 exp, u64 k0, u32 repeat) {
   cudaMemcpyToSymbolAsync(foundFactor, hostFactor, sizeof(U3), 0, cudaMemcpyHostToDevice, sieveStream);
   cudaMemcpyAsync(kTabs[0], hostFactor, sizeof(u32), cudaMemcpyHostToDevice, sieveStream);
   cudaMemcpyAsync(kTabs[1], hostFactor, sizeof(u32), cudaMemcpyHostToDevice, sieveStream);
-  sieve<<</*NGOODCLASS*/ 48, SIEVE_THREADS, 0, sieveStream>>>(kTabs[id]);
+  sieve<<<SIEVE_BLOCKS, SIEVE_THREADS, 0, sieveStream>>>(kTabs[id]);
   cudaStreamSynchronize(sieveStream);
   time("First sieve");
 
   for (int i = 0; i < repeat; ++i, k0 += NBITS * NCLASS) {
     id = 1 - id;
     if (i < repeat - 1) { // Don't sieve on last iteration.
-      sieve<<</*NGOODCLASS*/ 48, SIEVE_THREADS, 0, sieveStream>>>(kTabs[id]);
+      sieve<<<SIEVE_BLOCKS, SIEVE_THREADS, 0, sieveStream>>>(kTabs[id]);
     }
 
     U3 m = _U3(doubleExp * (u128) k0) | 1;
     assert(m.c);
-    test<<<NGOODCLASS, TEST_THREADS, 0, testStream>>>(doubleExp, flushedExp, m, b, kTabs[1 - id]);
+    test<<<TEST_BLOCKS, TEST_THREADS, 0, testStream>>>(doubleExp, flushedExp, m, b, kTabs[1 - id]);
     cudaMemcpyAsync(kTabs[1 - id], hostFactor, sizeof(u32), cudaMemcpyHostToDevice, testStream);
     cudaMemcpyFromSymbolAsync(hostFactor, foundFactor, sizeof(U3), 0, cudaMemcpyDeviceToHost, testStream);
     // cudaStreamSynchronize(sieveStream); time("sieve");

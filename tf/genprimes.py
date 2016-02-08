@@ -8,10 +8,10 @@ if False:
 
 if True:
     n = 0
-    for p in list(pyprimes.nprimes(128 * 1024 + 5))[5:]:
+    for p in list(pyprimes.nprimes(256 * 1024 + 5))[5:]:
         print("%7d, " % p, end='')
         n += 1
-        if n >= 16:
+        if n >= 8:
             print()
             n = 0
 
