@@ -362,7 +362,7 @@ void time(const char *s = 0) {
 
 void initExponent(u32 exp) {
   initClasses<<<1, 1024>>>(exp);
-  initInvTab<<<NPRIMES/SIEVE_THREADS, SIEVE_THREADS>>>(exp);
+  initInvTab<<<NPRIMES/TEST_THREADS, TEST_THREADS>>>(exp);
   // time("init Exp");
 }
 
@@ -378,7 +378,7 @@ u32 oneShl(unsigned sh) { return (sh < 32) ? (1 << sh) : 0; }
 
 u128 factor(u32 exp, u64 k0, u32 repeat) {
   // printf("repeat %u\n", repeat);
-  initBtcTabs<<<NGOODCLASS, SIEVE_THREADS>>>(exp, k0);
+  initBtcTabs<<<NGOODCLASS, TEST_THREADS>>>(exp, k0);
   // cudaDeviceSynchronize(); CUDA_CHECK; time("init K");
   
   // u32 *kTabHost;
