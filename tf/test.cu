@@ -61,7 +61,7 @@ struct U5 { u32 a, b, c, d, e; };
 
 // Table of small primes.
 DEVICE const __restrict__ u32 primes[] = {
-#include "primes.inc"
+#include "primes128.inc"
 };
 // Number of pre-computed primes for sieving.
 #define NPRIMES (ASIZE(primes))
@@ -75,7 +75,7 @@ struct Test { u32 exp; u64 k; };
 
 // Threads per testing block.
 #define TEST_THREADS 512
-#define TEST_BLOCKS 256
+#define TEST_BLOCKS 64
 
 // How many words of shared memory to use for sieving.
 #define NWORDS (8 * 1024)
@@ -106,9 +106,7 @@ DEVICE int btcTabs[NGOODCLASS][NPRIMES];
 // Sieved Ks table. sieve() outputs here, test() reads from here.
 // kTab[0] contains the size of the remainder of the array.
 // kTab[0] must be set to 0 before each sieve() invocation.
-// There are two such arrays, kTabA and kTabB, one used by sieve() while test() operates on the other one.
-DEVICE u32 kTabA[KTAB_SIZE];
-DEVICE u32 kTabB[KTAB_SIZE];
+DEVICE u32 kTab[KTAB_SIZE];
 
 // If a factor m is found, save it here.
 DEVICE U3 foundFactor = (U3) {0, 0, 0};
@@ -120,10 +118,9 @@ DEVICE u16 classTab[NGOODCLASS];
 U3 *hostFactor;
 u32 *hostN;
 
-cudaStream_t sieveStream;
-cudaStream_t testStream;
+cudaStream_t stream;
 
-u32 *kTabs[2];
+u32 *kTabHost;
 
 // Helper to check and bail out on any CUDA error.
 #define CUDA_CHECK  {cudaError_t _err = cudaGetLastError(); if (_err) { printf("CUDA error: %s\n", cudaGetErrorString(_err)); return 0; }}
@@ -294,18 +291,17 @@ DEVICE bool expMod(u32 exp, U3 m, U3 b) {
   return !(a.b | a.c | (a.a - 1)); // a.a == 1 && !a.b && !a.c;
 }
 
-// __launch_bounds__(1024, 2)
-__global__ void test(u32 doubleExp, u32 flushedExp, U3 m0, U3 b, u32 *kTab) {
+__global__ void test(u32 doubleExp, u32 flushedExp, U3 m0, U3 b) {
   for (u32 i = blockIdx.x * blockDim.x + threadIdx.x + 1, end = kTab[0] + 1; i < end; i += blockDim.x * gridDim.x) {
     U3 m = m0 + _U2(kTab[i] * (u64) doubleExp);
-    if (expMod(flushedExp, m, b)) { foundFactor = m; /*kTab[0] = 0;*/ }
+    if (expMod(flushedExp, m, b)) { foundFactor = m; }
   }
 }
 
 // Sieve bits using shared memory.
 // For each prime from the primes[] table, starting at a position corresponding to a
 // multiple of prime ("btc"), periodically set the bit to indicate a non-prime.
-__global__ void sieve(u32 *kTab) {
+__global__ void sieve() {
   __shared__ u32 words[NWORDS];
 
   // Set shared memory to zero.
@@ -317,7 +313,7 @@ __global__ void sieve(u32 *kTab) {
     // Sieve bits.
     int *btcTab = btcTabs[loop];
 
-    for (int i = threadIdx.x; i < (NPRIMES - 64); i += blockDim.x) {
+    for (int i = threadIdx.x; i < (NPRIMES - 32); i += blockDim.x) {
       int btc = btcTab[i];
       int prime = primes[i];
       while (btc < NBITS) {
@@ -378,13 +374,9 @@ U3 _U3(u128 x) {
 u32 oneShl(unsigned sh) { return (sh < 32) ? (1 << sh) : 0; }
 
 u128 factor(u32 exp, u64 k0, u32 repeat) {
-  // printf("repeat %u\n", repeat);
   initBtcTabs<<<NGOODCLASS, TEST_THREADS>>>(exp, k0);
   // cudaDeviceSynchronize(); CUDA_CHECK; time("init K");
   
-  // u32 *kTabHost;
-  // cudaGetSymbolAddress((void **)&kTabHost, kTab);
-
   u32 doubleExp = exp + exp;
   u32 flushedExp = exp << __builtin_clz(exp);
   assert(flushedExp & 0x80000000);
@@ -400,34 +392,28 @@ u128 factor(u32 exp, u64 k0, u32 repeat) {
   U3 b = (U3) {oneShl(sh - 64), oneShl(sh - 96), oneShl(sh - 128)};
 
   *hostFactor = (U3) {0, 0, 0};
+  *hostN = 0;
   
-  cudaMemcpyToSymbolAsync(foundFactor, hostFactor, sizeof(U3), 0, cudaMemcpyHostToDevice, sieveStream);
-  // cudaMemcpyAsync(kTabs[0], hostFactor, sizeof(u32), cudaMemcpyHostToDevice, sieveStream);
-  // cudaMemcpyAsync(kTabs[1], hostFactor, sizeof(u32), cudaMemcpyHostToDevice, sieveStream);
-  time("init");
-  u32 max= 0;
+  cudaMemcpyToSymbolAsync(foundFactor, hostFactor, sizeof(U3), 0, cudaMemcpyHostToDevice, stream);
+  int minLeft = 1000000;
   for (int i = 0; i < repeat; ++i, k0 += NBITS * NCLASS) {
-    cudaMemcpyAsync(kTabs[0], hostFactor, sizeof(u32), cudaMemcpyHostToDevice, testStream);
-    sieve<<<SIEVE_BLOCKS, SIEVE_THREADS, 0, sieveStream>>>(kTabs[0]);
-    cudaMemcpyAsync(hostN, kTabs[0], sizeof(u32), cudaMemcpyHostToDevice, testStream);
+    cudaMemcpyAsync(kTabHost, hostFactor, sizeof(u32), cudaMemcpyHostToDevice, stream);
+    sieve<<<SIEVE_BLOCKS, SIEVE_THREADS, 0, stream>>>();
+    cudaMemcpyAsync(hostN, kTabHost, sizeof(u32), cudaMemcpyHostToDevice, stream);
     U3 m = _U3(doubleExp * (u128) k0) | 1;
     assert(m.c);
-    test<<<TEST_BLOCKS, TEST_THREADS, 0, testStream>>>(doubleExp, flushedExp, m, b, kTabs[0]);
-
-    cudaMemcpyFromSymbolAsync(hostFactor, foundFactor, sizeof(U3), 0, cudaMemcpyDeviceToHost, testStream);
-    cudaStreamSynchronize(sieveStream);
-    printf("%u ", *hostN); time("sieve");
-    // if (*hostN > max) { max = *hostN; }
-    // cudaStreamSynchronize(testStream); time("test");
-    CUDA_CHECK;
-    
+    test<<<TEST_BLOCKS, TEST_THREADS, 0, stream>>>(doubleExp, flushedExp, m, b);
+    cudaMemcpyFromSymbolAsync(hostFactor, foundFactor, sizeof(U3), 0, cudaMemcpyDeviceToHost, stream);
+    cudaStreamSynchronize(stream); CUDA_CHECK;
+    int spaceLeft = ASIZE(kTab) - 1 - *hostN;
+    if (spaceLeft < minLeft) { minLeft = spaceLeft; }
+    printf("%u %d ", *hostN, spaceLeft); time("time");
     if (hostFactor->a != 0) {
-      // cudaStreamSynchronize(sieveStream);  // Make sure sieving is done as well.
       if (repeat > 1) { printf("Did %d cycles out of %d\n", i + 1, repeat); }
       return _u128(*hostFactor);
     }       
   }
-  printf("max %u\n", max);
+  printf("min space left %d\n", minLeft);
   return 0;
 }
 
@@ -499,26 +485,17 @@ int main(int argc, char **argv) {
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync); CUDA_CHECK;
   cudaHostAlloc((void **) &hostFactor, sizeof(U3), cudaHostAllocDefault);
   cudaHostAlloc((void **) &hostN, sizeof(u32), cudaHostAllocDefault);
+  cudaGetSymbolAddress((void **)&kTabHost, kTab);
   
-  cudaStreamCreate(&sieveStream);
-  testStream = sieveStream;
-  // cudaStreamCreate(&testStream);
-  
-  // cudaStreamCreateWithPriority(&sieveStream, cudaStreamDefault, -1);
-  // cudaStreamCreateWithPriority(&testStream, cudaStreamDefault, 0);
+  cudaStreamCreate(&stream);
   CUDA_CHECK;
-
-  cudaGetSymbolAddress((void **) &kTabs[0], kTabA);
-  cudaGetSymbolAddress((void **) &kTabs[1], kTabB);
-
-  
   time();
   run(argc, argv);
 
   // Clean-up before exit
   cudaDeviceSynchronize();
   cudaFreeHost(hostFactor);
-  cudaStreamDestroy(sieveStream);
-  // cudaStreamDestroy(testStream);
+  cudaFreeHost(hostN);
+  cudaStreamDestroy(stream);
   cudaDeviceReset();
 }
