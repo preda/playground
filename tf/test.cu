@@ -71,8 +71,8 @@ struct Test { u32 exp; u64 k; };
 #include "tests.inc"
 
 // Threads per sieving block.
-#define SIEVE_THREADS (512 + 128)
-#define SIEVE_BLOCKS 48
+#define SIEVE_THREADS (512 + 128 + 32)
+
 // Threads per testing block.
 #define TEST_THREADS 512
 #define TEST_BLOCKS 256
@@ -86,6 +86,7 @@ struct Test { u32 exp; u64 k; };
 #define NCLASS     (4 * 3 * 5 * 7 * 11)
 // Out of NCLASS, how many classes pass acceptClass(). Sync with NCLASS.
 #define NGOODCLASS (2 * 2 * 4 * 6 * 10)
+#define SIEVE_BLOCKS 48
 
 #define KTAB_SIZE ((int)(NGOODCLASS * NBITS * 0.195f))
 
@@ -117,6 +118,7 @@ DEVICE u16 classTab[NGOODCLASS];
 
 // Pinned piece of host memory used to copy to/from GPU.
 U3 *hostFactor;
+u32 *hostN;
 
 cudaStream_t sieveStream;
 cudaStream_t testStream;
@@ -300,9 +302,6 @@ __global__ void test(u32 doubleExp, u32 flushedExp, U3 m0, U3 b, u32 *kTab) {
   }
 }
 
-// Returns the position of the most significant bit that is set.
-// DEVICE int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
-
 // Sieve bits using shared memory.
 // For each prime from the primes[] table, starting at a position corresponding to a
 // multiple of prime ("btc"), periodically set the bit to indicate a non-prime.
@@ -311,23 +310,24 @@ __global__ void sieve(u32 *kTab) {
 
   // Set shared memory to zero.
   for (int i = threadIdx.x; i < NWORDS; i += blockDim.x) { words[i] = 0; }
-  
+
   for (int loop = blockIdx.x; loop < NGOODCLASS;  loop += gridDim.x) {
     __syncthreads();
-  
+
     // Sieve bits.
     int *btcTab = btcTabs[loop];
-    for (int i = threadIdx.x; i < NPRIMES; i += blockDim.x) {
-      int prime = primes[i];
+
+    for (int i = threadIdx.x; i < (NPRIMES - 64); i += blockDim.x) {
       int btc = btcTab[i];
+      int prime = primes[i];
       while (btc < NBITS) {
         atomicOr(words + (btc >> 5), 1 << (btc & 0x1f));
         btc += prime;
       }
       btcTab[i] = btc - NBITS;
-    }
+    }    
     __syncthreads();
-  
+
     int popc = 0;
     for (int i = threadIdx.x; i < NWORDS; i += blockDim.x) { popc += __popc(~words[i]); }
   
@@ -339,8 +339,9 @@ __global__ void sieve(u32 *kTab) {
       words[i] = 0;
       while (bits) {
         int bit = __clz(__brev(bits)); // Equivalent to: __ffs(bits) - 1; 
-        *out++ = c + ((i << 5) + bit) * NCLASS;
         bits &= bits - 1;  // Equivalent to: bits &= ~(1 << bit); but likely faster
+        *out++ = c + ((i << 5) + bit) * NCLASS;
+        // dummy += c + ((i << 5) + bit) * NCLASS; ++out;
       }
     }
   }
@@ -399,28 +400,25 @@ u128 factor(u32 exp, u64 k0, u32 repeat) {
   U3 b = (U3) {oneShl(sh - 64), oneShl(sh - 96), oneShl(sh - 128)};
 
   *hostFactor = (U3) {0, 0, 0};
-  int id = 0;
   
   cudaMemcpyToSymbolAsync(foundFactor, hostFactor, sizeof(U3), 0, cudaMemcpyHostToDevice, sieveStream);
-  cudaMemcpyAsync(kTabs[0], hostFactor, sizeof(u32), cudaMemcpyHostToDevice, sieveStream);
-  cudaMemcpyAsync(kTabs[1], hostFactor, sizeof(u32), cudaMemcpyHostToDevice, sieveStream);
-  sieve<<<SIEVE_BLOCKS, SIEVE_THREADS, 0, sieveStream>>>(kTabs[id]);
-  cudaStreamSynchronize(sieveStream);
-  time("First sieve");
-
+  // cudaMemcpyAsync(kTabs[0], hostFactor, sizeof(u32), cudaMemcpyHostToDevice, sieveStream);
+  // cudaMemcpyAsync(kTabs[1], hostFactor, sizeof(u32), cudaMemcpyHostToDevice, sieveStream);
+  time("init");
+  u32 max= 0;
   for (int i = 0; i < repeat; ++i, k0 += NBITS * NCLASS) {
-    id = 1 - id;
-    if (i < repeat - 1) { // Don't sieve on last iteration.
-      sieve<<<SIEVE_BLOCKS, SIEVE_THREADS, 0, sieveStream>>>(kTabs[id]);
-    }
-
+    cudaMemcpyAsync(kTabs[0], hostFactor, sizeof(u32), cudaMemcpyHostToDevice, testStream);
+    sieve<<<SIEVE_BLOCKS, SIEVE_THREADS, 0, sieveStream>>>(kTabs[0]);
+    cudaMemcpyAsync(hostN, kTabs[0], sizeof(u32), cudaMemcpyHostToDevice, testStream);
     U3 m = _U3(doubleExp * (u128) k0) | 1;
     assert(m.c);
-    test<<<TEST_BLOCKS, TEST_THREADS, 0, testStream>>>(doubleExp, flushedExp, m, b, kTabs[1 - id]);
-    cudaMemcpyAsync(kTabs[1 - id], hostFactor, sizeof(u32), cudaMemcpyHostToDevice, testStream);
+    test<<<TEST_BLOCKS, TEST_THREADS, 0, testStream>>>(doubleExp, flushedExp, m, b, kTabs[0]);
+
     cudaMemcpyFromSymbolAsync(hostFactor, foundFactor, sizeof(U3), 0, cudaMemcpyDeviceToHost, testStream);
-    // cudaStreamSynchronize(sieveStream); time("sieve");
-    cudaStreamSynchronize(testStream); time("test");
+    cudaStreamSynchronize(sieveStream);
+    printf("%u ", *hostN); time("sieve");
+    // if (*hostN > max) { max = *hostN; }
+    // cudaStreamSynchronize(testStream); time("test");
     CUDA_CHECK;
     
     if (hostFactor->a != 0) {
@@ -429,32 +427,9 @@ u128 factor(u32 exp, u64 k0, u32 repeat) {
       return _u128(*hostFactor);
     }       
   }
+  printf("max %u\n", max);
   return 0;
 }
-  
-  /*
-  for (int i = 0; i < repeat; ++i, k0 += NBITS * NCLASS) {
-    sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
-    // cudaDeviceSynchronize(); CUDA_CHECK; time("Sieve");
-
-    U3 m = _U3(doubleExp * (u128) k0) | 1;
-    assert(m.c);
-
-    test<<<128, TEST_THREADS>>>(doubleExp, flushedExp, m, b, kTabHost);
-    cudaDeviceSynchronize(); CUDA_CHECK; time("Test");
-    assert(hostFactor->a == 0);
-    cudaMemcpyToSymbol(kTab, hostFactor, sizeof(u32));
-    cudaMemcpyFromSymbol(hostFactor, foundFactor, sizeof(u32));
-    if (hostFactor->a != 0) {
-      cudaMemcpyFromSymbol(hostFactor, foundFactor, sizeof(U3));
-      u128 m = _u128(*hostFactor);
-      *hostFactor = (U3) {0, 0, 0};
-      cudaMemcpyToSymbol(foundFactor, hostFactor, sizeof(U3));
-      if (repeat > 1) { printf("Did %d cycles out of %d\n", i + 1, repeat); }
-      return m;
-    }
-  }
- */
 
 u128 factor(u32 exp, u32 startPow2) {
   // printf("%d\n", startPow2);
@@ -521,9 +496,10 @@ int main(int argc, char **argv) {
   assert(argc > 0);
   assert(NPRIMES % 1024 == 0);  
   // cudaSetDevice(1);
-  // cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync); CUDA_CHECK;
+  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync); CUDA_CHECK;
   cudaHostAlloc((void **) &hostFactor, sizeof(U3), cudaHostAllocDefault);
-
+  cudaHostAlloc((void **) &hostN, sizeof(u32), cudaHostAllocDefault);
+  
   cudaStreamCreate(&sieveStream);
   testStream = sieveStream;
   // cudaStreamCreate(&testStream);

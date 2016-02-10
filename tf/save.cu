@@ -495,3 +495,56 @@ __global__ void initClasses(u32 exp) {
   */
 }
 
+
+  
+  /*
+  for (int i = 0; i < repeat; ++i, k0 += NBITS * NCLASS) {
+    sieve<<<NGOODCLASS, SIEVE_THREADS>>>();
+    // cudaDeviceSynchronize(); CUDA_CHECK; time("Sieve");
+
+    U3 m = _U3(doubleExp * (u128) k0) | 1;
+    assert(m.c);
+
+    test<<<128, TEST_THREADS>>>(doubleExp, flushedExp, m, b, kTabHost);
+    cudaDeviceSynchronize(); CUDA_CHECK; time("Test");
+    assert(hostFactor->a == 0);
+    cudaMemcpyToSymbol(kTab, hostFactor, sizeof(u32));
+    cudaMemcpyFromSymbol(hostFactor, foundFactor, sizeof(u32));
+    if (hostFactor->a != 0) {
+      cudaMemcpyFromSymbol(hostFactor, foundFactor, sizeof(U3));
+      u128 m = _u128(*hostFactor);
+      *hostFactor = (U3) {0, 0, 0};
+      cudaMemcpyToSymbol(foundFactor, hostFactor, sizeof(U3));
+      if (repeat > 1) { printf("Did %d cycles out of %d\n", i + 1, repeat); }
+      return m;
+    }
+  }
+ */
+
+
+// Returns the position of the most significant bit that is set.
+// DEVICE int bfind(u32 x) { int r; asm("bfind.u32 %0, %1;": "=r"(r): "r"(x)); return r; }
+
+#define MODSTEP(p, step) i##p = (i##p + p - (step) % p) % p
+
+    /*
+    u32 i13 = btcTab[0];
+    u32 i17 = btcTab[1];
+    if (threadIdx.x) {
+      MODSTEP(13, threadIdx.x * 32);
+      MODSTEP(17, threadIdx.x * 32);
+    }
+    for (u32 i = threadIdx.x;;) {
+      words[i] = ((1|(1<<13)|(1<<26)) << i13) | ((1|(1<<17)) << i17);
+      i += blockDim.x;
+      if (i > NWORDS) { break; }
+      MODSTEP(13, SIEVE_THREADS * 32);
+      MODSTEP(17, SIEVE_THREADS * 32);
+      if (i == NWORDS) {
+        btcTab[0] = i13;
+        btcTab[1] = i17;
+        break;
+      }
+    }
+    __syncthreads();
+    */
