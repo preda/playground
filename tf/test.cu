@@ -75,7 +75,7 @@ struct Test { u32 exp; u64 k; };
 
 // Threads per testing block.
 #define TEST_THREADS 512
-#define TEST_BLOCKS 64
+#define TEST_BLOCKS 128
 
 // How many words of shared memory to use for sieving.
 #define NWORDS (8 * 1024)
@@ -396,10 +396,13 @@ u128 factor(u32 exp, u64 k0, u32 repeat) {
   
   cudaMemcpyToSymbolAsync(foundFactor, hostFactor, sizeof(U3), 0, cudaMemcpyHostToDevice, stream);
   int minLeft = 1000000;
+  repeat = 3;
   for (int i = 0; i < repeat; ++i, k0 += NBITS * NCLASS) {
+    if (i == 0) {
     cudaMemcpyAsync(kTabHost, hostFactor, sizeof(u32), cudaMemcpyHostToDevice, stream);
     sieve<<<SIEVE_BLOCKS, SIEVE_THREADS, 0, stream>>>();
-    cudaMemcpyAsync(hostN, kTabHost, sizeof(u32), cudaMemcpyHostToDevice, stream);
+    }
+    cudaMemcpyAsync(hostN, kTabHost, sizeof(u32), cudaMemcpyDeviceToHost, stream);
     U3 m = _U3(doubleExp * (u128) k0) | 1;
     assert(m.c);
     test<<<TEST_BLOCKS, TEST_THREADS, 0, stream>>>(doubleExp, flushedExp, m, b);
@@ -479,17 +482,20 @@ bool run(int argc, char **argv) {
 }
 
 int main(int argc, char **argv) {
+  time();
   assert(argc > 0);
   assert(NPRIMES % 1024 == 0);  
   // cudaSetDevice(1);
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync); CUDA_CHECK;
+  cudaStreamCreate(&stream);
+  
   cudaHostAlloc((void **) &hostFactor, sizeof(U3), cudaHostAllocDefault);
   cudaHostAlloc((void **) &hostN, sizeof(u32), cudaHostAllocDefault);
   cudaGetSymbolAddress((void **)&kTabHost, kTab);
-  
-  cudaStreamCreate(&stream);
+  cudaDeviceSynchronize();
   CUDA_CHECK;
-  time();
+  time("host alloc");
+
   run(argc, argv);
 
   // Clean-up before exit
