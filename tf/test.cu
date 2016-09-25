@@ -160,29 +160,6 @@ DEVICE U3 inv160(U3 n, float nf) {
   u32 rb = (qi << 16);
   rc += (qi >> 16);
   
-#ifdef NDEBUG
-  assert(false); // Verify that assert is compiled out in NDEBUG.
-  U3 p = (U3) {q.a, q.b, q.c} - (mulLow(n, qi) << 16);
-  
-  // 3
-  qf = floatOf(p.b, p.c, nf);
-  assert(qf < (1 << 24));
-  qi = (u32) qf;
-  U2 rup = (U2){rb, rc} + qi;
-  p = p - mulLow(n, qi);
-
-  // 4
-  qf = floatOf(p.b, p.c, nf) * TWO17f;
-  assert(qf < (1 << 22));
-  qi = (u32) qf;
-  rup = rup + (qi >> 17);
-  U3 ret = (U3) {(qi << 15), rup.a, rup.b};
-  p = (U3) {0, p.a, p.b} - (mulLow(n, qi) << 15);
-
-  // 5
-  return ret + (u32) floatOf(p.b, p.c, nf);
-  
-#else
   q = q - ((n * qi) << 16);
   assert(q.d == 0);
 
@@ -285,7 +262,7 @@ DEVICE bool expMod(u32 exp, U3 m, U3 b) {
 
   do {
     a = mod(square(a), m, u);
-    if (exp & 0x80000000) { a = (a << 1); }
+    if (exp & 0x80000000) { a = a + a; }
   } while (exp += exp);
   a = a - mulLow(m, (u32) floatOf(a.b, a.c, nf));
   if (a.c >= m.c && a.a == (m.a + 1)) { a = a - m; }
@@ -297,6 +274,16 @@ __global__ void test(u32 doubleExp, u32 flushedExp, U3 m0, U3 b) {
     U3 m = m0 + _U2(kTab[i] * (u64) doubleExp);
     if (expMod(flushedExp, m, b)) { foundFactor = m; }
   }
+}
+
+__global__ void trysub(U3 a, U3 b) {
+  // a.a |= threadIdx.x;
+  foundFactor = a - b;
+  print("x", foundFactor);
+}
+
+__global__ void tryadd(U3 a, U3 b) {
+  foundFactor = a + b;
 }
 
 // Sieve bits using shared memory.
@@ -397,7 +384,7 @@ u128 factor(u32 exp, u64 k0, u32 repeat) {
   
   cudaMemcpyToSymbolAsync(foundFactor, hostFactor, sizeof(U3), 0, cudaMemcpyHostToDevice, stream);
   int minLeft = 1000000;
-  repeat = 3;
+  repeat = 4;
   for (int i = 0; i < repeat; ++i, k0 += NBITS * NCLASS) {
     if (i == 0) {
     cudaMemcpyAsync(kTabSizeHost, hostFactor, sizeof(u32), cudaMemcpyHostToDevice, stream);
@@ -488,8 +475,8 @@ int main(int argc, char **argv) {
   assert(NPRIMES % 1024 == 0);  
   // cudaSetDevice(1);
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync); CUDA_CHECK;
-  cudaStreamCreate(&stream);
-  
+    
+  cudaStreamCreate(&stream);  
   cudaHostAlloc((void **) &hostFactor, sizeof(U3), cudaHostAllocDefault);
   cudaHostAlloc((void **) &hostN, sizeof(u32), cudaHostAllocDefault);
   cudaGetSymbolAddress((void **)&kTabSizeHost, kTabSize);
@@ -497,6 +484,13 @@ int main(int argc, char **argv) {
   CUDA_CHECK;
   time("host alloc");
 
+  U3 a{0, 0, 1};
+  U3 b{1, 0, 0};
+  trysub<<<1, 1>>>(a, b);
+  cudaDeviceSynchronize();
+  cudaMemcpyFromSymbol(hostFactor, foundFactor, sizeof(U3), 0);
+  // print("x", *hostFactor);
+  
   run(argc, argv);
 
   // Clean-up before exit

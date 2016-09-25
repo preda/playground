@@ -1,6 +1,11 @@
 DEVICE U5 _U5(U4 x)  { return (U5) {x.a, x.b, x.c, x.d, 0}; }
 DEVICE U4 _U4(U3 x)  { return (U4) {x.a, x.b, x.c, 0}; }
-DEVICE U2 _U2(u64 x) { return (U2) {(u32) x, (u32) (x >> 32)}; }
+DEVICE U2 _U2(u64 x) {
+  union { u64 x; U2 r; } u {.x = x};
+  return u.r;
+  // return (U2) {(u32) x, (u32) (x >> 32)};
+}
+
 DEVICE u64 _u64(U2 x) { return (((u64) x.b) << 32) | x.a; }
 
 DEVICE U4 shr1w(U5 x) { return (U4) {x.b, x.c, x.d, x.e}; }
@@ -181,6 +186,7 @@ DEVICE U4 operator<<(U4 x, int n) {
   return (U4) {x.a << n, shl(x.a, x.b, n), shl(x.b, x.c, n), shl(x.c, x.d, n)};
 }
 
+/*
 // Computes x * x; 6 MULs.
 DEVICE U4 square(U2 x) {
   u32 a, b, c, d;
@@ -207,4 +213,32 @@ DEVICE U5 square(U3 x) {
   U4 ab2 = square(ab);
   U3 abc = ab * (x.c + x.c) + (U3) {ab2.c, ab2.d, x.c * x.c};
   return (U5) {ab2.a, ab2.b, abc.a, abc.b, abc.c};
+}
+*/
+
+DEVICE U5 square(U3 x) {
+  assert(!(x.c & 0xffff0000));
+  u32 a, b, c, d, e;
+  asm(
+      "mul.lo.u32     %1, %5, %6;"
+      "mul.hi.u32     %2, %5, %6;"      
+      "add.u32        %0, %7, %7;"
+      
+      "add.cc.u32     %1, %1, %1;"
+      "addc.cc.u32    %2, %2, %2;"
+      "madc.hi.u32    %3, %5, %0, 0;"
+             
+      "mad.lo.cc.u32  %2, %5, %0, %2;"
+      "madc.lo.cc.u32 %3, %6, %0, %3;"
+      "madc.hi.u32    %4, %6, %0, 0;"
+      
+      "mad.hi.cc.u32  %1, %5, %5, %1;"
+      "mul.lo.u32     %0, %5, %5;"
+      "madc.lo.cc.u32 %2, %6, %6, %2;"
+      "madc.hi.cc.u32 %3, %6, %6, %3;"
+      "madc.lo.u32    %4, %7, %7, %4;"
+
+       : "=r"(a), "=r"(b), "=r"(c), "=r"(d), "=r"(e)
+       : "r"(x.a), "r"(x.b), "r"(x.c));
+  return (U5) {a, b, c, d, e};
 }
