@@ -1,7 +1,38 @@
 
-def nc4(v):
+# nega self conv of 4 in 10 muls
+def nc4slow(v):
     (a, b, c, d) = v
     return (a*a - c*c - 2*b*d, 2*(a*b - c*d), 2*a*c + b*b - d*d, 2*(a*d + b*c))
+
+# nega self conv of 4 in 7 muls
+def nc4(v):
+    (a, b, c, d) = v
+    (apc, amc) = (a + c, a - c)
+    (bpd, bmd) = (b + d, b - d)
+    x = apc * bmd
+    y = amc * bpd
+    #z = y - x
+    return (apc * amc - 2*b*d, x + y, bpd * bmd + 2*a*c, y - x + 4*b*c)
+
+def add(a, b): return list(x+y for (x, y) in zip(a, b))
+def neg(a): return list(-x for x in a)
+def sub(a, b): return add(a, neg(b))
+def sh(a, e):
+    if e < 0: return sh(neg(a), len(a) + e)
+    assert e < len(a)
+    return neg(a[-e:]) + list(a[:-e])
+
+def ah(x, y):
+    assert (x & 1) == (y & 1)
+    return (x >> 1) + (y >> 1) + (x & 1)
+
+def addh(a, b): return list(ah(x, y) for (x, y) in zip(a, b))
+def subh(a, b): return addh(a, neg(b))
+    
+
+
+a = (1, 2, 3, 4)
+print(sh(a, 1), sh(a, -1), sh(a, 3), sh(a, -3))
 
 def p4(x0, x1):
     (a, b, c, d) = x0
@@ -16,6 +47,48 @@ def m4(x0, x1):
 def rot(v):
     (a, b, c, d) = v
     return (-d, a, b, c)
+
+def nc16(v):
+    #a b c d e f g h
+    (a, b, c, d) = zip(*(v[4 * i: 4 * i + 4] for i in range(4)))
+    (e, f, g, h) = (a, sh(b, 1), sh(c, 2), sh(d, 3))
+
+    (a, b, c, d, e, f, g, h) = (add(a,c), add(b,d), sub(a,c), sh(sub(b,d), 2), add(e, g), add(f, h), sub(e, g), sh(sub(f, h), 2))
+    (a, b, c, d, e, f, g, h) = (add(a, b), sub(a, b), add(c, d), sub(c, d), add(e, f), sub(e, f), add(g, h), sub(g, h))
+
+    (a, b, c, d, e, f, g, h) = map(nc4, (a, b, c, d, e, f, g, h))
+
+    (a, b, c, d, e, f, g, h) = (addh(a, b), subh(a, b), addh(c, d), subh(c, d), addh(e, f), subh(e, f), addh(g, h), subh(g, h))
+    (d, h) = (sh(d, -2), sh(h, -2))
+    (a, b, c, d, e, f, g, h) = (addh(a, c), addh(b, d), subh(a, c), subh(b, d), addh(e, g), addh(f, h), subh(e, g), subh(f, h))
+    (f, g, h) = (sh(f, -1), sh(g, -2), sh(h, -3))
+    assert d == h
+    #(a, b, c, d, e, f, g, h) = (addh(a, e), addh(b, f), addh(c, g), addh(d, h), subh(a, e), subh(b, f), subh(c, g), subh(d, h))
+    (a, b, c, e, f, g) = (addh(a, e), addh(b, f), addh(c, g), subh(a, e), subh(b, f), subh(c, g))
+    
+    #assert tuple(h) == (0, 0, 0, 0)
+    (e, f, g) = (sh(e, 1), sh(f, 1), sh(g, 1))
+    return list(x for l in zip(add(a, e), add(b, f), add(c, g), d) for x in l)
+
+def nc16slow(v):
+    out = [0] * 16
+    for i in range(16):
+        for j in range(16):
+            p = v[i] * v[j]
+            if i + j >= 16: p = -p
+            out[(i + j) & 15] += p
+    return out
+
+v = [] + list(range(16))
+v[0] = -12
+print(nc16(v))
+print(nc16slow(v))
+
+    # (f, g, h) = (sh(f, 1), sh(g, 2), sh(h, 3))
+    # (a, b, c, d, e, f, g, h) = (add(a, e), add(b, f), add(c, g), add(d, h), sub(a, e), sub(b, f), sub(c, g), sub(d, h))
+    # return (a, b, c, d, e, f, g, h) 
+
+
 
 def nc8(v):
     (a, b, c, d, e, f, g, h) = v
@@ -70,7 +143,11 @@ v[4] = -2
 v[5] = 4
 v[6] = -3
 v[7] = 1
-print(slow_nc8(v), nc8(v), nc8d(v))
+
+#print(slow_nc8(v), nc8(v), nc8d(v))
+
+v = (2, 3, 5, 7)
+print(nc4(v), nc4a(v))
 
 exit(0)
 
