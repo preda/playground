@@ -1,54 +1,57 @@
 #define GS 256
-#define W 2048
-#define N 10
+// #define W 2048
+// #define N 10
 
 unsigned T(unsigned x) { return x & 0x3fffffff; }
 
-// round: 9..0
-void dif2(int round, global int *in, global int *out) {
-  uint g = get_group_id(0) >> 3;
-  uint k = get_group_id(0) & 7;
+// round goes down from N-1 to 0.
+void difStep(int N, int width, int round, global int *in, global int *out) {
+  uint groupsPerLine = width / GS;
+  uint g = get_group_id(0) / groupsPerLine;
+  uint k = get_group_id(0) & (groupsPerLine - 1);
 
   uint mr = 1 << round;
   uint j = g & (mr - 1);
   uint r = (g & ~(mr - 1)) << 1;
   uint e = j << (N - round);
 
-  uint p0 = (j + r) * W + get_local_id(0) + k * GS;
+  uint p0 = (j + r) * width + get_local_id(0) + k * GS;
   int u0 = in[T(p0)];
-  int u1 = in[T(p0 + mr * W)];
+  int u1 = in[T(p0 + mr * width)];
   out[T(p0)] = u0 + u1;
   u1 = u0 - u1;
   uint p1 = get_local_id(0) + k * GS + e;
-  out[T((j + r + mr) * W + (p1 & (W - 1)))] = (p1 < W) ? u1 : -u1;
+  out[T((j + r + mr) * width + (p1 & (width - 1)))] = (p1 < width) ? u1 : -u1;
 }
 
-// round: 0..9
-void dit2(int round, global int *in, global int *out) {
-  uint g = get_group_id(0) >> 3;
-  uint k = get_group_id(0) & 7;
+// round goes up from 0 to N-1.
+void ditStep(int N, int width, int round, global int *in, global int *out) {
+  uint groupsPerLine = width / GS;
+  uint g = get_group_id(0) / groupsPerLine;
+  uint k = get_group_id(0) & (groupsPerLine - 1);
 
   uint mr = 1 << round;
   uint j = g & (mr - 1);
   uint r = (g & ~(mr - 1)) << 1;
   uint e = j << (N - round);
 
-  uint p0 = (j + r) * W + get_local_id(0) + k * GS;
+  uint p0 = (j + r) * width + get_local_id(0) + k * GS;
   int u0 = in[T(p0)];
   uint p1 = get_local_id(0) + k * GS + e;
-  int u1 = in[T((j + r + mr) * W + (p1 & (W - 1)))];
-  u1 = (p1 < W) ? u1 : -u1;
+  int u1 = in[T((j + r + mr) * width + (p1 & (width - 1)))];
+  u1 = (p1 < width) ? u1 : -u1;
   out[T(p0)]          = u0 + u1;
-  out[T(p0 + mr * W)] = u0 - u1;
+  out[T(p0 + mr * width)] = u0 - u1;
 }
 
-
-kernel __attribute__((reqd_work_group_size(256, 1, 1))) void dif(global int *in, global int *out, int round) {
-  dif2(round, in, out);
+kernel __attribute__((reqd_work_group_size(GS, 1, 1)))
+void dif(int round, global int *in, global int *out) {
+  difStep(10, 1024, round, in, out);
 }
 
-kernel __attribute__((reqd_work_group_size(256, 1, 1))) void dit(global int *in, global int *out, int round) {
-  dit2(round, in, out);
+kernel __attribute__((reqd_work_group_size(GS, 1, 1)))
+void dit(int round, global int *in, global int *out) {
+  ditStep(10, 1024, round, in, out);
 }
 
 int2 sumdiff(int x, int y) { return (int2) (x + y, x - y); }
@@ -161,6 +164,10 @@ long16 negaconv16(int4 a, int4 b, int4 c, int4 d) {
   return ((long16) (la, lb, lc, ld)).s048C159D26AE37BF;
 }
 
+kernel __attribute__((reqd_work_group_size(64, 1, 1))) void negaconv256(global int *in, global long *out) {
+
+}
+
 // 36 muls
 void negaconv8(local int *x, local long *out) {
 #define M(a, b) mul(x[a], x[b])
@@ -217,5 +224,46 @@ kernel __attribute__((reqd_work_group_size(64, 1, 1))) void negaconv64(global in
 }
 
 kernel __attribute__((reqd_work_group_size(256, 1, 1))) void negaconv2k(global int *in, global int *out, int round) {
-  dit2(round, in, out);
+  // dit2(round, in, out);
 }
+
+
+/*
+// round: 9..0
+void dif2(int round, global int *in, global int *out) {
+  uint g = get_group_id(0) >> 3;
+  uint k = get_group_id(0) & 7;
+
+  uint mr = 1 << round;
+  uint j = g & (mr - 1);
+  uint r = (g & ~(mr - 1)) << 1;
+  uint e = j << (N - round);
+
+  uint p0 = (j + r) * W + get_local_id(0) + k * GS;
+  int u0 = in[T(p0)];
+  int u1 = in[T(p0 + mr * W)];
+  out[T(p0)] = u0 + u1;
+  u1 = u0 - u1;
+  uint p1 = get_local_id(0) + k * GS + e;
+  out[T((j + r + mr) * W + (p1 & (W - 1)))] = (p1 < W) ? u1 : -u1;
+}
+
+// round: 0..9
+void dit2(int round, global int *in, global int *out) {
+  uint g = get_group_id(0) >> 3;
+  uint k = get_group_id(0) & 7;
+
+  uint mr = 1 << round;
+  uint j = g & (mr - 1);
+  uint r = (g & ~(mr - 1)) << 1;
+  uint e = j << (N - round);
+
+  uint p0 = (j + r) * W + get_local_id(0) + k * GS;
+  int u0 = in[T(p0)];
+  uint p1 = get_local_id(0) + k * GS + e;
+  int u1 = in[T((j + r + mr) * W + (p1 & (W - 1)))];
+  u1 = (p1 < W) ? u1 : -u1;
+  out[T(p0)]          = u0 + u1;
+  out[T(p0 + mr * W)] = u0 - u1;
+}
+*/
