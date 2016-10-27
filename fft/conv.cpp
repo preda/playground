@@ -57,11 +57,14 @@ int main(int argc, char **argv) {
 
   int err = 0;
   for (int i = 0; i < SIZE; ++i) {
-    if (big1[i] != big2[i] / 1024) {
+    if (big1[i] != big2[i]) {
       printf("%d %d %d\n", i, big1[i], big2[i]);
       ++err;
       if (err > 10) { break; }
     }
+  }
+  if (!err) {
+    printf("OK\n");
   }
   
   delete[] big1;

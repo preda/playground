@@ -1,6 +1,4 @@
 #define GS 256
-// #define W 2048
-// #define N 10
 
 unsigned T(unsigned x) { return x & 0x3fffffff; }
 
@@ -24,6 +22,9 @@ void difStep(int N, int width, int round, global int *in, global int *out) {
   out[T((j + r + mr) * width + (p1 & (width - 1)))] = (p1 < width) ? u1 : -u1;
 }
 
+long ha(long x, long y) { return (x >> 1) + (y >> 1) + (x & 1); }
+int iha(int x, int y) { return (x >> 1) + (y >> 1) + (x & 1); }
+
 // round goes up from 0 to N-1.
 void ditStep(int N, int width, int round, global int *in, global int *out) {
   uint groupsPerLine = width / GS;
@@ -40,8 +41,8 @@ void ditStep(int N, int width, int round, global int *in, global int *out) {
   uint p1 = get_local_id(0) + k * GS + e;
   int u1 = in[T((j + r + mr) * width + (p1 & (width - 1)))];
   u1 = (p1 < width) ? u1 : -u1;
-  out[T(p0)]          = u0 + u1;
-  out[T(p0 + mr * width)] = u0 - u1;
+  out[T(p0)]              = iha(u0, u1);
+  out[T(p0 + mr * width)] = iha(u0, - u1);
 }
 
 kernel __attribute__((reqd_work_group_size(GS, 1, 1)))
@@ -99,8 +100,6 @@ void set(int4 *outa, int4 *outb, int4 a, int4 b) {
   *outa = a;
   *outb = b;
 }
-
-long ha(long x, long y) { return (x >> 1) + (y >> 1) + (x & 1); }
 
 long4 halfAdd(long4 a, long4 b) {
   return (long4) (ha(a.x, b.x), ha(a.y, b.y), ha(a.z, b.z), ha(a.w, b.w));
