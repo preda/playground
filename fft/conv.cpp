@@ -3,9 +3,8 @@
 #include <string.h>
 #include <assert.h>
 
-#define N 1024
-#define WIDTH 1024
-#define SIZE (N * WIDTH)
+#define N 4*1024
+#define SIZE (N * N)
 #define GS 256
 
 #define K(program, name) Kernel name(program, #name);
