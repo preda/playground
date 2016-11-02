@@ -18,7 +18,7 @@ int main(int argc, char **argv) {
   }
   
   int exp = atoi(argv[1]);
-  int words = N / 2;
+  int words = SIZE / 2;
   int bitsPerWord = exp / words + 1;        // 'exp' being prime, 'words' does not divide it.
   if (bitsPerWord < 2) { bitsPerWord = 2; } // Min 2 bits/word.
   int wordsUsed = exp / bitsPerWord + 1;
@@ -56,7 +56,7 @@ int main(int argc, char **argv) {
 
   transpose.setArgs(buf1, buf2);
   for (int i = 0; i < 1000; ++i) {
-    queue.run(transpose, 64, words);
+    queue.run(transpose, 64, words / 64);
   }
   queue.finish();
   time("transpose");

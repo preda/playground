@@ -131,11 +131,14 @@ KERNEL(GS) void ditFinalShifted(global int *in, global int *out) {
 }
 
 KERNEL(64) void transpose(global int *in, global int *out) {
-  local int lds[64];
+  local int lds[64 * 64];
   uint g = get_group_id(0);
   for (int i = 0; i < 64; ++i) {
-    lds[get_local_id(0) * 64 + i] = in[get_group_id(0) * 64 * 64 + get_local_id(0) + i * 64];
-    // lds[get_local_id(0) * 64 + ((i + get_local_id(0)) & 63)] = in[get_group_id(0) * 64 * 64 + get_local_id(0) + i * 64];
+    // lds[get_local_id(0) * 64 + i] = in[get_group_id(0) * 64 * 64 + get_local_id(0) + i * 64];
+    lds[get_local_id(0) * 64 + ((i + get_local_id(0)) & 63)] = in[get_group_id(0) * 64 * 64 + get_local_id(0) + i * 64];
+  }
+  for (int i = 0; i < 64; ++i) {
+    lds[i * 64 + get_local_id(0)] = lds[i * 64 + ((get_local_id(0) + i) & 63)];
   }
   for (int i = 0; i < 64; ++i) {
     out[get_group_id(0) * 64 * 64 + i * 64 + get_local_id(0)] = lds[i * 64 + get_local_id(0)];
@@ -272,63 +275,4 @@ void halfAddSub(long4 *a, long4 *b) {
   long4 t = *b;
   *b = halfAdd4(*a, -t);
   *a = halfAdd4(*a, t);
-}
-
-
-/*
-// 8 * 6 muls
-long16 negaconv16(int4 a, int4 b, int4 c, int4 d) {
-  int4 e = a;
-  int4 f = shift(b, 1);
-  int4 g = shift(c, 2);
-  int4 h = shift(d, 3);
-
-  set(&a, &c, a + c, a - c);
-  set(&b, &d, b + d, shift(b - d, 2));
-  set(&e, &g, e + g, e - g);
-  set(&f, &h, f + h, shift(f - h, 2));
-
-  set(&a, &b, a + b, a - b);
-  set(&c, &d, c + d, c - d);
-  set(&e, &f, e + f, e - f);
-  set(&g, &h, g + h, g - h);
-
-  long4 la = negaconv4(a);
-  long4 lb = negaconv4(b);
-  long4 lc = negaconv4(c);
-  long4 ld = negaconv4(d);
-  long4 le = negaconv4(e);
-  long4 lf = negaconv4(f);
-  long4 lg = negaconv4(g);
-  long4 lh = negaconv4(h);
-
-  halfAddSub(&la, &lb);
-  halfAddSub(&lc, &ld);
-  halfAddSub(&le, &lf);
-  halfAddSub(&lg, &lh);
-  
-  ld = shift(ld, -2);
-  lh = shift(lh, -2);
-  halfAddSub(&la, &lc);
-  halfAddSub(&lb, &ld);
-  halfAddSub(&le, &lg);
-  halfAddSub(&lf, &lh);
-
-  lf = shift(lf, -1);
-  lg = shift(lg, -2);
-  // assert(ld == lshift(lh, -3));
-  halfAddSub(&la, &le);
-  halfAddSub(&lb, &lf);
-  halfAddSub(&lc, &lg);
-
-  la = la + shift(le, 1);
-  lb = lb + shift(lf, 1);
-  lc = lc + shift(lg, 1);
-  
-  return ((long16) (la, lb, lc, ld)).s048C159D26AE37BF;
-}
-*/
-
-kernel __attribute__((reqd_work_group_size(64, 1, 1))) void negaconv256(global int *in, global long *out) {
-
 }
