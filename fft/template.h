@@ -1,25 +1,27 @@
 
-T##2 shift2##T(T##2 a, int e) {
-  switch (e) {
-  case -1: return (T##2) (a.y, -a.x);
-  case  1: return (T##2) (-a.y, a.x);
-  default: return 0; // assert(false);
-  }
-}
-
-T##4 shift4##T(T##4 a, int e) {
-  switch (e) {
-  case -3: return (T##4) (a.w, -a.xyz);
-  case -2: return (T##4) (a.zw, -a.xy);    
-  case -1: return (T##4) (a.yzw, -a.x);
-  case  1: return (T##4) (-a.w, a.xyz);
-  case  2: return (T##4) (-a.zw, a.xy);
-  case  3: return (T##4) (-a.yzw, a.x);
-  default: return 0; // assert(false);
-  }
-}
-
-T halfAdd1(T x, T y) { return (x >> 1) + (y >> 1) + (x & 1); }
+#define FUNCS(T) \
+\
+T##2 __attribute__((overloadable)) shift(T##2 a, int e) {             \
+  switch (e) {\
+  case -1: return (T##2) (a.y, -a.x);\
+  case  1: return (T##2) (-a.y, a.x);\
+  default: return 0;\
+  }\
+}\
+\
+T##4 __attribute__((overloadable)) shift(T##4 a, int e) {\
+  switch (e) {\
+  case -3: return (T##4) (a.w, -a.xyz);\
+  case -2: return (T##4) (a.zw, -a.xy);\
+  case -1: return (T##4) (a.yzw, -a.x);\
+  case  1: return (T##4) (-a.w, a.xyz);\
+  case  2: return (T##4) (-a.zw, a.xy);\
+  case  3: return (T##4) (-a.yzw, a.x);\
+  default: return 0;\
+  }\
+}\
+\
+T __attribute__((overloadable)) halfAdd(T x, T y) { return (x >> 1) + (y >> 1) + (x & 1); }\
 
 
 /*
@@ -79,7 +81,6 @@ void negaconv8(local int *x, local long *out) {
 }
 
 // 7 muls
-/*
 long4 negaconv4(int4 v) {
   int a = v.x, b = v.y, c = v.z, d = v.w;
   int2 sac = sumdiff(a, c);
@@ -92,7 +93,4 @@ long4 negaconv4(int4 v) {
   return (long4) (mul(sac.x, sac.y) - 2 * bd, x + y, mul(sbd.x, sbd.y) + 2 * ac,
                   (y + 2 * bc) - (x - 2 * bc));
 }
-*/
-
-
 */

@@ -1,17 +1,18 @@
-#define T int
 #include "template.h"
-#undef T
-
-#define T long
-#include "template.h"
-#undef T
+FUNCS(int)
+FUNCS(long)
 
 #define GS 256
+#define KERNEL(groupSize) kernel __attribute__((reqd_work_group_size(groupSize, 1, 1)))
 
 unsigned cut(unsigned x) { return x & 0x3fffffff; }
 
 int read(global int *in, int width, int line, int p) {
   return in[cut(line * width + p)];
+}
+
+int readZeropad(global int *in, int width, int line, int p) {
+  return (p < width/2) ? in[cut(line * (width/2) + p)] : 0;
 }
 
 void write(int u, global int *out, int width, int line, int p) {
@@ -23,12 +24,20 @@ int readShifted(global int *in, int width, int line, int p) {
   return (p < width) ? u : -u;
 }
 
-void writeShifted(int u, gloabl int *out, int width, int line, int p) {
+int readZeropadShifted(global int *in, int width, int line, int p) {
+  int u = readZeropad(in, width, line, p & (width - 1));
+  return (p < width) ? u : -u;
+}
+
+void writeShifted(int u, global int *out, int width, int line, int p) {
   write((p < width) ? u : -u, out, width, line, p & (width - 1));
 }
 
+
+// DIF step for a 2**12 FFT.
 // round goes down from N-1 to 0.
-void difStep(int N, int round, global int *in, global int *out) {
+KERNEL(GS) void difStep(int round, global int *in, global int *out) {
+  const int N = 12;
   int width = 1 << N;
   uint groupsPerLine = width / GS;
   uint g = get_group_id(0) / groupsPerLine;
@@ -46,7 +55,8 @@ void difStep(int N, int round, global int *in, global int *out) {
   writeShifted(u0 - u1, out, width, j + r + mr, p + e);
 }
 
-void difFirst(int N, global int *in, global int *out) {
+KERNEL(GS) void difIniZeropad(global int *in, global int *out) {
+  const int N = 12;
   int width = 1 << N;
   uint groupsPerLine = width / GS;
   uint g = get_group_id(0) / groupsPerLine;
@@ -57,14 +67,34 @@ void difFirst(int N, global int *in, global int *out) {
   uint e = j;
   uint p = get_local_id(0) + k * GS;
   
-  int u0 = readShifted(in, width, j,      p + j);
-  int u1 = readShifted(in, width, j + mr, p + j + mr);
+  int u0 = readZeropad(in, width, j,      p);
+  int u1 = readZeropad(in, width, j + mr, p);
   write(       u0 + u1, out, width, j,      p);
   writeShifted(u0 - u1, out, width, j + mr, p + e);
 }
 
+KERNEL(GS) void difIniZeropadShifted(global int *in, global int *out) {
+  const int N = 12;
+  int width = 1 << N;
+  uint groupsPerLine = width / GS;
+  uint g = get_group_id(0) / groupsPerLine;
+  uint k = get_group_id(0) & (groupsPerLine - 1);
+
+  uint mr = 1 << (N - 1);
+  uint j = g;
+  uint e = j;
+  uint p = get_local_id(0) + k * GS;
+  
+  int u0 = readZeropadShifted(in, width, j,      p + j);
+  int u1 = readZeropadShifted(in, width, j + mr, p + j + mr);
+  write(       u0 + u1, out, width, j,      p);
+  writeShifted(u0 - u1, out, width, j + mr, p + e);
+}
+
+// DIT step for a 2**12 FFT
 // round goes up from 0 to N-1.
-void ditStep(int N, int round, global int *in, global int *out) {
+KERNEL(GS) void ditStep(int round, global int *in, global int *out) {
+  const int N = 12;
   int width = 1 << N;
   uint groupsPerLine = width / GS;
   uint g = get_group_id(0) / groupsPerLine;
@@ -78,11 +108,12 @@ void ditStep(int N, int round, global int *in, global int *out) {
 
   int u0 = read(       in, width, j + r,      p);
   int u1 = readShifted(in, width, j + r + mr, p + e);
-  write(halfAdd1int(u0, u1),  out, width, j + r,      p);
-  write(halfAdd1int(u0, -u1), out, width, j + r + mr, p);
+  write(halfAdd(u0, u1),  out, width, j + r,      p);
+  write(halfAdd(u0, -u1), out, width, j + r + mr, p);
 }
 
-void ditLast(int N, global int *in, global int *out) {
+KERNEL(GS) void ditFinalShifted(global int *in, global int *out) {
+  const int N = 12;
   int width = 1 << N;
   uint groupsPerLine = width / GS;
   uint g = get_group_id(0) / groupsPerLine;
@@ -95,35 +126,22 @@ void ditLast(int N, global int *in, global int *out) {
 
   int u0 = read(       in, width, j,      p);
   int u1 = readShifted(in, width, j + mr, p + e);
-  writeShifted(halfAdd1int(u0, u1),  out, width, j,      p + j);
-  writeShifted(halfAdd1int(u0, -u1), out, width, j + mr, p + mr);
+  writeShifted(halfAdd(u0, u1),  out, width, j,      p + j);
+  writeShifted(halfAdd(u0, -u1), out, width, j + mr, p + mr);
 }
 
-// DIF step for a 2**12 FFT
-kernel __attribute__((reqd_work_group_size(GS, 1, 1)))
-void dif(int round, global int *in, global int *out) {
-  difStep(12, round, in, out);
+KERNEL(64) void transpose(global int *in, global int *out) {
+  local int lds[64];
+  uint g = get_group_id(0);
+  for (int i = 0; i < 64; ++i) {
+    lds[get_local_id(0) * 64 + i] = in[get_group_id(0) * 64 * 64 + get_local_id(0) + i * 64];
+    // lds[get_local_id(0) * 64 + ((i + get_local_id(0)) & 63)] = in[get_group_id(0) * 64 * 64 + get_local_id(0) + i * 64];
+  }
+  for (int i = 0; i < 64; ++i) {
+    out[get_group_id(0) * 64 * 64 + i * 64 + get_local_id(0)] = lds[i * 64 + get_local_id(0)];
+    // out[get_group_id(0) * 64 * 64 + i * 64 + get_local_id(0)] = lds[i * 64 + ((get_local_id(0) + i) & 63)];
+  }
 }
-
-kernel __attribute__((reqd_work_group_size(GS, 1, 1)))
-void difShiftedIn(int round, global int *in, global int *out) {
-  difFirst(12, in, out);
-}
-
-// DIT step for a 2**12 FFT
-kernel __attribute__((reqd_work_group_size(GS, 1, 1)))
-void dit(int round, global int *in, global int *out) {
-  ditStep(12, round, in, out);
-}
-
-kernel __attribute__((reqd_work_group_size(GS, 1, 1)))
-void ditShiftedOut(int round, global int *in, global int *out) {
-  ditLast(12, in, out);
-}
-
-
-
-
 
 
 int2 sumdiff(int x, int y) { return (int2) (x + y, x - y); }
@@ -139,7 +157,7 @@ long2 sq2(int2 v) { return (long2) (mul(v.x + v.y, v.x - v.y), mul(v.x, v.y) * 2
 long4 sq4(int4 v) {
   long2 x2 = sq2(v.xz);
   long2 y2 = sq2(v.yw);
-  return ((long4) (x2 + shift2l(y2), x2 + y2 - sq2(v.x - v.y))).xzyw;
+  return ((long4) (x2 + shift(y2, 1), x2 + y2 - sq2(v.x - v.y))).xzyw;
 }
 
 // 18 muls (3 x sq4())
@@ -148,9 +166,10 @@ long8 sq8(int8 v) {
   int4 y = v.s1357;
   long4 x2 = sq4(x);
   long4 y2 = sq4(y);
-  return ((long8) (x2 + shift(y2, 1), x2 + y2 - sq4(x - y))).xzyw;
+  return ((long8) (x2 + shift(y2, 1), x2 + y2 - sq4(x - y))).s04152637;
 }
 
+/*
 kernel __attribute__((reqd_work_group_size(128, 1, 1)))
 void negaconv4k(global int *in, global long *out) {
   local long lds[2 * 8 * 128];
@@ -166,7 +185,7 @@ void negaconv4k(global int *in, global long *out) {
     ids[(i + 8) * STRIDE + (p & 127)] = (p < 128) ? x : -x;
   }
   // DIF 3 rounds. See difStep().
-  for (uint round = 2; round >= 0; --round) {
+  for (int round = 2; round >= 0; --round) {
     uint mr = 1 << round;
     for (uint i = 0; i < 8; ++i) {
       uint j = i & (mr - 1);
@@ -192,8 +211,8 @@ void negaconv4k(global int *in, global long *out) {
   for (uint i = 0; i < 16; ++i) {
     
   }
-  
 }
+*/
 
 // 8 x sq8(), 148 muls
 kernel __attribute__((reqd_work_group_size(64, 1, 1))) void negaconv64(global int *in, global long *out) {  
@@ -246,7 +265,7 @@ void set(int4 *outa, int4 *outb, int4 a, int4 b) {
 }
 
 long4 halfAdd4(long4 a, long4 b) {
-  return (long4) (halfAdd1long(a.x, b.x), halfAdd1long(a.y, b.y), halfAdd1long(a.z, b.z), halfAdd1long(a.w, b.w));
+  return (long4) (halfAdd(a.x, b.x), halfAdd(a.y, b.y), halfAdd(a.z, b.z), halfAdd(a.w, b.w));
 }
 
 void halfAddSub(long4 *a, long4 *b) {
@@ -256,7 +275,7 @@ void halfAddSub(long4 *a, long4 *b) {
 }
 
 
-
+/*
 // 8 * 6 muls
 long16 negaconv16(int4 a, int4 b, int4 c, int4 d) {
   int4 e = a;
@@ -288,26 +307,27 @@ long16 negaconv16(int4 a, int4 b, int4 c, int4 d) {
   halfAddSub(&le, &lf);
   halfAddSub(&lg, &lh);
   
-  ld = lshift(ld, -2);
-  lh = lshift(lh, -2);
+  ld = shift(ld, -2);
+  lh = shift(lh, -2);
   halfAddSub(&la, &lc);
   halfAddSub(&lb, &ld);
   halfAddSub(&le, &lg);
   halfAddSub(&lf, &lh);
 
-  lf = lshift(lf, -1);
-  lg = lshift(lg, -2);
+  lf = shift(lf, -1);
+  lg = shift(lg, -2);
   // assert(ld == lshift(lh, -3));
   halfAddSub(&la, &le);
   halfAddSub(&lb, &lf);
   halfAddSub(&lc, &lg);
 
-  la = la + lshift(le, 1);
-  lb = lb + lshift(lf, 1);
-  lc = lc + lshift(lg, 1);
+  la = la + shift(le, 1);
+  lb = lb + shift(lf, 1);
+  lc = lc + shift(lg, 1);
   
   return ((long16) (la, lb, lc, ld)).s048C159D26AE37BF;
 }
+*/
 
 kernel __attribute__((reqd_work_group_size(64, 1, 1))) void negaconv256(global int *in, global long *out) {
 

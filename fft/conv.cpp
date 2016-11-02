@@ -11,49 +11,91 @@
 
 int main(int argc, char **argv) {
   time();
+
+  if (argc < 2) {
+    printf("Usage: %s <exp> to Lucas-Lehmer test 2^exp - 1 \n", argv[0]);
+    exit(1);
+  }
+  
+  int exp = atoi(argv[1]);
+  int words = N / 2;
+  int bitsPerWord = exp / words + 1;        // 'exp' being prime, 'words' does not divide it.
+  if (bitsPerWord < 2) { bitsPerWord = 2; } // Min 2 bits/word.
+  int wordsUsed = exp / bitsPerWord + 1;
+  
+  printf("Lucas-Lehmer test for 2^%d - 1. %d words, %d bits/word, %d words used\n",
+         exp, words, bitsPerWord, wordsUsed);
+  
   Context c;
   Queue queue(c);
   Program program;
   time("OpenCL init");
+  
   program.compileCL2(c, "conv.cl");
-  K(program, dif);
-  K(program, dit);
-  time("compile");
-
-  // Buf buf(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(double) * 2 * N, d);
   
-  int *big1 = new int[SIZE];
-  int *big2 = new int[SIZE];
-  for (int i = 0; i < SIZE; ++i) {
-    big1[i] = (i % 13) + 2;
-    big2[i] = (i % 5) - 1;
-  }
+  K(program, difIniZeropad);
+  K(program, difIniZeropadShifted);
+  K(program, difStep);
   
-  Buf bigBuf(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(int) * SIZE, big1);
-  Buf tmpBuf(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(int) * SIZE, big2);
-  time("gpu buffers");
+  K(program, ditStep);
+  K(program, ditFinalShifted);
 
-  for (int i = 0; i < 5; ++i) {
-    dif.setArgs(9 - i * 2, bigBuf, tmpBuf);
-    queue.run(dif, GS, SIZE / 2);
-    dif.setArgs(9 - (i * 2 + 1), tmpBuf, bigBuf);
-    queue.run(dif, GS, SIZE / 2);
+  K(program, transpose);
+  
+  time("Kernels compilation");
+  
+  Buf bitsBuf(c, CL_MEM_READ_WRITE /*| CL_MEM_COPY_HOST_PTR*/, sizeof(int) * words, 0);
+  int data = 0;
+  clEnqueueFillBuffer(queue.queue, bitsBuf.buf, &data, sizeof(data), 0, words, 0, 0, 0);
+  data = 4; // LL seed
+  queue.writeBlocking(bitsBuf, &data, sizeof(data));
+
+  Buf buf1(c, CL_MEM_READ_WRITE, sizeof(int) * SIZE, 0);
+  Buf buf2(c, CL_MEM_READ_WRITE, sizeof(int) * SIZE, 0);
+  time("alloc gpu buffers");
+
+  transpose.setArgs(buf1, buf2);
+  for (int i = 0; i < 1000; ++i) {
+    queue.run(transpose, 64, words);
   }
   queue.finish();
-  time("dif");
+  time("transpose");
+  exit(0);
+  
+  
+  // Initial DIF round on zero-padded input.
+  difIniZeropad.setArgs(bitsBuf, buf2);
+  queue.run(difIniZeropad, GS, SIZE / 4);
+
+  difStep.setArgs(10, buf2, buf1);
+  queue.run(difStep, GS, SIZE / 2);
   
   for (int i = 0; i < 5; ++i) {
-    dit.setArgs(i * 2, bigBuf, tmpBuf);
-    queue.run(dit, GS, SIZE / 2);
-    dit.setArgs(i * 2 + 1, tmpBuf, bigBuf);
-    queue.run(dit, GS, SIZE / 2);
+    difStep.setArgs(9 - i * 2, buf1, buf2);
+    queue.run(difStep, GS, SIZE / 2);
+    difStep.setArgs(8 - i * 2, buf2, buf1);
+    queue.run(difStep, GS, SIZE / 2);
+  }
+  queue.finish();
+  time("dif1");
+
+  difIniZeropadShifted.setArgs(bitsBuf, buf2);
+  
+  /*
+  for (int i = 0; i < 5; ++i) {
+    ditStep.setArgs(i * 2, bigBuf, tmpBuf);
+    queue.run(ditStep, GS, SIZE / 2);
+    ditStep.setArgs(i * 2 + 1, tmpBuf, bigBuf);
+    queue.run(ditStep, GS, SIZE / 2);
   }
   queue.finish();
   time("dit");
   
   queue.readBlocking(bigBuf, 0, sizeof(int) * SIZE, big2);
   time("read from gpu");
+  */
 
+  /*
   int err = 0;
   for (int i = 0; i < SIZE; ++i) {
     if (big1[i] != big2[i]) {
@@ -65,7 +107,5 @@ int main(int argc, char **argv) {
   if (!err) {
     printf("OK\n");
   }
-  
-  delete[] big1;
-  delete[] big2;
+  */
 }
