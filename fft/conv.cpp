@@ -40,7 +40,7 @@ int main(int argc, char **argv) {
   K(program, ditStep);
   K(program, ditFinalShifted);
 
-  K(program, transpose);
+  K(program, sq4k);
   
   time("Kernels compilation");
   
@@ -54,12 +54,12 @@ int main(int argc, char **argv) {
   Buf buf2(c, CL_MEM_READ_WRITE, sizeof(int) * SIZE, 0);
   time("alloc gpu buffers");
 
-  transpose.setArgs(buf1, buf2);
+  sq4k.setArgs(buf1, buf2);
   for (int i = 0; i < 1000; ++i) {
-    queue.run(transpose, 64, words / 64);
+    queue.run(sq4k, GS, words / 64);
   }
   queue.finish();
-  time("transpose");
+  time("sq4k");
   exit(0);
   
   

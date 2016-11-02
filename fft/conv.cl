@@ -5,6 +5,8 @@ FUNCS(long)
 #define GS 256
 #define KERNEL(groupSize) kernel __attribute__((reqd_work_group_size(groupSize, 1, 1)))
 
+void bar() { barrier(CLK_LOCAL_MEM_FENCE); }
+
 unsigned cut(unsigned x) { return x & 0x3fffffff; }
 
 int read(global int *in, int width, int line, int p) {
@@ -130,19 +132,26 @@ KERNEL(GS) void ditFinalShifted(global int *in, global int *out) {
   writeShifted(halfAdd(u0, -u1), out, width, j + mr, p + mr);
 }
 
-KERNEL(64) void transpose(global int *in, global int *out) {
+KERNEL(GS) void sq4k(global int *in, global int *out) {
+  // Each group handles one contiguous line of 4k ints, stored in LDS.
   local int lds[64 * 64];
-  uint g = get_group_id(0);
-  for (int i = 0; i < 64; ++i) {
-    // lds[get_local_id(0) * 64 + i] = in[get_group_id(0) * 64 * 64 + get_local_id(0) + i * 64];
-    lds[get_local_id(0) * 64 + ((i + get_local_id(0)) & 63)] = in[get_group_id(0) * 64 * 64 + get_local_id(0) + i * 64];
+  
+  // First, load 4k ints from global into LDS, transposed. Warp to avoid bank conflicts.
+  for (int i = 0; i < 16; ++i) {
+    uint line = get_local_id(0) & 63;
+    lds[line * 64 + ((i*4 + (get_local_id(0) >> 6) + line) & 63)] = in[get_group_id(0) * 64 * 64 + get_local_id(0) + i * 64 * 4];
   }
-  for (int i = 0; i < 64; ++i) {
-    lds[i * 64 + get_local_id(0)] = lds[i * 64 + ((get_local_id(0) + i) & 63)];
+
+  //De-warp.
+  bar();
+  for (int i = 0; i < 16; ++i) {
+    uint line = i * 4 + (get_local_id(0) >> 6);
+    lds[i * 64 * 4 + get_local_id(0)] = lds[line * 64 + ((line + get_local_id(0)) & 63)];
   }
-  for (int i = 0; i < 64; ++i) {
-    out[get_group_id(0) * 64 * 64 + i * 64 + get_local_id(0)] = lds[i * 64 + get_local_id(0)];
-    // out[get_group_id(0) * 64 * 64 + i * 64 + get_local_id(0)] = lds[i * 64 + ((get_local_id(0) + i) & 63)];
+
+  bar();
+  for (int i = 0; i < 16; ++i) {
+    out[get_group_id(0) * 64 * 64 + i * 64 * 4 + get_local_id(0)] = lds[i * 64 * 4 + get_local_id(0)];
   }
 }
 
