@@ -2,6 +2,7 @@
 #include "time.h"
 #include <string.h>
 #include <assert.h>
+#include <stdlib.h>
 
 #define N 4*1024
 #define SIZE (N * N)
@@ -36,35 +37,98 @@ int main(int argc, char **argv) {
   K(program, difIniZeropad);
   K(program, difIniZeropadShifted);
   K(program, difStep);
+  K(program, dif4Step);
   
   K(program, ditStep);
   K(program, ditFinalShifted);
 
+
   K(program, sq4k);
   
   time("Kernels compilation");
-  
+
   Buf bitsBuf(c, CL_MEM_READ_WRITE /*| CL_MEM_COPY_HOST_PTR*/, sizeof(int) * words, 0);
   int data = 0;
   clEnqueueFillBuffer(queue.queue, bitsBuf.buf, &data, sizeof(data), 0, words, 0, 0, 0);
   data = 4; // LL seed
   queue.writeBlocking(bitsBuf, &data, sizeof(data));
 
-  Buf buf1(c, CL_MEM_READ_WRITE, sizeof(int) * SIZE, 0);
+  int *tmp1 = new int[SIZE];
+  int *tmp2 = new int[SIZE];
+  srandom(100);
+  for (int i = 0; i < SIZE; ++i) { tmp1[i] = random(); }
+  // for (int i = 0; i < 4 * 1024; ++i) { tmp1[i] = 1; tmp1[4 * 1024 * 1024 + i] = 2; tmp1[8 * 1024 * 1024 + i] = 3; tmp1[12 * 1024 * 1024 + i] = 4; }
+  // tmp1[1] = 1;
+
+  Buf buf1(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(int) * SIZE, tmp1);
+  Buf buf3(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(int) * SIZE, tmp1);
   Buf buf2(c, CL_MEM_READ_WRITE, sizeof(int) * SIZE, 0);
   time("alloc gpu buffers");
 
+  /*
   sq4k.setArgs(buf1, buf2);
   for (int i = 0; i < 1000; ++i) {
-    queue.run(sq4k, GS, words / 64);
+    queue.run(sq4k, GS, words * GS / (64 * 64));
   }
   queue.finish();
   time("sq4k");
+  */
+
+  for (int round = 11; round >= 0; round -= 2) {
+    difStep.setArgs(round, buf3, buf2);
+    queue.run(difStep, GS, words);
+    difStep.setArgs(round - 1, buf2, buf3);
+    queue.run(difStep, GS, words);
+  }
+
+  for (int round = 5; round >= 0; round -= 2) {
+    dif4Step.setArgs(round, buf1, buf2);
+    queue.run(dif4Step, GS, words / 4);
+    dif4Step.setArgs(round - 1, buf2, buf1);
+    queue.run(dif4Step, GS, words / 4);
+  }
+    
+  queue.readBlocking(buf1, 0, sizeof(int) * SIZE, tmp1);
+  queue.readBlocking(buf3, 0, sizeof(int) * SIZE, tmp2);
+  int err = 0;
+  for (int i = 0; i < SIZE; ++i) {
+    if (tmp1[i] != tmp2[i]) {
+      ++err;
+      if (err > 10) { break; }
+      printf("%d %d %d\n", i, tmp1[i], tmp2[i]);
+      // i += 256 * 1024;
+    }
+  }
+
   exit(0);
+  for (int i = 0; i < 1; ++i) {
+    for (int round = 11; round > 0; round -= 2) {
+      difStep.setArgs(round, buf3, buf2);
+      queue.run(difStep, GS, words);
+      difStep.setArgs(round - 1, buf2, buf3);
+      queue.run(difStep, GS, words);
+    }
+  }
+
+  for (int i = 0; i < 1; ++i) {
+    for (int round = 5; round > 0; round -= 2) {
+      dif4Step.setArgs(round, buf1, buf2);
+      queue.run(dif4Step, GS, (words * 2) / 8);
+      dif4Step.setArgs(round - 1, buf2, buf1);
+      queue.run(dif4Step, GS, (words * 2) / 8);
+    }
+  }
+
+
   
+  queue.finish();
+  time("dif");
   
+  /*
   // Initial DIF round on zero-padded input.
   difIniZeropad.setArgs(bitsBuf, buf2);
+
+  for (int i = 0; i < 100; ++i) {
   queue.run(difIniZeropad, GS, SIZE / 4);
 
   difStep.setArgs(10, buf2, buf1);
@@ -76,10 +140,13 @@ int main(int argc, char **argv) {
     difStep.setArgs(8 - i * 2, buf2, buf1);
     queue.run(difStep, GS, SIZE / 2);
   }
+  }
   queue.finish();
   time("dif1");
+  */
 
-  difIniZeropadShifted.setArgs(bitsBuf, buf2);
+  
+  //difIniZeropadShifted.setArgs(bitsBuf, buf2);
   
   /*
   for (int i = 0; i < 5; ++i) {
