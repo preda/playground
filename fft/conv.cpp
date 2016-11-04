@@ -54,15 +54,15 @@ int main(int argc, char **argv) {
   queue.writeBlocking(bitsBuf, &data, sizeof(data));
 
   int *tmp1 = new int[SIZE];
-  int *tmp2 = new int[SIZE];
+
   srandom(100);
   for (int i = 0; i < SIZE; ++i) { tmp1[i] = random(); }
   // for (int i = 0; i < 4 * 1024; ++i) { tmp1[i] = 1; tmp1[4 * 1024 * 1024 + i] = 2; tmp1[8 * 1024 * 1024 + i] = 3; tmp1[12 * 1024 * 1024 + i] = 4; }
   // tmp1[1] = 1;
 
   Buf buf1(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(int) * SIZE, tmp1);
-  Buf buf3(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(int) * SIZE, tmp1);
-  Buf buf2(c, CL_MEM_READ_WRITE, sizeof(int) * SIZE, 0);
+  Buf buf2(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(int) * SIZE, tmp1);
+  Buf bufTmp(c, CL_MEM_READ_WRITE, sizeof(int) * SIZE, 0);
   time("alloc gpu buffers");
 
   /*
@@ -75,21 +75,22 @@ int main(int argc, char **argv) {
   */
 
   for (int round = 11; round >= 0; round -= 2) {
-    difStep.setArgs(round, buf3, buf2);
+    difStep.setArgs(round, buf2, bufTmp);
     queue.run(difStep, GS, words);
-    difStep.setArgs(round - 1, buf2, buf3);
+    difStep.setArgs(round - 1, bufTmp, buf2);
     queue.run(difStep, GS, words);
   }
 
   for (int round = 5; round >= 0; round -= 2) {
-    dif4Step.setArgs(round, buf1, buf2);
+    dif4Step.setArgs(round, buf1, bufTmp);
     queue.run(dif4Step, GS, words / 4);
-    dif4Step.setArgs(round - 1, buf2, buf1);
+    dif4Step.setArgs(round - 1, bufTmp, buf1);
     queue.run(dif4Step, GS, words / 4);
   }
     
   queue.readBlocking(buf1, 0, sizeof(int) * SIZE, tmp1);
-  queue.readBlocking(buf3, 0, sizeof(int) * SIZE, tmp2);
+  int *tmp2 = new int[SIZE];
+  queue.readBlocking(buf2, 0, sizeof(int) * SIZE, tmp2);
   int err = 0;
   for (int i = 0; i < SIZE; ++i) {
     if (tmp1[i] != tmp2[i]) {
@@ -103,9 +104,9 @@ int main(int argc, char **argv) {
   
   for (int i = 0; i < 100; ++i) {
     for (int round = 11; round > 0; round -= 2) {
-      difStep.setArgs(round, buf3, buf2);
+      difStep.setArgs(round, buf2, bufTmp);
       queue.run(difStep, GS, words);
-      difStep.setArgs(round - 1, buf2, buf3);
+      difStep.setArgs(round - 1, bufTmp, buf2);
       queue.run(difStep, GS, words);
     }
   }
@@ -114,9 +115,9 @@ int main(int argc, char **argv) {
   
   for (int i = 0; i < 100; ++i) {
     for (int round = 5; round > 0; round -= 2) {
-      dif4Step.setArgs(round, buf1, buf2);
+      dif4Step.setArgs(round, buf1, bufTmp);
       queue.run(dif4Step, GS, (words * 2) / 8);
-      dif4Step.setArgs(round - 1, buf2, buf1);
+      dif4Step.setArgs(round - 1, bufTmp, buf1);
       queue.run(dif4Step, GS, (words * 2) / 8);
     }
   }

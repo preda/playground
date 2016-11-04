@@ -1,4 +1,7 @@
 #include "template.h"
+
+unsigned cut(unsigned x) { return x & 0x3fffffff; }
+
 FUNCS(int)
 FUNCS(long)
 
@@ -7,18 +10,8 @@ FUNCS(long)
 
 void bar() { barrier(CLK_LOCAL_MEM_FENCE); }
 
-unsigned cut(unsigned x) { return x & 0x3fffffff; }
-
-int read(global int *in, int width, int line, int p) {
-  return in[cut(line * width + p)];
-}
-
 int readZeropad(global int *in, int width, int line, int p) {
   return (p < width/2) ? in[cut(line * (width/2) + p)] : 0;
-}
-
-void write(int u, global int *out, int width, int line, int p) {
-  out[cut(line * width + p)] = u;
 }
 
 int readShifted(global int *in, int width, int line, int p) {
@@ -139,7 +132,7 @@ KERNEL(GS) void difIniZeropadShifted(global int *in, global int *out) {
 
 // DIT step for a 2**12 FFT
 // round goes up from 0 to N-1.
-KERNEL(GS) void ditStep(int round, global int *in, global int *out) {
+KERNEL(GS) void ditStep(int round, global long *in, global long *out) {
   const int N = 12;
   int width = 1 << N;
   uint groupsPerLine = width / GS;
@@ -149,12 +142,12 @@ KERNEL(GS) void ditStep(int round, global int *in, global int *out) {
   uint mr = 1 << round;
   uint j = g & (mr - 1);
   uint r = (g & ~(mr - 1)) << 1;
-  uint e = j << (N - 1 - round);
+  uint e = j << (N + 1 - (round + 1));
   uint line = j + r;
   uint p = get_local_id(0) + k * GS;
 
-  int u0 = read(       in, width, line,      p);
-  int u1 = readShifted(in, width, line + mr, p + e);
+  long u0 = read(       in, width, line,      p);
+  long u1 = readShifted(in, width, line + mr, p + e);
   write(halfAdd(u0, u1),  out, width, line,      p);
   write(halfAdd(u0, -u1), out, width, line + mr, p);
 }
