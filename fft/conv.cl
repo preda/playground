@@ -31,8 +31,8 @@ int readZeropadShifted(global int *in, int width, int line, int p) {
   return (p < width) ? u : -u;
 }
 
-void writeShifted(int u, global int *out, int width, int line, int p) {
-  write((p < width) ? u : -u, out, width, line, p & (width - 1));
+void writeShifted(int u, global int *out, int lw, int line, int p) {
+  write((p & (1 << lw)) ? -u : u, out, 1 << lw, line, p & ((1 << lw) - 1));
 }
 
 // DIF step for a 2**12 FFT.
@@ -48,29 +48,28 @@ KERNEL(GS) void difStep(int round, global int *in, global int *out) {
   uint j = g & (mr - 1);
   uint r = (g & ~(mr - 1)) << 1;
   uint e = j << (N + 1 - (round + 1));
+  uint line = j + r;
   uint p = get_local_id(0) + k * GS;
   
-  int u0 = read(in, width, j + r,      p);
-  int u1 = read(in, width, j + r + mr, p);
-  write(       u0 + u1, out, width, j + r,      p);
-  writeShifted(u0 - u1, out, width, j + r + mr, p + e);
+  int u0 = read(in, width, line,      p);
+  int u1 = read(in, width, line + mr, p);
+  write(       u0 + u1, out, width, line,      p);
+  writeShifted(u0 - u1, out, N, line + mr, p + e);
 }
 
 int2 read2(global int *in, int width, int line, int p) {
   return (int2) (read(in, width, line, p), readShifted(in, width, line, p + width/2));
 }
 
-void write2(int2 u, global int *out, int width, int line, int p) {
-  writeShifted(u.x, out, width, line, p);
-  p += width / 2;
-  if (p >= 2 * width) { p -= 2 * width; }
-  writeShifted(u.y, out, width, line, p);
+void write2(int2 u, global int *out, int lw, int line, int p) {
+  writeShifted(u.x, out, lw, line, p);
+  writeShifted(u.y, out, lw, line, p + (1 << (lw - 1)));
 }
 
 #define ADDSUB(a, b) { int2 tmp = a; a = tmp + b; b = tmp - b; }
 
 // Radix-4 DIF step for a 2**12 FFT.
-// round goes down by 1, to 0.
+// round goes down by 1 from 5 to 0.
 KERNEL(GS) void dif4Step(int round, global int *in, global int *out) {
   const int N = 12;
   int width = 1 << N;
@@ -85,7 +84,6 @@ KERNEL(GS) void dif4Step(int round, global int *in, global int *out) {
   uint line = j + r;
   uint p = get_local_id(0) + k * GS;
 
-  // int u[4], v[4];
   int2 u0 = read2(in, width, line, p);
   int2 u2 = read2(in, width, line + mr * 2, p);
   ADDSUB(u0, u2);
@@ -94,13 +92,12 @@ KERNEL(GS) void dif4Step(int round, global int *in, global int *out) {
   int2 u3 = read2(in, width, line + mr * 3, p);
   ADDSUB(u1, u3);
   
-  write2(u0 + u1, out, width, line, p);
-  write2(u0 - u1, out, width, line + mr, p + e * 2);
+  write2(u0 + u1, out, N, line, p);
+  write2(u0 - u1, out, N, line + mr, p + e * 2);
   
-  // u3 = (int2) (-u3.y, u3.x);
   u3 = shift(u3, 1);
-  write2(u2 + u3, out, width, line + mr * 2, p + e);
-  write2(u2 - u3, out, width, line + mr * 3, p + e * 3);
+  write2(u2 + u3, out, N, line + mr * 2, p + e);
+  write2(u2 - u3, out, N, line + mr * 3, p + e * 3);
 }
 
 
@@ -119,7 +116,7 @@ KERNEL(GS) void difIniZeropad(global int *in, global int *out) {
   int u0 = readZeropad(in, width, j,      p);
   int u1 = readZeropad(in, width, j + mr, p);
   write(       u0 + u1, out, width, j,      p);
-  writeShifted(u0 - u1, out, width, j + mr, p + e);
+  writeShifted(u0 - u1, out, N, j + mr, p + e);
 }
 
 KERNEL(GS) void difIniZeropadShifted(global int *in, global int *out) {
@@ -137,7 +134,7 @@ KERNEL(GS) void difIniZeropadShifted(global int *in, global int *out) {
   int u0 = readZeropadShifted(in, width, j,      p + j);
   int u1 = readZeropadShifted(in, width, j + mr, p + j + mr);
   write(       u0 + u1, out, width, j,      p);
-  writeShifted(u0 - u1, out, width, j + mr, p + e);
+  writeShifted(u0 - u1, out, N, j + mr, p + e);
 }
 
 // DIT step for a 2**12 FFT
@@ -153,12 +150,13 @@ KERNEL(GS) void ditStep(int round, global int *in, global int *out) {
   uint j = g & (mr - 1);
   uint r = (g & ~(mr - 1)) << 1;
   uint e = j << (N - 1 - round);
+  uint line = j + r;
   uint p = get_local_id(0) + k * GS;
 
-  int u0 = read(       in, width, j + r,      p);
-  int u1 = readShifted(in, width, j + r + mr, p + e);
-  write(halfAdd(u0, u1),  out, width, j + r,      p);
-  write(halfAdd(u0, -u1), out, width, j + r + mr, p);
+  int u0 = read(       in, width, line,      p);
+  int u1 = readShifted(in, width, line + mr, p + e);
+  write(halfAdd(u0, u1),  out, width, line,      p);
+  write(halfAdd(u0, -u1), out, width, line + mr, p);
 }
 
 KERNEL(GS) void ditFinalShifted(global int *in, global int *out) {
@@ -175,8 +173,8 @@ KERNEL(GS) void ditFinalShifted(global int *in, global int *out) {
 
   int u0 = read(       in, width, j,      p);
   int u1 = readShifted(in, width, j + mr, p + e);
-  writeShifted(halfAdd(u0, u1),  out, width, j,      p + j);
-  writeShifted(halfAdd(u0, -u1), out, width, j + mr, p + mr);
+  writeShifted(halfAdd(u0, u1),  out, N, j,      p + j);
+  writeShifted(halfAdd(u0, -u1), out, N, j + mr, p + mr);
 }
 
 void ldsWriteShifted(int u, local int *lds, int width, uint line, uint p) {

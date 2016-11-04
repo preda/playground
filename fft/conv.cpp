@@ -99,9 +99,9 @@ int main(int argc, char **argv) {
       // i += 256 * 1024;
     }
   }
-
-  exit(0);
-  for (int i = 0; i < 1; ++i) {
+  time("test");
+  
+  for (int i = 0; i < 100; ++i) {
     for (int round = 11; round > 0; round -= 2) {
       difStep.setArgs(round, buf3, buf2);
       queue.run(difStep, GS, words);
@@ -109,8 +109,10 @@ int main(int argc, char **argv) {
       queue.run(difStep, GS, words);
     }
   }
-
-  for (int i = 0; i < 1; ++i) {
+  queue.finish();
+  time("dif radix2");
+  
+  for (int i = 0; i < 100; ++i) {
     for (int round = 5; round > 0; round -= 2) {
       dif4Step.setArgs(round, buf1, buf2);
       queue.run(dif4Step, GS, (words * 2) / 8);
@@ -118,11 +120,8 @@ int main(int argc, char **argv) {
       queue.run(dif4Step, GS, (words * 2) / 8);
     }
   }
-
-
-  
   queue.finish();
-  time("dif");
+  time("dif radix4");
   
   /*
   // Initial DIF round on zero-padded input.
