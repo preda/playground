@@ -50,13 +50,13 @@ int main(int argc, char **argv) {
   
   program.compileCL2(c, "conv.cl");
   
-  K(program, difIniZeropad);
-  K(program, difIniZeropadShifted);
+  // K(program, difIniZeropad);
+  // K(program, difIniZeropadShifted);
   K(program, difStep);
   K(program, dif4Step);
   
   K(program, ditStep);
-  K(program, ditFinalShifted);
+  // K(program, ditFinalShifted);
 
 
   K(program, sq4k);
@@ -73,9 +73,8 @@ int main(int argc, char **argv) {
 
   int *data = new int[SIZE];
   
-  // srandom(100);
+  // srandom(0);
   for (int i = 0; i < SIZE; ++i) { data[i] = (random() & 0xffffff) - (1 << 23); }
-  // data[0] = 4;
 
   Buf buf1(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(int) * SIZE, data);
   Buf buf2(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(int) * SIZE, data);
@@ -110,10 +109,10 @@ int main(int argc, char **argv) {
   for (int i = 0; i < SIZE; ++i) {
     if (data[i] != tmpLong1[i]) {
       printf("%d %d %ld\n", i, data[i], tmpLong1[i]);
-      if (++err >= 10) { return false; }
+      if (++err >= 10) { exit(1); }
     }
   }  
-  exit(0);
+  time("OK FFT round-trip");
   
   /*
   sq4k.setArgs(buf1, buf2);
@@ -124,7 +123,13 @@ int main(int argc, char **argv) {
   time("sq4k");
   */
 
-  for (int round = 11; round >= 0; round -= 2) {
+
+  difStep.setArgs(11, buf1, bufTmp);
+  queue.run(difStep, GS, words);
+  difStep.setArgs(10, bufTmp, buf2);
+  queue.run(difStep, GS, words);
+  
+  for (int round = 9; round >= 0; round -= 2) {
     difStep.setArgs(round, buf2, bufTmp);
     queue.run(difStep, GS, words);
     difStep.setArgs(round - 1, bufTmp, buf2);
@@ -138,31 +143,9 @@ int main(int argc, char **argv) {
     queue.run(dif4Step, GS, words / 4);
   }
 
-  if (!checkEqual(&queue, &buf1, &buf2, SIZE)) { exit(1); }
-  time("OK (dif4 == dif2)");
+  if (!checkEqual(&queue, &buf1, &buf2, SIZE)) { exit(2); }
+  time("OK DIF radix4 == radix2)");
 
-  /*
-  std::unique_ptr<long[]> tmpLong1(new long[SIZE]);
-  {
-    std::unique_ptr<int[]> tmp1(new int[SIZE]);
-    queue.readBlocking(&buf2, 0, sizeof(int) * SIZE, tmp1.get());
-    for (int i = 0; i < SIZE; ++i) {
-      tmpLong1[i] = tmp1[i];
-    }
-  }
-  Buf bufLong1(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(long) * SIZE, tmpLong1.get());
-  Buf bufLongTmp(c, CL_MEM_READ_WRITE, sizeof(long) * SIZE, 0);
-  for (int round = 0; round < 12; round += 2) {
-    ditStep.setArgs(round, bufLong1, bufLongTmp);
-    queue.run(ditStep, GS, SIZE / 2);
-    ditStep.setArgs(round + 1, bufLongTmp, bufLong1);
-    queue.run(ditStep, GS, SIZE / 2);
-  }
-  */
-
-  
-
-  
   for (int i = 0; i < 100; ++i) {
     for (int round = 11; round > 0; round -= 2) {
       difStep.setArgs(round, buf2, bufTmp);
@@ -172,7 +155,7 @@ int main(int argc, char **argv) {
     }
   }
   queue.finish();
-  time("dif radix2");
+  time("perf DIF radix2");
   
   for (int i = 0; i < 100; ++i) {
     for (int round = 5; round > 0; round -= 2) {
@@ -183,7 +166,19 @@ int main(int argc, char **argv) {
     }
   }
   queue.finish();
-  time("dif radix4");
+  time("perf DIF radix4");
+
+  for (int i = 0; i < 100; ++i) {
+    for (int round = 0; round < 12; round += 2) {
+      ditStep.setArgs(round, bufLong1, bufLongTmp);
+      queue.run(ditStep, GS, SIZE / 2);
+      ditStep.setArgs(round + 1, bufLongTmp, bufLong1);
+      queue.run(ditStep, GS, SIZE / 2);
+    }
+  }
+  queue.finish();
+  time("perf DIT long radix2");
+  
   
   /*
   // Initial DIF round on zero-padded input.
