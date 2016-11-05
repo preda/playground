@@ -14,11 +14,6 @@ int readZeropad(global int *in, int width, int line, int p) {
   return (p < width/2) ? in[cut(line * (width/2) + p)] : 0;
 }
 
-int readShifted(global int *in, int width, int line, int p) {
-  int u = read(in, width, line, p & (width - 1));
-  return (p < width) ? u : -u;
-}
-
 int readZeropadShifted(global int *in, int width, int line, int p) {
   int u = readZeropad(in, width, line, p & (width - 1));
   return (p < width) ? u : -u;

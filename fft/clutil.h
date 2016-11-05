@@ -219,8 +219,8 @@ public:
     return ret;
   }
 
-  void readBlocking(Buf &buf, size_t start, size_t size, void *data) {
-    CHECK(clEnqueueReadBuffer(queue, buf.buf, CL_BLOCKING, start, size, data, 0, NULL, NULL));
+  void readBlocking(Buf *buf, size_t start, size_t size, void *data) {
+    CHECK(clEnqueueReadBuffer(queue, buf->buf, CL_BLOCKING, start, size, data, 0, NULL, NULL));
   }
   
   void write(Buf &buf, void *ptr, size_t size, bool blocking) {

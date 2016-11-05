@@ -21,13 +21,20 @@ T##4 __attribute__((overloadable)) shift(T##4 a, int e) {\
   }\
 }\
 \
-T __attribute__((overloadable)) halfAdd(T x, T y) { return (x >> 1) + (y >> 1) + (x & 1); }\
+T __attribute__((overloadable)) halfAdd(T x, T y) { return (x >> 1) + (y >> 1) + (x & 1); } \
 \
 T __attribute__((overloadable)) read(global T *in, int width, int line, int p) {\
   return in[cut(line * width + p)];\
 }\
 \
+T __attribute__((overloadable)) readShifted(global T *in, int width, int line, int p) { \
+  T u = read(in, width, line, p & (width - 1));\
+  return (p < width) ? u : -u;\
+}\
+\
 void __attribute__((overloadable)) write(T u, global T *out, int width, int line, int p) {\
   out[cut(line * width + p)] = u;\
 }\
+\
 
+// return (x + y) >> 1; }                        \

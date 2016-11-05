@@ -3,12 +3,28 @@
 #include <string.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <memory>
 
 #define N 4*1024
 #define SIZE (N * N)
 #define GS 256
 
 #define K(program, name) Kernel name(program, #name);
+
+bool checkEqual(Queue *queue, Buf *buf1, Buf *buf2, int size) {
+  std::unique_ptr<int[]> tmp1(new int[size]);
+  std::unique_ptr<int[]> tmp2(new int[size]);
+  queue->readBlocking(buf1, 0, sizeof(int) * size, tmp1.get());
+  queue->readBlocking(buf2, 0, sizeof(int) * size, tmp2.get());
+  int err = 0;
+  for (int i = 0; i < size; ++i) {
+    if (tmp1[i] != tmp2[i]) {
+      printf("%d %d %d\n", i, tmp1[i], tmp2[i]);
+      if (++err >= 10) { return false; }
+    }
+  }
+  return true;
+}
 
 int main(int argc, char **argv) {
   time();
@@ -47,24 +63,58 @@ int main(int argc, char **argv) {
   
   time("Kernels compilation");
 
-  Buf bitsBuf(c, CL_MEM_READ_WRITE /*| CL_MEM_COPY_HOST_PTR*/, sizeof(int) * words, 0);
+  /*
+  Buf bitsBuf(c, CL_MEM_READ_WRITE, sizeof(int) * words, 0);
   int data = 0;
   clEnqueueFillBuffer(queue.queue, bitsBuf.buf, &data, sizeof(data), 0, words, 0, 0, 0);
   data = 4; // LL seed
   queue.writeBlocking(bitsBuf, &data, sizeof(data));
+  */
 
-  int *tmp1 = new int[SIZE];
+  int *data = new int[SIZE];
+  
+  // srandom(100);
+  for (int i = 0; i < SIZE; ++i) { data[i] = (random() & 0xffffff) - (1 << 23); }
+  // data[0] = 4;
 
-  srandom(100);
-  for (int i = 0; i < SIZE; ++i) { tmp1[i] = random(); }
-  // for (int i = 0; i < 4 * 1024; ++i) { tmp1[i] = 1; tmp1[4 * 1024 * 1024 + i] = 2; tmp1[8 * 1024 * 1024 + i] = 3; tmp1[12 * 1024 * 1024 + i] = 4; }
-  // tmp1[1] = 1;
-
-  Buf buf1(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(int) * SIZE, tmp1);
-  Buf buf2(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(int) * SIZE, tmp1);
+  Buf buf1(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(int) * SIZE, data);
+  Buf buf2(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(int) * SIZE, data);
   Buf bufTmp(c, CL_MEM_READ_WRITE, sizeof(int) * SIZE, 0);
   time("alloc gpu buffers");
 
+  for (int round = 11; round >= 0; round -= 2) {
+    difStep.setArgs(round, buf2, bufTmp);
+    queue.run(difStep, GS, SIZE / 2);
+    difStep.setArgs(round - 1, bufTmp, buf2);
+    queue.run(difStep, GS, SIZE / 2);
+  }
+  
+  std::unique_ptr<long[]> tmpLong1(new long[SIZE]);
+  {
+    std::unique_ptr<int[]> tmp1(new int[SIZE]);
+    queue.readBlocking(&buf2, 0, sizeof(int) * SIZE, tmp1.get());
+    for (int i = 0; i < SIZE; ++i) {
+      tmpLong1[i] = tmp1[i];
+    }
+  }
+  Buf bufLong1(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(long) * SIZE, tmpLong1.get());
+  Buf bufLongTmp(c, CL_MEM_READ_WRITE, sizeof(long) * SIZE, 0);
+  for (int round = 0; round < 12; round += 2) {
+    ditStep.setArgs(round, bufLong1, bufLongTmp);
+    queue.run(ditStep, GS, SIZE / 2);
+    ditStep.setArgs(round + 1, bufLongTmp, bufLong1);
+    queue.run(ditStep, GS, SIZE / 2);
+  }
+  queue.readBlocking(&bufLong1, 0, sizeof(long) * SIZE, tmpLong1.get());
+  int err = 0;
+  for (int i = 0; i < SIZE; ++i) {
+    if (data[i] != tmpLong1[i]) {
+      printf("%d %d %ld\n", i, data[i], tmpLong1[i]);
+      if (++err >= 10) { return false; }
+    }
+  }  
+  exit(0);
+  
   /*
   sq4k.setArgs(buf1, buf2);
   for (int i = 0; i < 1000; ++i) {
@@ -87,20 +137,31 @@ int main(int argc, char **argv) {
     dif4Step.setArgs(round - 1, bufTmp, buf1);
     queue.run(dif4Step, GS, words / 4);
   }
-    
-  queue.readBlocking(buf1, 0, sizeof(int) * SIZE, tmp1);
-  int *tmp2 = new int[SIZE];
-  queue.readBlocking(buf2, 0, sizeof(int) * SIZE, tmp2);
-  int err = 0;
-  for (int i = 0; i < SIZE; ++i) {
-    if (tmp1[i] != tmp2[i]) {
-      ++err;
-      if (err > 10) { break; }
-      printf("%d %d %d\n", i, tmp1[i], tmp2[i]);
-      // i += 256 * 1024;
+
+  if (!checkEqual(&queue, &buf1, &buf2, SIZE)) { exit(1); }
+  time("OK (dif4 == dif2)");
+
+  /*
+  std::unique_ptr<long[]> tmpLong1(new long[SIZE]);
+  {
+    std::unique_ptr<int[]> tmp1(new int[SIZE]);
+    queue.readBlocking(&buf2, 0, sizeof(int) * SIZE, tmp1.get());
+    for (int i = 0; i < SIZE; ++i) {
+      tmpLong1[i] = tmp1[i];
     }
   }
-  time("test");
+  Buf bufLong1(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(long) * SIZE, tmpLong1.get());
+  Buf bufLongTmp(c, CL_MEM_READ_WRITE, sizeof(long) * SIZE, 0);
+  for (int round = 0; round < 12; round += 2) {
+    ditStep.setArgs(round, bufLong1, bufLongTmp);
+    queue.run(ditStep, GS, SIZE / 2);
+    ditStep.setArgs(round + 1, bufLongTmp, bufLong1);
+    queue.run(ditStep, GS, SIZE / 2);
+  }
+  */
+
+  
+
   
   for (int i = 0; i < 100; ++i) {
     for (int round = 11; round > 0; round -= 2) {
