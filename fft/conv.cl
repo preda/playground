@@ -2,12 +2,29 @@
 
 unsigned cut(unsigned x) { return x & 0x3fffffff; }
 
-FUNCS(int)
-FUNCS(long)
+#define READ(in, width, line, p)      in[cut((line) * width + (p))]
+#define WRITE(u, out, width, line, p) out[cut((line) * width + (p))] = u
 
-#define GS 256
 #define ADDSUBI(a, b) {  int2 tmp = a; a = tmp + b; b = tmp - b; }
 #define ADDSUBL(a, b) { long2 tmp = a; a = tmp + b; b = tmp - b; }
+
+#define GS 256
+
+#define FFT_SETUP(radixExp) \
+const int N = 12;\
+const int W = 1 << N;\
+uint groupsPerLine = W / (GS * radixExp);  \
+uint k = get_group_id(0) & (groupsPerLine - 1);\
+uint g = get_group_id(0) / groupsPerLine;      \
+uint mr = 1 << (round * radixExp);\
+uint j = g & (mr - 1);\
+uint r = (g & ~(mr - 1)) << radixExp;\
+uint e = j << (N + 1 - (round + 1) * radixExp);\
+uint line = j + r;\
+uint p = get_local_id(0) + k * GS;
+
+FUNCS(int)
+FUNCS(long)
 
 #define KERNEL(groupSize) kernel __attribute__((reqd_work_group_size(groupSize, 1, 1)))
 
@@ -20,53 +37,33 @@ int readZeropad(global int *in, int N, int line, int p) {
 // DIF step for a 2**12 FFT.
 // round goes down from N-1 to 0.
 KERNEL(GS) void difStep(int round, global int *in, global int *out) {
-  const int N = 12;
-  uint groupsPerLine = (1 << N) / GS;
-  uint g = get_group_id(0) / groupsPerLine;
-  uint k = get_group_id(0) & (groupsPerLine - 1);
-
-  uint mr = 1 << round;
-  uint j = g & (mr - 1);
-  uint r = (g & ~(mr - 1)) << 1;
-  uint e = j << (N + 1 - (round + 1));
-  uint line = j + r;
-  uint p = get_local_id(0) + k * GS;
+  FFT_SETUP(1);
   
-  int u0 =   read(in, N, line,      p);
-  int u1 =   read(in, N, line + mr, p);
-  write(u0 + u1, out, N, line,      p);
-  writeC(u0 - u1, out, N, line + mr, p + e);
+  int u0 =   READ(in, W, line,      p);
+  int u1 =   READ(in, W, line + mr, p);
+  WRITE(u0 + u1, out, W, line,      p);
+  writeC(u0 - u1, out, W, line + mr, p + e);
 }
 
 // Radix-4 DIF step for a 2**12 FFT.
 // round goes down by 1 from 5 to 0.
 KERNEL(GS) void dif4Step(int round, global int *in, global int *out) {
-  const int N = 12;
-  uint groupsPerLine = (1 << N) / (GS * 2);
-  uint k = get_group_id(0) & (groupsPerLine - 1);
-  uint g = get_group_id(0) / groupsPerLine;
-
-  uint mr = 1 << (round * 2);
-  uint j = g & (mr - 1);
-  uint r = (g & ~(mr - 1)) << 2;
-  uint e = j << (N + 1 - 2 * (round + 1));
-  uint line = j + r;
-  uint p = get_local_id(0) + k * GS;
-
-  int2 u0 = read2(in, N, line,          p);
-  int2 u2 = read2(in, N, line + mr * 2, p);
+  FFT_SETUP(2);
+  
+  int2 u0 = read2(in, W, line,          p);
+  int2 u2 = read2(in, W, line + mr * 2, p);
   ADDSUBI(u0, u2);
   
-  int2 u1 = read2(in, N, line + mr,     p);
-  int2 u3 = read2(in, N, line + mr * 3, p);
+  int2 u1 = read2(in, W, line + mr,     p);
+  int2 u3 = read2(in, W, line + mr * 3, p);
   ADDSUBI(u1, u3);
   
-  write2(u0 + u1, out, N, line,      p);
-  write2C(u0 - u1, out, N, line + mr, p + e * 2);
+  write2(u0 + u1, out, W, line,      p);
+  write2C(u0 - u1, out, W, line + mr, p + e * 2);
   
   u3 = shift(u3, 1);
-  write2C(u2 + u3, out, N, line + mr * 2, p + e);
-  write2C(u2 - u3, out, N, line + mr * 3, p + e * 3);
+  write2C(u2 + u3, out, W, line + mr * 2, p + e);
+  write2C(u2 - u3, out, W, line + mr * 3, p + e * 3);
 }
 
 /*
@@ -110,53 +107,33 @@ KERNEL(GS) void difIniZeropadShifted(global int *in, global int *out) {
 // DIT step for a 2**12 FFT
 // round goes up from 0 to N-1.
 KERNEL(GS) void ditStep(int round, global long *in, global long *out) {
-  const int N = 12;
-  uint groupsPerLine = (1 << N) / GS;
-  uint g = get_group_id(0) / groupsPerLine;
-  uint k = get_group_id(0) & (groupsPerLine - 1);
+  FFT_SETUP(1);
 
-  uint mr = 1 << round;
-  uint j = g & (mr - 1);
-  uint r = (g & ~(mr - 1)) << 1;
-  uint e = j << (N + 1 - (round + 1));
-  uint line = j + r;
-  uint p = get_local_id(0) + k * GS;
-
-  long u0 = read(in, N, line,      p);
-  long u1 = readC(in, N, line + mr, p + e);
-  write(halfAdd(u0, u1),  out, N, line,      p);
-  write(halfAdd(u0, -u1), out, N, line + mr, p);
+  long u0 = READ(in, W, line,      p);
+  long u1 = readC(in, W, line + mr, p + e);
+  WRITE(halfAdd(u0, u1),  out, W, line,      p);
+  WRITE(halfAdd(u0, -u1), out, W, line + mr, p);
 }
 
 // Radix-4 DIT step for a 2**12 FFT.
 // round is 0 to 5
 KERNEL(GS) void dit4Step(int round, global long *in, global long *out) {
-  const int N = 12;
-  uint groupsPerLine = (1 << N) / (GS * 2);
-  uint k = get_group_id(0) & (groupsPerLine - 1);
-  uint g = get_group_id(0) / groupsPerLine;
+  FFT_SETUP(2);
 
-  uint mr = 1 << (round * 2);
-  uint j = g & (mr - 1);
-  uint r = (g & ~(mr - 1)) << 2;
-  uint e = j << (N + 1 - 2 * (round + 1));
-  uint line = j + r;
-  uint p = get_local_id(0) + k * GS;
-
-  long2 u0 = read2(in, N, line,      p);
-  long2 u2 = read2C(in, N, line + mr, p + e * 2);
-  long4 u02 = addsub(u0, u2);
+  long2 u0 = read2(in, W, line,      p);
+  long2 u2 = read2C(in, W, line + mr, p + e * 2);
+  ADDSUBL(u0, u2);
   
-  long2 u1 = read2C(in, N, line + mr * 2, p + e);
-  long2 u3 = read2C(in, N, line + mr * 3, p + e * 3);
-  long4 u13 = addsub(u1, u3);
+  long2 u1 = read2C(in, W, line + mr * 2, p + e);
+  long2 u3 = read2C(in, W, line + mr * 3, p + e * 3);
+  ADDSUBL(u1, u3);
 
-  write2(u02.lo + u13.lo, out, N, line,          p);
-  write2(u02.lo - u13.lo, out, N, line + mr * 2, p);
+  write2(u0 + u1, out, W, line,          p);
+  write2(u0 - u1, out, W, line + mr * 2, p);
 
-  u3 = shift(u13.hi, -1);
-  write2(u02.hi + u3, out, N, line + mr,     p);
-  write2(u02.hi - u3, out, N, line + mr * 3, p);
+  u3 = shift(u3, -1);
+  write2(u2 + u3, out, W, line + mr,     p);
+  write2(u2 - u3, out, W, line + mr * 3, p);
 }
 
 /*
