@@ -42,7 +42,11 @@ KERNEL(GS) void difStep(int round, global int *in, global int *out) {
   int u0 =   READ(in, W, line,      p);
   int u1 =   READ(in, W, line + mr, p);
   WRITE(u0 + u1, out, W, line,      p);
-  writeC(u0 - u1, out, W, line + mr, p + e);
+  u1 = u0 - u1;
+  p += e;
+  u1 = p < W ? u1 : -u1;
+  WRITE(u1, out, W, line + mr, p & (W - 1));
+  // writeC(u0 - u1, out, W, line + mr, p + e);
 }
 
 // Radix-4 DIF step for a 2**12 FFT.

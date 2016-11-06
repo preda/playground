@@ -81,6 +81,7 @@ int main(int argc, char **argv) {
   Buf bufTmp(c, CL_MEM_READ_WRITE, sizeof(int) * SIZE, 0);
   time("alloc gpu buffers");
 
+  /*
   for (int round = 11; round >= 0; round -= 2) {
     difStep.setArgs(round, buf2, bufTmp);
     queue.run(difStep, GS, SIZE / 2);
@@ -114,16 +115,6 @@ int main(int argc, char **argv) {
   }  
   time("OK FFT round-trip");
   
-  /*
-  sq4k.setArgs(buf1, buf2);
-  for (int i = 0; i < 1000; ++i) {
-    queue.run(sq4k, GS, words * GS / (64 * 64));
-  }
-  queue.finish();
-  time("sq4k");
-  */
-
-
   difStep.setArgs(11, buf1, bufTmp);
   queue.run(difStep, GS, words);
   difStep.setArgs(10, bufTmp, buf2);
@@ -145,6 +136,8 @@ int main(int argc, char **argv) {
 
   if (!checkEqual(&queue, &buf1, &buf2, SIZE)) { exit(2); }
   time("OK DIF radix4 == radix2)");
+
+  */
 
   for (int i = 0; i < 100; ++i) {
     for (int round = 11; round > 0; round -= 2) {
@@ -168,6 +161,7 @@ int main(int argc, char **argv) {
   queue.finish();
   time("perf DIF radix4");
 
+  /*
   for (int i = 0; i < 100; ++i) {
     for (int round = 0; round < 12; round += 2) {
       ditStep.setArgs(round, bufLong1, bufLongTmp);
@@ -178,7 +172,18 @@ int main(int argc, char **argv) {
   }
   queue.finish();
   time("perf DIT long radix2");
+  */
   
+
+  /*
+  sq4k.setArgs(buf1, buf2);
+  for (int i = 0; i < 1000; ++i) {
+    queue.run(sq4k, GS, words * GS / (64 * 64));
+  }
+  queue.finish();
+  time("sq4k");
+  */
+
   
   /*
   // Initial DIF round on zero-padded input.
