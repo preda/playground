@@ -1,9 +1,7 @@
+#define OVERLOADED __attribute__((overloadable))
+#define KERNEL(groupSize) kernel __attribute__((reqd_work_group_size(groupSize, 1, 1)))
+
 #include "template.h"
-
-unsigned cut(unsigned x) { return x & 0x3fffffff; }
-
-#define READ(in, width, line, p)      in[cut((line) * width + (p))]
-#define WRITE(u, out, width, line, p) out[cut((line) * width + (p))] = u
 
 #define ADDSUBI(a, b) {  int2 tmp = a; a = tmp + b; b = tmp - b; }
 #define ADDSUBL(a, b) { long2 tmp = a; a = tmp + b; b = tmp - b; }
@@ -11,9 +9,9 @@ unsigned cut(unsigned x) { return x & 0x3fffffff; }
 #define GS 256
 
 #define FFT_SETUP(radixExp) \
-const int N = 12;\
-const int W = 1 << N;\
-uint groupsPerLine = W / (GS * radixExp);  \
+const uint N = 12;\
+const uint halfWidth = 1 << (N - 1);\
+uint groupsPerLine = (1 << N) / (GS * radixExp); \
 uint k = get_group_id(0) & (groupsPerLine - 1);\
 uint g = get_group_id(0) / groupsPerLine;      \
 uint mr = 1 << (round * radixExp);\
@@ -23,30 +21,23 @@ uint e = j << (N + 1 - (round + 1) * radixExp);\
 uint line = j + r;\
 uint p = get_local_id(0) + k * GS;
 
+unsigned cut(unsigned x) { return x & 0x1fffffff; }
+void bar() { barrier(CLK_LOCAL_MEM_FENCE); }
+
 FUNCS(int)
 FUNCS(long)
 
-#define KERNEL(groupSize) kernel __attribute__((reqd_work_group_size(groupSize, 1, 1)))
-
-void bar() { barrier(CLK_LOCAL_MEM_FENCE); }
-
-int readZeropad(global int *in, int N, int line, int p) {
-  return (p & (1 << (N - 1))) ? 0 : readC(in, N - 1, line, p);
-}
+int readZeropad(global int *in, int N, int line, int p) { return (p & (1 << (N - 1))) ? 0 : readC(in, N - 1, line, p); }
 
 // DIF step for a 2**12 FFT.
 // round goes down from N-1 to 0.
 KERNEL(GS) void difStep(int round, global int *in, global int *out) {
   FFT_SETUP(1);
   
-  int u0 =   READ(in, W, line,      p);
-  int u1 =   READ(in, W, line + mr, p);
-  WRITE(u0 + u1, out, W, line,      p);
-  u1 = u0 - u1;
-  p += e;
-  u1 = p < W ? u1 : -u1;
-  WRITE(u1, out, W, line + mr, p & (W - 1));
-  // writeC(u0 - u1, out, W, line + mr, p + e);
+  int u0 =   read(in, N, line,      p);
+  int u1 =   read(in, N, line + mr, p);
+  write(u0 + u1, out, N, line,      p);
+  writeC(u0 - u1, out, N, line + mr, p + e);
 }
 
 // Radix-4 DIF step for a 2**12 FFT.
@@ -54,20 +45,20 @@ KERNEL(GS) void difStep(int round, global int *in, global int *out) {
 KERNEL(GS) void dif4Step(int round, global int *in, global int *out) {
   FFT_SETUP(2);
   
-  int2 u0 = read2(in, W, line,          p);
-  int2 u2 = read2(in, W, line + mr * 2, p);
+  int2 u0 = read2(in, N, line,          p);
+  int2 u2 = read2(in, N, line + mr * 2, p);
   ADDSUBI(u0, u2);
   
-  int2 u1 = read2(in, W, line + mr,     p);
-  int2 u3 = read2(in, W, line + mr * 3, p);
+  int2 u1 = read2(in, N, line + mr,     p);
+  int2 u3 = read2(in, N, line + mr * 3, p);
   ADDSUBI(u1, u3);
   
-  write2(u0 + u1, out, W, line,      p);
-  write2C(u0 - u1, out, W, line + mr, p + e * 2);
+  write2(u0 + u1, out, N, line,      p);
+  write2C(u0 - u1, out, N, line + mr, p + e * 2);
   
   u3 = shift(u3, 1);
-  write2C(u2 + u3, out, W, line + mr * 2, p + e);
-  write2C(u2 - u3, out, W, line + mr * 3, p + e * 3);
+  write2C(u2 + u3, out, N, line + mr * 2, p + e);
+  write2C(u2 - u3, out, N, line + mr * 3, p + e * 3);
 }
 
 /*
@@ -113,10 +104,10 @@ KERNEL(GS) void difIniZeropadShifted(global int *in, global int *out) {
 KERNEL(GS) void ditStep(int round, global long *in, global long *out) {
   FFT_SETUP(1);
 
-  long u0 = READ(in, W, line,      p);
-  long u1 = readC(in, W, line + mr, p + e);
-  WRITE(halfAdd(u0, u1),  out, W, line,      p);
-  WRITE(halfAdd(u0, -u1), out, W, line + mr, p);
+  long u0 = read(in, N, line,      p);
+  long u1 = readC(in, N, line + mr, p + e);
+  write(halfAdd(u0, u1),  out, N, line,      p);
+  write(halfAdd(u0, -u1), out, N, line + mr, p);
 }
 
 // Radix-4 DIT step for a 2**12 FFT.
@@ -124,20 +115,20 @@ KERNEL(GS) void ditStep(int round, global long *in, global long *out) {
 KERNEL(GS) void dit4Step(int round, global long *in, global long *out) {
   FFT_SETUP(2);
 
-  long2 u0 = read2(in, W, line,      p);
-  long2 u2 = read2C(in, W, line + mr, p + e * 2);
+  long2 u0 = read2(in, N, line,      p);
+  long2 u2 = read2C(in, N, line + mr, p + e * 2);
   ADDSUBL(u0, u2);
   
-  long2 u1 = read2C(in, W, line + mr * 2, p + e);
-  long2 u3 = read2C(in, W, line + mr * 3, p + e * 3);
+  long2 u1 = read2C(in, N, line + mr * 2, p + e);
+  long2 u3 = read2C(in, N, line + mr * 3, p + e * 3);
   ADDSUBL(u1, u3);
 
-  write2(u0 + u1, out, W, line,          p);
-  write2(u0 - u1, out, W, line + mr * 2, p);
+  write2(u0 + u1, out, N, line,          p);
+  write2(u0 - u1, out, N, line + mr * 2, p);
 
   u3 = shift(u3, -1);
-  write2(u2 + u3, out, W, line + mr,     p);
-  write2(u2 - u3, out, W, line + mr * 3, p);
+  write2(u2 + u3, out, N, line + mr,     p);
+  write2(u2 - u3, out, N, line + mr * 3, p);
 }
 
 /*
