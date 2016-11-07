@@ -21,8 +21,6 @@ T##4 _OVL shift(T##4 a, int e) {\
   }\
 }\
 \
-T _OVL read(global T *in, uint N, uint line, uint p) { return in[cut((line << N) + p)]; } \
-void _OVL write(T u, global T *out, uint N, uint line, uint p) { out[cut((line << N) + p)] = u; } \
 T _OVL readC(global T *in, uint N, uint line, uint p) {\
   T u = read(in, N, line, p & ((1 << N) - 1));                          \
   return (p & (1 << N)) ? -u : u;                                       \

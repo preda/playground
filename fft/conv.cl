@@ -20,14 +20,18 @@ uint e = j << (N + 1 - (round + 1) * radixExp);\
 uint line = j + r;\
 uint p = get_local_id(0) + k * GS;
 
-unsigned cut(unsigned x) { return x & 0x1fffffff; }
 void bar() { barrier(CLK_LOCAL_MEM_FENCE); }
+
+unsigned cut4(unsigned x) { return x & 0x3fffffff; }
+unsigned cut8(unsigned x) { return x & 0x1fffffff; }
+
+int  _OVL read(global int  *in, uint N, uint line, uint p) { return in[cut4((line << N) + p)]; }
+long _OVL read(global long *in, uint N, uint line, uint p) { return in[cut8((line << N) + p)]; }
+void _OVL write(int u,  global int  *out, uint N, uint line, uint p) { out[cut4((line << N) + p)] = u; }
+void _OVL write(long u, global long *out, uint N, uint line, uint p) { out[cut8((line << N) + p)] = u; }
 
 FUNCS(int)
 FUNCS(long)
-
-long  _OVL halfAdd(long  x, long  y) { return (x >> 1) + (y >> 1) + (x & 1); }
-long2 _OVL halfAdd(long2 x, long2 y) { return (x >> 1) + (y >> 1) + (x & 1); }
 
 int readZeropad(global int *in, int N, int line, int p) { return (p & (1 << (N - 1))) ? 0 : readC(in, N - 1, line, p); }
 
@@ -64,36 +68,14 @@ KERNEL(GS) void dif4Step(int round, global int *in, global int *out) {
 }
 
 /*
-KERNEL(GS) void difIniZeropad(global int *in, global int *out) {
-  const int N = 12;
-  int width = 1 << N;
-  uint groupsPerLine = width / GS;
-  uint g = get_group_id(0) / groupsPerLine;
-  uint k = get_group_id(0) & (groupsPerLine - 1);
-
-  uint mr = 1 << (N - 1);
-  uint j = g;
-  uint e = j;
-  uint p = get_local_id(0) + k * GS;
-  
+KERNEL(GS) void difIniZeropad(global int *in, global int *out) {  
   int u0 = readZeropad(in, width, j,      p);
   int u1 = readZeropad(in, width, j + mr, p);
   write(       u0 + u1, out, width, j,      p);
   writeShifted(u0 - u1, out, N, j + mr, p + e);
 }
 
-KERNEL(GS) void difIniZeropadShifted(global int *in, global int *out) {
-  const int N = 12;
-  int width = 1 << N;
-  uint groupsPerLine = width / GS;
-  uint g = get_group_id(0) / groupsPerLine;
-  uint k = get_group_id(0) & (groupsPerLine - 1);
-
-  uint mr = 1 << (N - 1);
-  uint j = g;
-  uint e = j;
-  uint p = get_local_id(0) + k * GS;
-  
+KERNEL(GS) void difIniZeropadShifted(global int *in, global int *out) {  
   int u0 = readZeropadShifted(in, width, j,      p + j);
   int u1 = readZeropadShifted(in, width, j + mr, p + j + mr);
   write(       u0 + u1, out, width, j,      p);
@@ -353,12 +335,12 @@ void set(int4 *outa, int4 *outb, int4 a, int4 b) {
   *outb = b;
 }
 
-long4 halfAdd4(long4 a, long4 b) {
-  return (long4) (halfAdd(a.x, b.x), halfAdd(a.y, b.y), halfAdd(a.z, b.z), halfAdd(a.w, b.w));
-}
+// long4 halfAdd4(long4 a, long4 b) { return (long4) (halfAdd(a.x, b.x), halfAdd(a.y, b.y), halfAdd(a.z, b.z), halfAdd(a.w, b.w)); }
 
+/*
 void halfAddSub(long4 *a, long4 *b) {
   long4 t = *b;
   *b = halfAdd4(*a, -t);
   *a = halfAdd4(*a, t);
 }
+*/
