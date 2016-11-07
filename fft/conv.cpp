@@ -56,8 +56,8 @@ int main(int argc, char **argv) {
   K(program, dif4Step);
   
   K(program, ditStep);
+  K(program, dit4Step);
   // K(program, ditFinalShifted);
-
 
   K(program, sq4k);
   
@@ -81,7 +81,6 @@ int main(int argc, char **argv) {
   Buf bufTmp(c, CL_MEM_READ_WRITE, sizeof(int) * SIZE, 0);
   time("alloc gpu buffers");
 
-  /*
   for (int round = 11; round >= 0; round -= 2) {
     difStep.setArgs(round, buf2, bufTmp);
     queue.run(difStep, GS, SIZE / 2);
@@ -98,6 +97,7 @@ int main(int argc, char **argv) {
     }
   }
   Buf bufLong1(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(long) * SIZE, tmpLong1.get());
+  Buf bufLong2(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(long) * SIZE, tmpLong1.get());
   Buf bufLongTmp(c, CL_MEM_READ_WRITE, sizeof(long) * SIZE, 0);
   for (int round = 0; round < 12; round += 2) {
     ditStep.setArgs(round, bufLong1, bufLongTmp);
@@ -114,7 +114,7 @@ int main(int argc, char **argv) {
     }
   }  
   time("OK FFT round-trip");
-  
+
   difStep.setArgs(11, buf1, bufTmp);
   queue.run(difStep, GS, words);
   difStep.setArgs(10, bufTmp, buf2);
@@ -135,9 +135,22 @@ int main(int argc, char **argv) {
   }
 
   if (!checkEqual(&queue, &buf1, &buf2, SIZE)) { exit(2); }
-  time("OK DIF radix4 == radix2)");
+  time("OK DIF radix4 == radix2");
 
-  */
+  for (int round = 0; round < 6; round += 2) {
+    dit4Step.setArgs(round, bufLong2, bufLongTmp);
+    queue.run(dit4Step, GS, words / 4);
+    dit4Step.setArgs(round + 1, bufLongTmp, bufLong2);
+    queue.run(dit4Step, GS, words / 4);
+  }
+  queue.readBlocking(&bufLong2, 0, sizeof(long) * SIZE, tmpLong1.get());
+  for (int i = 0; i < SIZE; ++i) {
+    if (data[i] != tmpLong1[i]) {
+      printf("%d %d %ld\n", i, data[i], tmpLong1[i]);
+      if (++err >= 10) { exit(1); }
+    }
+  }
+  time("OK DIT radix4");
 
   for (int i = 0; i < 100; ++i) {
     for (int round = 11; round > 0; round -= 2) {
@@ -148,7 +161,7 @@ int main(int argc, char **argv) {
     }
   }
   queue.finish();
-  time("perf DIF radix2");
+  time("perf DIF2");
   
   for (int i = 0; i < 100; ++i) {
     for (int round = 5; round > 0; round -= 2) {
@@ -159,9 +172,8 @@ int main(int argc, char **argv) {
     }
   }
   queue.finish();
-  time("perf DIF radix4");
+  time("perf DIF4");
 
-  /*
   for (int i = 0; i < 100; ++i) {
     for (int round = 0; round < 12; round += 2) {
       ditStep.setArgs(round, bufLong1, bufLongTmp);
@@ -171,8 +183,18 @@ int main(int argc, char **argv) {
     }
   }
   queue.finish();
-  time("perf DIT long radix2");
-  */
+  time("perf DIT2");
+
+  for (int i = 0; i < 100; ++i) {
+    for (int round = 0; round < 6; round += 2) {
+      dit4Step.setArgs(round, bufLong1, bufLongTmp);
+      queue.run(dit4Step, GS, SIZE / 8);
+      dit4Step.setArgs(round + 1, bufLongTmp, bufLong1);
+      queue.run(dit4Step, GS, SIZE / 8);
+    }
+  }
+  queue.finish();
+  time("perf DIT4");
   
 
   /*

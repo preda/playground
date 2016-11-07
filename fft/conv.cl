@@ -1,4 +1,4 @@
-#define OVERLOADED __attribute__((overloadable))
+#define _OVL __attribute__((overloadable))
 #define KERNEL(groupSize) kernel __attribute__((reqd_work_group_size(groupSize, 1, 1)))
 
 #include "template.h"
@@ -10,7 +10,6 @@
 
 #define FFT_SETUP(radixExp) \
 const uint N = 12;\
-const uint halfWidth = 1 << (N - 1);\
 uint groupsPerLine = (1 << N) / (GS * radixExp); \
 uint k = get_group_id(0) & (groupsPerLine - 1);\
 uint g = get_group_id(0) / groupsPerLine;      \
@@ -26,6 +25,9 @@ void bar() { barrier(CLK_LOCAL_MEM_FENCE); }
 
 FUNCS(int)
 FUNCS(long)
+
+long  _OVL halfAdd(long  x, long  y) { return (x >> 1) + (y >> 1) + (x & 1); }
+long2 _OVL halfAdd(long2 x, long2 y) { return (x >> 1) + (y >> 1) + (x & 1); }
 
 int readZeropad(global int *in, int N, int line, int p) { return (p & (1 << (N - 1))) ? 0 : readC(in, N - 1, line, p); }
 
@@ -106,8 +108,8 @@ KERNEL(GS) void ditStep(int round, global long *in, global long *out) {
 
   long u0 = read(in, N, line,      p);
   long u1 = readC(in, N, line + mr, p + e);
-  write(halfAdd(u0, u1),  out, N, line,      p);
-  write(halfAdd(u0, -u1), out, N, line + mr, p);
+  write((u0 + u1) >> 1, out, N, line,      p);
+  write((u0 - u1) >> 1, out, N, line + mr, p);
 }
 
 // Radix-4 DIT step for a 2**12 FFT.
@@ -115,7 +117,7 @@ KERNEL(GS) void ditStep(int round, global long *in, global long *out) {
 KERNEL(GS) void dit4Step(int round, global long *in, global long *out) {
   FFT_SETUP(2);
 
-  long2 u0 = read2(in, N, line,      p);
+  long2 u0 = read2(in,  N, line,      p);
   long2 u2 = read2C(in, N, line + mr, p + e * 2);
   ADDSUBL(u0, u2);
   
@@ -123,12 +125,12 @@ KERNEL(GS) void dit4Step(int round, global long *in, global long *out) {
   long2 u3 = read2C(in, N, line + mr * 3, p + e * 3);
   ADDSUBL(u1, u3);
 
-  write2(u0 + u1, out, N, line,          p);
-  write2(u0 - u1, out, N, line + mr * 2, p);
+  write2((u0 + u1) >> 2, out, N, line,          p);
+  write2((u0 - u1) >> 2, out, N, line + mr * 2, p);
 
   u3 = shift(u3, -1);
-  write2(u2 + u3, out, N, line + mr,     p);
-  write2(u2 - u3, out, N, line + mr * 3, p);
+  write2((u2 + u3) >> 2, out, N, line + mr,     p);
+  write2((u2 - u3) >> 2, out, N, line + mr * 3, p);
 }
 
 /*
