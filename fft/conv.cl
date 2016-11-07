@@ -10,7 +10,7 @@
 
 #define FFT_SETUP(radixExp) \
 const uint N = 12;\
-uint groupsPerLine = (1 << N) / (GS * radixExp); \
+uint groupsPerLine = (1 << (N + 1 - radixExp)) / GS;   \
 uint k = get_group_id(0) & (groupsPerLine - 1);\
 uint g = get_group_id(0) / groupsPerLine;      \
 uint mr = 1 << (round * radixExp);\
@@ -35,9 +35,8 @@ FUNCS(long)
 
 int readZeropad(global int *in, int N, int line, int p) { return (p & (1 << (N - 1))) ? 0 : readC(in, N - 1, line, p); }
 
-// DIF step for a 2**12 FFT.
-// round goes down from N-1 to 0.
-KERNEL(GS) void difStep(int round, global int *in, global int *out) {
+// Radix-2 DIF step for a 2**12 FFT. round is 11 to 0.
+KERNEL(GS) void dif2(int round, global int *in, global int *out) {
   FFT_SETUP(1);
   
   int u0 =   read(in, N, line,      p);
@@ -46,9 +45,18 @@ KERNEL(GS) void difStep(int round, global int *in, global int *out) {
   writeC(u0 - u1, out, N, line + mr, p + e);
 }
 
-// Radix-4 DIF step for a 2**12 FFT.
-// round goes down by 1 from 5 to 0.
-KERNEL(GS) void dif4Step(int round, global int *in, global int *out) {
+// Radix-2 DIT step for a 2**12 FFT. Round is 0 to 11.
+KERNEL(GS) void dit2(int round, global long *in, global long *out) {
+  FFT_SETUP(1);
+
+  long u0 = read(in, N, line,      p);
+  long u1 = readC(in, N, line + mr, p + e);
+  write((u0 + u1) >> 1, out, N, line,      p);
+  write((u0 - u1) >> 1, out, N, line + mr, p);
+}
+
+// Radix-4 DIF step for a 2**12 FFT. Round is 5 to 0.
+KERNEL(GS) void dif4(int round, global int *in, global int *out) {
   FFT_SETUP(2);
   
   int2 u0 = read2(in, N, line,          p);
@@ -67,36 +75,8 @@ KERNEL(GS) void dif4Step(int round, global int *in, global int *out) {
   write2C(u2 - u3, out, N, line + mr * 3, p + e * 3);
 }
 
-/*
-KERNEL(GS) void difIniZeropad(global int *in, global int *out) {  
-  int u0 = readZeropad(in, width, j,      p);
-  int u1 = readZeropad(in, width, j + mr, p);
-  write(       u0 + u1, out, width, j,      p);
-  writeShifted(u0 - u1, out, N, j + mr, p + e);
-}
-
-KERNEL(GS) void difIniZeropadShifted(global int *in, global int *out) {  
-  int u0 = readZeropadShifted(in, width, j,      p + j);
-  int u1 = readZeropadShifted(in, width, j + mr, p + j + mr);
-  write(       u0 + u1, out, width, j,      p);
-  writeShifted(u0 - u1, out, N, j + mr, p + e);
-}
-*/
-
-// DIT step for a 2**12 FFT
-// round goes up from 0 to N-1.
-KERNEL(GS) void ditStep(int round, global long *in, global long *out) {
-  FFT_SETUP(1);
-
-  long u0 = read(in, N, line,      p);
-  long u1 = readC(in, N, line + mr, p + e);
-  write((u0 + u1) >> 1, out, N, line,      p);
-  write((u0 - u1) >> 1, out, N, line + mr, p);
-}
-
-// Radix-4 DIT step for a 2**12 FFT.
-// round is 0 to 5
-KERNEL(GS) void dit4Step(int round, global long *in, global long *out) {
+// Radix-4 DIT step for a 2**12 FFT. Round is 0 to 5.
+KERNEL(GS) void dit4(int round, global long *in, global long *out) {
   FFT_SETUP(2);
 
   long2 u0 = read2(in,  N, line,      p);
@@ -114,6 +94,22 @@ KERNEL(GS) void dit4Step(int round, global long *in, global long *out) {
   write2((u2 + u3) >> 2, out, N, line + mr,     p);
   write2((u2 - u3) >> 2, out, N, line + mr * 3, p);
 }
+
+/*
+KERNEL(GS) void difIniZeropad(global int *in, global int *out) {  
+  int u0 = readZeropad(in, width, j,      p);
+  int u1 = readZeropad(in, width, j + mr, p);
+  write(       u0 + u1, out, width, j,      p);
+  writeShifted(u0 - u1, out, N, j + mr, p + e);
+}
+
+KERNEL(GS) void difIniZeropadShifted(global int *in, global int *out) {  
+  int u0 = readZeropadShifted(in, width, j,      p + j);
+  int u1 = readZeropadShifted(in, width, j + mr, p + j + mr);
+  write(       u0 + u1, out, width, j,      p);
+  writeShifted(u0 - u1, out, N, j + mr, p + e);
+}
+*/
 
 /*
 KERNEL(GS) void ditFinalShifted(global int *in, global int *out) {
