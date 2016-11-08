@@ -50,14 +50,12 @@ int main(int argc, char **argv) {
   
   program.compileCL2(c, "conv.cl");
   
-  // K(program, difIniZeropad);
-  // K(program, difIniZeropadShifted);
   K(program, dif2);
   K(program, dif4);
+  K(program, dif8);
   
   K(program, dit2);
   K(program, dit4);
-  // K(program, ditFinalShifted);
 
   K(program, sq4k);
   
@@ -73,7 +71,7 @@ int main(int argc, char **argv) {
 
   int *data = new int[SIZE];
   
-  // srandom(0);
+  srandom(0);
   for (int i = 0; i < SIZE; ++i) { data[i] = (random() & 0xffffff) - (1 << 23); }
   time("random");
   
@@ -81,7 +79,7 @@ int main(int argc, char **argv) {
   Buf buf2(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(int) * SIZE, data);
   Buf bufTmp(c, CL_MEM_READ_WRITE, sizeof(int) * SIZE, 0);
   time("alloc gpu buffers");
-
+  
   for (int round = 11; round >= 0; round -= 2) {
     dif2.setArgs(round, buf2, bufTmp);
     queue.run(dif2, GS, SIZE / 2);
@@ -123,21 +121,38 @@ int main(int argc, char **argv) {
   
   for (int round = 9; round >= 0; round -= 2) {
     dif2.setArgs(round, buf2, bufTmp);
-    queue.run(dif2, GS, words);
+    queue.run(dif2, GS, SIZE / 2);
     dif2.setArgs(round - 1, bufTmp, buf2);
-    queue.run(dif2, GS, words);
+    queue.run(dif2, GS, SIZE / 2);
   }
 
   for (int round = 5; round >= 0; round -= 2) {
     dif4.setArgs(round, buf1, bufTmp);
-    queue.run(dif4, GS, words / 4);
+    queue.run(dif4, GS, SIZE / 8);
     dif4.setArgs(round - 1, bufTmp, buf1);
-    queue.run(dif4, GS, words / 4);
+    queue.run(dif4, GS, SIZE / 8);
   }
 
   if (!checkEqual(&queue, &buf1, &buf2, SIZE)) { exit(2); }
   time("OK DIF radix4 == radix2");
 
+  for (int round = 5; round >= 0; round -= 2) {
+    dif4.setArgs(round, buf1, bufTmp);
+    queue.run(dif4, GS, SIZE / 8);
+    dif4.setArgs(round - 1, bufTmp, buf1);
+    queue.run(dif4, GS, SIZE / 8);
+  }
+
+  for (int round = 3; round >= 0; round -= 2) {
+    dif8.setArgs(round, buf2, bufTmp);
+    queue.run(dif8, GS, SIZE / 32);
+    dif8.setArgs(round - 1, bufTmp, buf2);
+    queue.run(dif8, GS, SIZE / 32);
+  }
+
+  if (!checkEqual(&queue, &buf1, &buf2, SIZE)) { exit(3); }
+  time("OK DIF radix8 == radix4");
+  
   for (int round = 0; round < 6; round += 2) {
     dit4.setArgs(round, bufLong2, bufLongTmp);
     queue.run(dit4, GS, words / 4);
@@ -152,6 +167,8 @@ int main(int argc, char **argv) {
     }
   }
   time("OK DIT radix4");
+
+  
 
   for (int i = 0; i < 100; ++i) {
     for (int round = 11; round > 0; round -= 2) {
@@ -174,6 +191,17 @@ int main(int argc, char **argv) {
   }
   queue.finish();
   time("perf DIF4");
+
+  for (int i = 0; i < 100; ++i) {
+    for (int round = 3; round > 0; round -= 2) {
+      dif8.setArgs(round, buf1, bufTmp);
+      queue.run(dif8, GS, SIZE / 32);
+      dif8.setArgs(round - 1, bufTmp, buf1);
+      queue.run(dif8, GS, SIZE / 32);
+    }
+  }
+  queue.finish();
+  time("perf DIF8");
 
   for (int i = 0; i < 100; ++i) {
     for (int round = 0; round < 12; round += 2) {

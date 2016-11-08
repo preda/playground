@@ -5,6 +5,7 @@
 
 #define ADDSUBI(a, b) {  int2 tmp = a; a = tmp + b; b = tmp - b; }
 #define ADDSUBL(a, b) { long2 tmp = a; a = tmp + b; b = tmp - b; }
+#define ADDSUB4(a, b) { int4 tmp = a; a = tmp + b; b = tmp - b; }
 
 #define GS 256
 
@@ -33,6 +34,21 @@ void _OVL write(long u, global long *out, uint N, uint line, uint p) { out[cut8(
 FUNCS(int)
 FUNCS(long)
 
+int4 read4(global int *in, uint N, uint line, uint p) {
+  return (int4) (readC(in, N, line, p),
+                 readC(in, N, line, p + (1 << (N - 2))),
+                 readC(in, N, line, p + (1 << (N - 1))),
+                 readC(in, N, line, p + 3 * (1 << (N - 2)))
+                 );
+}
+
+void write4(int4 u, global int *out, uint N, uint line, uint p) {
+  writeC(u.x, out, N, line, p);
+  writeC(u.y, out, N, line, p + (1 << (N - 2)));
+  writeC(u.z, out, N, line, p + (1 << (N - 2)) * 2);
+  writeC(u.w, out, N, line, p + (1 << (N - 2)) * 3);
+}
+
 int readZeropad(global int *in, int N, int line, int p) { return (p & (1 << (N - 1))) ? 0 : readC(in, N - 1, line, p); }
 
 // Radix-2 DIF step for a 2**12 FFT. round is 11 to 0.
@@ -41,7 +57,7 @@ KERNEL(GS) void dif2(int round, global int *in, global int *out) {
   
   int u0 =   read(in, N, line,      p);
   int u1 =   read(in, N, line + mr, p);
-  write(u0 + u1, out, N, line,      p);
+  write( u0 + u1, out, N, line,      p);
   writeC(u0 - u1, out, N, line + mr, p + e);
 }
 
@@ -49,7 +65,7 @@ KERNEL(GS) void dif2(int round, global int *in, global int *out) {
 KERNEL(GS) void dit2(int round, global long *in, global long *out) {
   FFT_SETUP(1);
 
-  long u0 = read(in, N, line,      p);
+  long u0 = read( in, N, line,      p);
   long u1 = readC(in, N, line + mr, p + e);
   write((u0 + u1) >> 1, out, N, line,      p);
   write((u0 - u1) >> 1, out, N, line + mr, p);
@@ -60,19 +76,56 @@ KERNEL(GS) void dif4(int round, global int *in, global int *out) {
   FFT_SETUP(2);
   
   int2 u0 = read2(in, N, line,          p);
-  int2 u2 = read2(in, N, line + mr * 2, p);
-  ADDSUBI(u0, u2);
-  
   int2 u1 = read2(in, N, line + mr,     p);
+  int2 u2 = read2(in, N, line + mr * 2, p);
   int2 u3 = read2(in, N, line + mr * 3, p);
+  
+  ADDSUBI(u0, u2);
   ADDSUBI(u1, u3);
   
-  write2(u0 + u1, out, N, line,      p);
+  write2( u0 + u1, out, N, line,      p);
   write2C(u0 - u1, out, N, line + mr, p + e * 2);
   
   u3 = shift(u3, 1);
   write2C(u2 + u3, out, N, line + mr * 2, p + e);
   write2C(u2 - u3, out, N, line + mr * 3, p + e * 3);
+}
+
+KERNEL(GS) void dif8(int round, global int *in, global int *out) {
+  FFT_SETUP(3);
+  int4 u0 = read4(in, N, line, p);
+  int4 u1 = read4(in, N, line + mr * 1, p);
+  int4 u2 = read4(in, N, line + mr * 2, p);
+  int4 u3 = read4(in, N, line + mr * 3, p);
+  int4 u4 = read4(in, N, line + mr * 4, p);
+  int4 u5 = read4(in, N, line + mr * 5, p);
+  int4 u6 = read4(in, N, line + mr * 6, p);
+  int4 u7 = read4(in, N, line + mr * 7, p);
+
+  ADDSUB4(u0, u4);
+  ADDSUB4(u1, u5);
+  ADDSUB4(u2, u6);
+  ADDSUB4(u3, u7);
+
+  u5 = shift(u5, 1);
+  u6 = shift(u6, 2);
+  u7 = shift(u7, 3);
+  
+  ADDSUB4(u0, u2);
+  ADDSUB4(u1, u3);
+  ADDSUB4(u4, u6);
+  ADDSUB4(u5, u7);
+  u3 = shift(u3, 2);
+  u7 = shift(u7, 2);
+
+  write4(u0 + u1, out, N, line,          p);
+  write4(u0 - u1, out, N, line + mr,     p + e * 4);
+  write4(u2 + u3, out, N, line + mr * 2, p + e * 2);
+  write4(u2 - u3, out, N, line + mr * 3, p + e * 6);
+  write4(u4 + u5, out, N, line + mr * 4, p + e * 1);
+  write4(u4 - u5, out, N, line + mr * 5, p + e * 5);
+  write4(u6 + u7, out, N, line + mr * 6, p + e * 3);
+  write4(u6 - u7, out, N, line + mr * 7, p + e * 7);
 }
 
 // Radix-4 DIT step for a 2**12 FFT. Round is 0 to 5.
@@ -94,6 +147,16 @@ KERNEL(GS) void dit4(int round, global long *in, global long *out) {
   write2((u2 + u3) >> 2, out, N, line + mr,     p);
   write2((u2 - u3) >> 2, out, N, line + mr * 3, p);
 }
+
+
+
+
+
+
+
+
+
+
 
 /*
 KERNEL(GS) void difIniZeropad(global int *in, global int *out) {  
