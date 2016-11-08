@@ -93,39 +93,24 @@ KERNEL(GS) void dif4(int round, global int *in, global int *out) {
 
 KERNEL(GS) void dif8(int round, global int *in, global int *out) {
   FFT_SETUP(3);
-  int4 u0 = read4(in, N, line, p);
-  int4 u1 = read4(in, N, line + mr * 1, p);
-  int4 u2 = read4(in, N, line + mr * 2, p);
-  int4 u3 = read4(in, N, line + mr * 3, p);
-  int4 u4 = read4(in, N, line + mr * 4, p);
-  int4 u5 = read4(in, N, line + mr * 5, p);
-  int4 u6 = read4(in, N, line + mr * 6, p);
-  int4 u7 = read4(in, N, line + mr * 7, p);
 
-  ADDSUB4(u0, u4);
-  ADDSUB4(u1, u5);
-  ADDSUB4(u2, u6);
-  ADDSUB4(u3, u7);
+  int4 u[8];
+  for (int i = 0; i < 8; ++i) { u[i] = read4(in, N, line + mr * i, p); }
+  for (int i = 0; i < 4; ++i) { ADDSUB4(u[i], u[i + 4]); }
+  for (int i = 1; i < 4; ++i) { u[i + 4] = shift(u[i + 4], i); }
 
-  u5 = shift(u5, 1);
-  u6 = shift(u6, 2);
-  u7 = shift(u7, 3);
-  
-  ADDSUB4(u0, u2);
-  ADDSUB4(u1, u3);
-  ADDSUB4(u4, u6);
-  ADDSUB4(u5, u7);
-  u3 = shift(u3, 2);
-  u7 = shift(u7, 2);
+  ADDSUB4(u[0], u[2]);
+  ADDSUB4(u[1], u[3]);
+  ADDSUB4(u[4], u[6]);
+  ADDSUB4(u[5], u[7]);
+  u[3] = shift(u[3], 2);
+  u[7] = shift(u[7], 2);
 
-  write4(u0 + u1, out, N, line,          p);
-  write4(u0 - u1, out, N, line + mr,     p + e * 4);
-  write4(u2 + u3, out, N, line + mr * 2, p + e * 2);
-  write4(u2 - u3, out, N, line + mr * 3, p + e * 6);
-  write4(u4 + u5, out, N, line + mr * 4, p + e * 1);
-  write4(u4 - u5, out, N, line + mr * 5, p + e * 5);
-  write4(u6 + u7, out, N, line + mr * 6, p + e * 3);
-  write4(u6 - u7, out, N, line + mr * 7, p + e * 7);
+  uint revbin[4] = {0, 2, 1, 3};
+  for (int i = 0; i < 8; i += 2) {
+    write4(u[i] + u[i + 1], out, N, line + mr * i,       p + e * revbin[i >> 1]);
+    write4(u[i] - u[i + 1], out, N, line + mr * (i + 1), p + e * (revbin[i >> 1] + 4));
+  }
 }
 
 // Radix-4 DIT step for a 2**12 FFT. Round is 0 to 5.
