@@ -6,6 +6,7 @@
 #define ADDSUBI(a, b) {  int2 tmp = a; a = tmp + b; b = tmp - b; }
 #define ADDSUBL(a, b) { long2 tmp = a; a = tmp + b; b = tmp - b; }
 #define ADDSUB4(a, b) { int4 tmp = a; a = tmp + b; b = tmp - b; }
+#define SHIFT(u, e) u = shift(u, e);
 
 #define GS 256
 
@@ -95,16 +96,16 @@ KERNEL(GS) void dif8(int round, global int *in, global int *out) {
   FFT_SETUP(3);
 
   int4 u[8];
+  
   for (int i = 0; i < 8; ++i) { u[i] = read4(in, N, line + mr * i, p); }
   for (int i = 0; i < 4; ++i) { ADDSUB4(u[i], u[i + 4]); }
-  for (int i = 1; i < 4; ++i) { u[i + 4] = shift(u[i + 4], i); }
+  for (int i = 1; i < 4; ++i) { SHIFT(u[i + 4], i); }
 
-  ADDSUB4(u[0], u[2]);
-  ADDSUB4(u[1], u[3]);
-  ADDSUB4(u[4], u[6]);
-  ADDSUB4(u[5], u[7]);
-  u[3] = shift(u[3], 2);
-  u[7] = shift(u[7], 2);
+  for (int i = 0; i < 8; i += 4) {
+    ADDSUB4(u[0 + i], u[2 + i]);
+    ADDSUB4(u[1 + i], u[3 + i]);
+    SHIFT(u[3 + i], 2);
+  }
 
   uint revbin[4] = {0, 2, 1, 3};
   for (int i = 0; i < 8; i += 2) {
