@@ -35,20 +35,19 @@ void _OVL write(long u, global long *out, uint N, uint line, uint p) { out[cut8(
 FUNCS(int)
 FUNCS(long)
 
+#define QW (1 << (N - 2))
+
 int4 read4(global int *in, uint N, uint line, uint p) {
-  return (int4) (readC(in, N, line, p),
-                 readC(in, N, line, p + (1 << (N - 2))),
-                 readC(in, N, line, p + (1 << (N - 1))),
-                 readC(in, N, line, p + 3 * (1 << (N - 2)))
-                 );
+  int u[4];
+  for (int i = 0; i < 4; ++i) { u[i] = readC(in, N, line, p + QW * i); }
+  return (int4)(u[0], u[1], u[2], u[3]);
 }
 
 void write4(int4 u, global int *out, uint N, uint line, uint p) {
-  writeC(u.x, out, N, line, p);
-  writeC(u.y, out, N, line, p + (1 << (N - 2)));
-  writeC(u.z, out, N, line, p + (1 << (N - 2)) * 2);
-  writeC(u.w, out, N, line, p + (1 << (N - 2)) * 3);
+  for (int i = 0; i < 4; ++i) { writeC((int[4]){u.x, u.y, u.z, u.w}[i], out, N, line, p + QW * i); }
 }
+
+#undef QW
 
 int readZeropad(global int *in, int N, int line, int p) { return (p & (1 << (N - 1))) ? 0 : readC(in, N - 1, line, p); }
 
