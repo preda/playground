@@ -57,6 +57,8 @@ int main(int argc, char **argv) {
   K(program, dit2);
   K(program, dit4);
   K(program, dit8);
+  K(program, dit8d);
+  
 
   K(program, sq4k);
   
@@ -181,6 +183,17 @@ int main(int argc, char **argv) {
   }
   queue.finish();
   time("perf DIT8");
+
+  for (int i = 0; i < 100; ++i) {
+    for (int round = 0; round < 4; round += 2) {
+      dit8d.setArgs(round, bufLong1, bufLongTmp);
+      queue.run(dit8d, GS, SIZE / 32);
+      dit8d.setArgs(round + 1, bufLongTmp, bufLong1);
+      queue.run(dit8d, GS, SIZE / 32);
+    }
+  }
+  queue.finish();
+  time("perf DIT8d");
   
 
   /*

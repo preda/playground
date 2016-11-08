@@ -6,6 +6,7 @@
 #define ADDSUBI(a, b) {  int2 tmp = a; a = tmp + b; b = tmp - b; }
 #define ADDSUBH(a, b)  { long2 tmp = a; a = (tmp + b) >> 1; b = (tmp - b) >> 1; }
 #define ADDSUB4H(a, b) { long4 tmp = a; a = (tmp + b) >> 1; b = (tmp - b) >> 1; }
+#define ADDSUB4D(a, b) { double4 tmp = a; a = tmp + b; b = tmp - b; }
 #define ADDSUB4(a, b) { int4 tmp = a; a = tmp + b; b = tmp - b; }
 #define SHIFT(u, e) u = shift(u, e);
 
@@ -30,11 +31,14 @@ unsigned cut8(unsigned x) { return x & 0x1fffffff; }
 
 int  _OVL read(global int  *in, uint N, uint line, uint p) { return in[cut4((line << N) + p)]; }
 long _OVL read(global long *in, uint N, uint line, uint p) { return in[cut8((line << N) + p)]; }
+double _OVL read(global double *in, uint N, uint line, uint p) { return in[cut8((line << N) + p)]; }
 void _OVL write(int u,  global int  *out, uint N, uint line, uint p) { out[cut4((line << N) + p)] = u; }
 void _OVL write(long u, global long *out, uint N, uint line, uint p) { out[cut8((line << N) + p)] = u; }
+void _OVL write(double u, global double *out, uint N, uint line, uint p) { out[cut8((line << N) + p)] = u; }
 
 FUNCS(int)
 FUNCS(long)
+FUNCS(double)
 
 #define QW (1 << (N - 2))
 
@@ -56,6 +60,16 @@ long4 _OVL read4(global long *in, uint N, uint line, uint p) {
 
 void _OVL write4(long4 u, global long *out, uint N, uint line, uint p) {
   for (int i = 0; i < 4; ++i) { writeC((long[4]){u.x, u.y, u.z, u.w}[i], out, N, line, p + QW * i); }
+}
+
+double4 _OVL read4(global double *in, uint N, uint line, uint p) {
+  double u[4];
+  for (int i = 0; i < 4; ++i) { u[i] = readC(in, N, line, p + QW * i); }
+  return (double4)(u[0], u[1], u[2], u[3]);
+}
+
+void _OVL write4(double4 u, global double *out, uint N, uint line, uint p) {
+  for (int i = 0; i < 4; ++i) { writeC((double[4]){u.x, u.y, u.z, u.w}[i], out, N, line, p + QW * i); }
 }
 
 #undef QW
@@ -161,6 +175,28 @@ KERNEL(GS) void dit8(int round, global long *in, global long *out) {
   for (int i = 0; i < 8; i += 2) {
     write4((u[i] + u[i + 1]) >> 1, out, N, line + mr * revbin[i],     p);
     write4((u[i] - u[i + 1]) >> 1, out, N, line + mr * revbin[i + 1], p);
+  }
+}
+
+// Radix-8 DIT step. round is 0 to 3.
+KERNEL(GS) void dit8d(int round, global double *in, global double *out) {
+  FFT_SETUP(3);
+  double4 u[8];
+  uint revbin[8] = {0, 4, 2, 6, 1, 5, 3, 7};
+
+  for (int i = 0; i < 8; ++i) { u[revbin[i]] = read4(in, N, line + mr * i, p + e * revbin[i]); }
+  for (int i = 0; i < 4; ++i) { ADDSUB4D(u[i], u[i + 4]); }
+  for (int i = 1; i < 4; ++i) { SHIFT(u[i + 4], -i); }
+
+  for (int i = 0; i < 8; i += 4) {
+    ADDSUB4D(u[0 + i], u[2 + i]);
+    ADDSUB4D(u[1 + i], u[3 + i]);
+    SHIFT(u[3 + i], -2);
+  }
+
+  for (int i = 0; i < 8; i += 2) {
+    write4(u[i] + u[i + 1], out, N, line + mr * revbin[i],     p);
+    write4(u[i] - u[i + 1], out, N, line + mr * revbin[i + 1], p);
   }
 }
 
