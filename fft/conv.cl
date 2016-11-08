@@ -120,34 +120,12 @@ KERNEL(GS) void dit4(int round, global long *in, global long *out) {
   write2((u2 - u3) >> 1, out, N, line + mr * 3, p);
 }
 
-// Radix-8 DIT step. round is 0 to 3.
-KERNEL(GS) void dit8(int round, global long *in, global long *out) {
-  FFT_SETUP(3);
-  long4 u[8];
-  uint revbin[8] = {0, 4, 2, 6, 1, 5, 3, 7};
-  for (int i = 0; i < 8; ++i) { u[revbin[i]] = read4(in, N, line + mr * i, p + e * revbin[i]); }
-  for (int i = 0; i < 4; ++i) { ADDSUB4H(u[i], u[i + 4]); }
-  SHIFT(u[5], -1);
-  SHIFT(u[6], -2);
-  SHIFT(u[7], -3);
-  for (int i = 0; i < 8; i += 4) {
-    ADDSUB4H(u[0 + i], u[2 + i]);
-    ADDSUB4H(u[1 + i], u[3 + i]);
-    SHIFT(u[3 + i], -2);
-  }
-
-  for (int i = 0; i < 8; i += 2) {
-    write4((u[i] + u[i + 1]) >> 1, out, N, line + mr * revbin[i],     p);
-    write4((u[i] - u[i + 1]) >> 1, out, N, line + mr * revbin[i + 1], p);
-  }
-}
-
 // Radix-8 DIF step. round is 3 to 0.
 KERNEL(GS) void dif8(int round, global int *in, global int *out) {
   FFT_SETUP(3);
-
   int4 u[8];
-  
+  uint revbin[8] = {0, 4, 2, 6, 1, 5, 3, 7};
+
   for (int i = 0; i < 8; ++i) { u[i] = read4(in, N, line + mr * i, p); }
   for (int i = 0; i < 4; ++i) { ADDSUB4(u[i], u[i + 4]); }
   for (int i = 1; i < 4; ++i) { SHIFT(u[i + 4], i); }
@@ -158,10 +136,31 @@ KERNEL(GS) void dif8(int round, global int *in, global int *out) {
     SHIFT(u[3 + i], 2);
   }
 
-  uint revbin[4] = {0, 2, 1, 3};
   for (int i = 0; i < 8; i += 2) {
-    write4(u[i] + u[i + 1], out, N, line + mr * i,       p + e * revbin[i >> 1]);
-    write4(u[i] - u[i + 1], out, N, line + mr * (i + 1), p + e * (revbin[i >> 1] + 4));
+    write4(u[i] + u[i + 1], out, N, line + mr * i,       p + e * revbin[i]);
+    write4(u[i] - u[i + 1], out, N, line + mr * (i + 1), p + e * revbin[i + 1]);
+  }
+}
+
+// Radix-8 DIT step. round is 0 to 3.
+KERNEL(GS) void dit8(int round, global long *in, global long *out) {
+  FFT_SETUP(3);
+  long4 u[8];
+  uint revbin[8] = {0, 4, 2, 6, 1, 5, 3, 7};
+
+  for (int i = 0; i < 8; ++i) { u[revbin[i]] = read4(in, N, line + mr * i, p + e * revbin[i]); }
+  for (int i = 0; i < 4; ++i) { ADDSUB4H(u[i], u[i + 4]); }
+  for (int i = 1; i < 4; ++i) { SHIFT(u[i + 4], -i); }
+
+  for (int i = 0; i < 8; i += 4) {
+    ADDSUB4H(u[0 + i], u[2 + i]);
+    ADDSUB4H(u[1 + i], u[3 + i]);
+    SHIFT(u[3 + i], -2);
+  }
+
+  for (int i = 0; i < 8; i += 2) {
+    write4((u[i] + u[i + 1]) >> 1, out, N, line + mr * revbin[i],     p);
+    write4((u[i] - u[i + 1]) >> 1, out, N, line + mr * revbin[i + 1], p);
   }
 }
 
