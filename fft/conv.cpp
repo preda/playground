@@ -56,6 +56,7 @@ int main(int argc, char **argv) {
   
   K(program, dit2);
   K(program, dit4);
+  K(program, dit8);
 
   K(program, sq4k);
   
@@ -76,34 +77,34 @@ int main(int argc, char **argv) {
   time("random");
   
   Buf buf1(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(int) * SIZE, data);
-  Buf buf2(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(int) * SIZE, data);
   Buf bufTmp(c, CL_MEM_READ_WRITE, sizeof(int) * SIZE, 0);
   time("alloc gpu buffers");
-  
-  for (int round = 11; round >= 0; round -= 2) {
-    dif2.setArgs(round, buf2, bufTmp);
-    queue.run(dif2, GS, SIZE / 2);
-    dif2.setArgs(round - 1, bufTmp, buf2);
-    queue.run(dif2, GS, SIZE / 2);
+
+  for (int round = 3; round >= 0; round -= 2) {
+    dif8.setArgs(round, buf1, bufTmp);
+    queue.run(dif8, GS, SIZE / 32);
+    dif8.setArgs(round - 1, bufTmp, buf1);
+    queue.run(dif8, GS, SIZE / 32);
   }
   
   std::unique_ptr<long[]> tmpLong1(new long[SIZE]);
   {
     std::unique_ptr<int[]> tmp1(new int[SIZE]);
-    queue.readBlocking(&buf2, 0, sizeof(int) * SIZE, tmp1.get());
+    queue.readBlocking(&buf1, 0, sizeof(int) * SIZE, tmp1.get());
     for (int i = 0; i < SIZE; ++i) {
       tmpLong1[i] = tmp1[i];
     }
   }
   Buf bufLong1(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(long) * SIZE, tmpLong1.get());
-  Buf bufLong2(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(long) * SIZE, tmpLong1.get());
   Buf bufLongTmp(c, CL_MEM_READ_WRITE, sizeof(long) * SIZE, 0);
-  for (int round = 0; round < 12; round += 2) {
-    dit2.setArgs(round, bufLong1, bufLongTmp);
-    queue.run(dit2, GS, SIZE / 2);
-    dit2.setArgs(round + 1, bufLongTmp, bufLong1);
-    queue.run(dit2, GS, SIZE / 2);
+
+  for (int round = 0; round < 4; round += 2) {
+    dit8.setArgs(round, bufLong1, bufLongTmp);
+    queue.run(dit8, GS, SIZE / 32);
+    dit8.setArgs(round + 1, bufLongTmp, bufLong1);
+    queue.run(dit8, GS, SIZE / 32);
   }
+
   queue.readBlocking(&bufLong1, 0, sizeof(long) * SIZE, tmpLong1.get());
   int err = 0;
   for (int i = 0; i < SIZE; ++i) {
@@ -112,14 +113,12 @@ int main(int argc, char **argv) {
       if (++err >= 10) { exit(1); }
     }
   }  
-  time("OK FFT round-trip");
+  time("OK FFT radix8 round-trip");
 
-  dif2.setArgs(11, buf1, bufTmp);
-  queue.run(dif2, GS, words);
-  dif2.setArgs(10, bufTmp, buf2);
-  queue.run(dif2, GS, words);
+  Buf buf2(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(int) * SIZE, data);  
   
-  for (int round = 9; round >= 0; round -= 2) {
+  /*
+  for (int round = 11; round >= 0; round -= 2) {
     dif2.setArgs(round, buf2, bufTmp);
     queue.run(dif2, GS, SIZE / 2);
     dif2.setArgs(round - 1, bufTmp, buf2);
@@ -135,7 +134,9 @@ int main(int argc, char **argv) {
 
   if (!checkEqual(&queue, &buf1, &buf2, SIZE)) { exit(2); }
   time("OK DIF radix4 == radix2");
+  */
 
+  /*
   for (int round = 5; round >= 0; round -= 2) {
     dif4.setArgs(round, buf1, bufTmp);
     queue.run(dif4, GS, SIZE / 8);
@@ -152,7 +153,10 @@ int main(int argc, char **argv) {
 
   if (!checkEqual(&queue, &buf1, &buf2, SIZE)) { exit(3); }
   time("OK DIF radix8 == radix4");
+  */
   
+  /*
+  Buf bufLong2(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(long) * SIZE, tmpLong1.get());
   for (int round = 0; round < 6; round += 2) {
     dit4.setArgs(round, bufLong2, bufLongTmp);
     queue.run(dit4, GS, words / 4);
@@ -167,7 +171,7 @@ int main(int argc, char **argv) {
     }
   }
   time("OK DIT radix4");
-
+  */
   
 
   for (int i = 0; i < 100; ++i) {
@@ -224,6 +228,17 @@ int main(int argc, char **argv) {
   }
   queue.finish();
   time("perf DIT4");
+
+  for (int i = 0; i < 100; ++i) {
+    for (int round = 0; round < 4; round += 2) {
+      dit8.setArgs(round, bufLong1, bufLongTmp);
+      queue.run(dit8, GS, SIZE / 32);
+      dit8.setArgs(round + 1, bufLongTmp, bufLong1);
+      queue.run(dit8, GS, SIZE / 32);
+    }
+  }
+  queue.finish();
+  time("perf DIT8");
   
 
   /*
