@@ -12,9 +12,9 @@
 
 #define GS 256
 
-#define FFT_SETUP(radixExp) \
-const uint N = 12;\
-uint groupsPerLine = (1 << (N + 1 - radixExp)) / GS;   \
+#define FFT_SETUP(iniN, radixExp) \
+uint N = iniN; \
+uint groupsPerLine = (1 << (N - (radixExp - 1))) / GS;  \
 uint k = get_group_id(0) & (groupsPerLine - 1);\
 uint g = get_group_id(0) / groupsPerLine;      \
 uint mr = 1 << (round * radixExp);\
@@ -62,14 +62,34 @@ void _OVL write4(long4 u, global long *out, uint N, uint line, uint p) {
   for (int i = 0; i < 4; ++i) { writeC((long[4]){u.x, u.y, u.z, u.w}[i], out, N, line, p + QW * i); }
 }
 
+void _OVL write4NC(long4 u, global long *out, uint N, uint line, uint p) {
+  for (int i = 0; i < 4; ++i) { write((long[4]){u.x, u.y, u.z, u.w}[i], out, N, line, p + QW * i); }
+}
+
 double4 _OVL read4(global double *in, uint N, uint line, uint p) {
   double u[4];
   for (int i = 0; i < 4; ++i) { u[i] = readC(in, N, line, p + QW * i); }
   return (double4)(u[0], u[1], u[2], u[3]);
 }
 
+long4 _OVL read4NC(global long *in, uint N, uint line, uint p) {
+  long u[4];
+  for (int i = 0; i < 4; ++i) { u[i] = read(in, N, line, p + QW * i); }
+  return (long4)(u[0], u[1], u[2], u[3]);
+}
+
+double4 _OVL read4NC(global double *in, uint N, uint line, uint p) {
+  double u[4];
+  for (int i = 0; i < 4; ++i) { u[i] = read(in, N, line, p + QW * i); }
+  return (double4)(u[0], u[1], u[2], u[3]);
+}
+
 void _OVL write4(double4 u, global double *out, uint N, uint line, uint p) {
   for (int i = 0; i < 4; ++i) { writeC((double[4]){u.x, u.y, u.z, u.w}[i], out, N, line, p + QW * i); }
+}
+
+void _OVL write4NC(double4 u, global double *out, uint N, uint line, uint p) {
+  for (int i = 0; i < 4; ++i) { write((double[4]){u.x, u.y, u.z, u.w}[i], out, N, line, p + QW * i); }
 }
 
 #undef QW
@@ -78,7 +98,7 @@ int readZeropad(global int *in, int N, int line, int p) { return (p & (1 << (N -
 
 // Radix-2 DIF step for a 2**12 FFT. round is 11 to 0.
 KERNEL(GS) void dif2(int round, global int *in, global int *out) {
-  FFT_SETUP(1);
+  FFT_SETUP(12, 1);
   
   int u0 =   read(in, N, line,      p);
   int u1 =   read(in, N, line + mr, p);
@@ -88,7 +108,7 @@ KERNEL(GS) void dif2(int round, global int *in, global int *out) {
 
 // Radix-2 DIT step for a 2**12 FFT. Round is 0 to 11.
 KERNEL(GS) void dit2(int round, global long *in, global long *out) {
-  FFT_SETUP(1);
+  FFT_SETUP(12, 1);
 
   long u0 = read( in, N, line,      p);
   long u1 = readC(in, N, line + mr, p + e);
@@ -98,7 +118,7 @@ KERNEL(GS) void dit2(int round, global long *in, global long *out) {
 
 // Radix-4 DIF step for a 2**12 FFT. Round is 5 to 0.
 KERNEL(GS) void dif4(int round, global int *in, global int *out) {
-  FFT_SETUP(2);
+  FFT_SETUP(12, 2);
   
   int2 u0 = read2(in, N, line,          p);
   int2 u1 = read2(in, N, line + mr,     p);
@@ -118,7 +138,7 @@ KERNEL(GS) void dif4(int round, global int *in, global int *out) {
 
 // Radix-4 DIT step for a 2**12 FFT. Round is 0 to 5.
 KERNEL(GS) void dit4(int round, global long *in, global long *out) {
-  FFT_SETUP(2);
+  FFT_SETUP(12, 2);
 
   long2 u0 = read2(in,  N, line,      p);
   long2 u2 = read2C(in, N, line + mr, p + e * 2);  
@@ -136,7 +156,7 @@ KERNEL(GS) void dit4(int round, global long *in, global long *out) {
 
 // Radix-8 DIF step. round is 3 to 0.
 KERNEL(GS) void dif8(int round, global int *in, global int *out) {
-  FFT_SETUP(3);
+  FFT_SETUP(12, 3);
   int4 u[8];
   uint revbin[8] = {0, 4, 2, 6, 1, 5, 3, 7};
 
@@ -158,11 +178,12 @@ KERNEL(GS) void dif8(int round, global int *in, global int *out) {
 
 // Radix-8 DIT step. round is 0 to 3.
 KERNEL(GS) void dit8(int round, global long *in, global long *out) {
-  FFT_SETUP(3);
+  FFT_SETUP(12, 3);
   long4 u[8];
   uint revbin[8] = {0, 4, 2, 6, 1, 5, 3, 7};
 
-  for (int i = 0; i < 8; ++i) { u[revbin[i]] = read4(in, N, line + mr * i, p + e * revbin[i]); }
+  u[0] = read4NC(in, N, line, p);
+  for (int i = 1; i < 8; ++i) { u[i] = read4(in, N, line + mr * revbin[i], p + e * i); }
   for (int i = 0; i < 4; ++i) { ADDSUB4H(u[i], u[i + 4]); }
   for (int i = 1; i < 4; ++i) { SHIFT(u[i + 4], -i); }
 
@@ -171,20 +192,18 @@ KERNEL(GS) void dit8(int round, global long *in, global long *out) {
     ADDSUB4H(u[1 + i], u[3 + i]);
     SHIFT(u[3 + i], -2);
   }
-
-  for (int i = 0; i < 8; i += 2) {
-    write4((u[i] + u[i + 1]) >> 1, out, N, line + mr * revbin[i],     p);
-    write4((u[i] - u[i + 1]) >> 1, out, N, line + mr * revbin[i + 1], p);
-  }
+  for (int i = 0; i < 8; i += 2) { ADDSUB4H(u[i], u[i + 1]); }
+  for (int i = 0; i < 8; ++i) { write4NC(u[i], out, N, line + mr * revbin[i], p); }
 }
 
 // Radix-8 DIT step. round is 0 to 3.
 KERNEL(GS) void dit8d(int round, global double *in, global double *out) {
-  FFT_SETUP(3);
+  FFT_SETUP(11, 3);
   double4 u[8];
   uint revbin[8] = {0, 4, 2, 6, 1, 5, 3, 7};
 
-  for (int i = 0; i < 8; ++i) { u[revbin[i]] = read4(in, N, line + mr * i, p + e * revbin[i]); }
+  u[0] = read4NC(in, N, line, p);
+  for (int i = 1; i < 8; ++i) { u[i] = read4(in, N, line + mr * revbin[i], p + e * i); }
   for (int i = 0; i < 4; ++i) { ADDSUB4D(u[i], u[i + 4]); }
   for (int i = 1; i < 4; ++i) { SHIFT(u[i + 4], -i); }
 
@@ -194,13 +213,29 @@ KERNEL(GS) void dit8d(int round, global double *in, global double *out) {
     SHIFT(u[3 + i], -2);
   }
 
-  for (int i = 0; i < 8; i += 2) {
-    write4(u[i] + u[i + 1], out, N, line + mr * revbin[i],     p);
-    write4(u[i] - u[i + 1], out, N, line + mr * revbin[i + 1], p);
-  }
+  for (int i = 0; i < 8; i += 2) { ADDSUB4D(u[i], u[i + 1]); }
+  for (int i = 0; i < 8; ++i) { write4NC(u[i], out, N, line + mr * revbin[i], p); }
 }
 
-
+KERNEL(GS) void dit8try(int round, global double *io) {
+  FFT_SETUP(10, 3);
+  double4 u[8];
+  uint revbin[8] = {0, 4, 2, 6, 1, 5, 3, 7};
+  u[0] = read4NC(io, N, line, p);
+  for (int i = 1; i < 8; ++i) { u[i] = read4(io, N, line + mr * revbin[i], p + e * i); }
+  for (int i = 0; i < 4; ++i) { ADDSUB4D(u[i], u[i + 4]); }
+  SHIFT(u[5], -1);
+  SHIFT(u[6], -2);
+  SHIFT(u[7], -3);
+  for (int i = 0; i < 8; i += 4) {
+    ADDSUB4D(u[0 + i], u[2 + i]);
+    ADDSUB4D(u[1 + i], u[3 + i]);
+    SHIFT(u[3 + i], -2);
+  }
+  for (int i = 0; i < 8; i += 2) { ADDSUB4D(u[i], u[i + 1]); }
+  bar();
+  for (int i = 0; i < 8; ++i) { write4NC(u[i], io, N, line + mr * revbin[i], p); }
+}
 
 
 
@@ -324,8 +359,6 @@ KERNEL(64) void sq64(global int *in, global long *out) {
   ldsWriteShifted(
 }
 */
-
-int2 sumdiff(int x, int y) { return (int2) (x + y, x - y); }
 
 // 1 int x int -> long multiply
 long mul(int x, int y) { return x * (long) y; }
