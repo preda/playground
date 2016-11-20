@@ -60,7 +60,7 @@ int main(int argc, char **argv) {
   K(program, dit8d);
   
 
-  K(program, sq4k);
+  K(program, sq2k);
   
   time("Kernels compilation");
 
@@ -83,6 +83,20 @@ int main(int argc, char **argv) {
   Buf bufTmp(c, CL_MEM_READ_WRITE, sizeof(int) * SIZE, 0);
   time("alloc gpu buffers");
 
+  sq2k.setArgs(buf1);
+  queue.run(sq2k, 256, 256 * 2048);
+  queue.finish();
+  time("sq2k ini");
+
+  for (int i = 0; i < 10; ++i) {
+    sq2k.setArgs(buf1);
+    queue.run(sq2k, 256, 256 * 2048);
+  }
+  queue.finish();
+  time("sq2k");
+
+  exit(0);
+  
   for (int round = 3; round >= 0; round -= 2) {
     dif8.setArgs(round, buf1, bufTmp);
     queue.run(dif8, GS, SIZE / 32);
