@@ -88,7 +88,7 @@ int main(int argc, char **argv) {
   queue.finish();
   time("sq2k ini");
 
-  for (int i = 0; i < 10; ++i) {
+  for (int i = 0; i < 100; ++i) {
     sq2k.setArgs(buf1);
     queue.run(sq2k, 256, 256 * 2048);
   }

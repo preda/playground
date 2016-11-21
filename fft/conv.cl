@@ -232,64 +232,7 @@ KERNEL(GS) void dit8d(int round, global double *in, global double *out) {
   for (int i = 0; i < 8; ++i) { write4NC(u[i], out, N, line + mr * revbin[i], p); }
 }
 
-void ldsWriteShifted(int u, local int *lds, int width, uint line, uint p) {
-  lds[line * width + (p & (width - 1))] = (p < width) ? u : -u;
-}
-
-void ldsWriteWarped(int u, local int *lds, int width, uint line, uint p) {
-  lds[line * width + ((p + line) & (width - 1))] = u;
-}
-
 /*
-KERNEL(GS) void sq4k(global int *in, global int *out) {
-  // Each group handles one contiguous line of 4k ints, stored in LDS.
-  local int lds[64 * 64];
-  
-  // First, load 4k ints from global into LDS, transposed. Warp to avoid bank conflicts.
-  for (int i = 0; i < 16; ++i) {
-    uint line = get_local_id(0) & 63;
-    lds[line * 64 + ((i*4 + (get_local_id(0) >> 6) + line) & 63)] =
-      in[get_group_id(0) * 64 * 64 + i * 64 * 4 + get_local_id(0)];
-  }
-
-  //De-warp.
-  bar();
-  for (int i = 0; i < 16; ++i) {
-    uint line = i * 4 + (get_local_id(0) >> 6);
-    lds[i * 64 * 4 + get_local_id(0)] = lds[line * 64 + ((line + get_local_id(0)) & 63)];
-  }
-
-  // 6 rounds of DIF FFT. The last round applies warp.
-  uint p = get_local_id(0) & 63;
-  for (int round = 5; round >= 0; --round) {
-    uint mr = 1 << round;
-    bar();
-    for (int i = 0; i < 8; ++i) {
-      uint g = (get_local_id(0) >> 6) + i * 4;
-      uint j = g & (mr - 1);
-      uint line = j + ((g & ~(mr - 1)) << 1);
-      uint e = j << (5 - round);
-      int u0 = lds[line * 64 + p];
-      int u1 = lds[(line + mr) * 64 + p];
-      if (round == 0) { // last round, apply warp. No shift needed because e==0.
-        ldsWriteWarped(u0 + u1, lds, 64, line, p);
-        ldsWriteWarped(u0 - u1, lds, 64, line + mr, p);
-      } else {
-        lds[line * 64 + p] = u0 + u1;
-        ldsWriteShifted(u0 - u1, lds, 64, line + mr, p + e);
-      }
-    }
-  }
-
-  // transpose LDS, write to global. Warp avoids bank conflicts.
-  bar();
-  for (int i = 0; i < 16; ++i) {
-    out[get_group_id(0) * 64 * 64 + i * 64 * 4 + get_local_id(0)] =
-      lds[(get_local_id(0) & 63) * 64 + ((get_local_id(0) & 63) + (get_local_id(0) >> 6) + i * 4) & 63];
-  }
-}
-*/
-
 double2 _OVL sq(double2 v) {
   double a = v.x;
   double b = v.y;
@@ -319,6 +262,7 @@ double8 _OVL sq(double8 v) {
   a = a + shift(b, 1);
   return (double8) (a.x, c.x, a.y, c.y, a.z, c.z, a.w, c.w);
 }
+*/
 
 void sq2(double *v) {
   double a = v[0];
@@ -480,11 +424,6 @@ KERNEL(256) void sq2k(global double *tab) {
     writeC(save[i] - x, lds, 6, line, p + 1);
     x = read(lds, 6, line, p);
     base[cut8(i * 256 + me)] = save[i] + x;
-    /*
-    write(save[i] + x, lds, 6, line, p);
-    x = save[i] - x;
-    lds[line * 64 + ((p + 1) & 63)] += ((p + 1) & 64) ? -x : x;
-    */
   }
 }
 
@@ -520,158 +459,6 @@ void sq32(double *v) {
   //todo: write to v
 }
 */
-
-/*
-KERNEL(256) void sq1k(global double *io, global double *sideBase) {
-  local double lds[1024];
-  global double *side = sizeBase + get_group_id(0) * 2048;
-  
-  // Read from input, write to LDS warped.
-  for (int i = 0; i < 4; ++i) {
-    uint line = get_local_id(0) & 31;
-    uint p = get_local_id(0) / 32 + i * 8;
-    writeC(io[cut8(get_local_id(0) + i * 256)], lds, 5, line, p + line);
-  }
-  
-  // Read from LDS warped, write to side-store and to LDS.
-  for (int i = 0; i < 4; ++i) {
-    bar();
-    uint line = get_local_id(0) / 32;
-    uint p = get_local_id(0) & 31;
-    double x = readC(lds, 5, line, p + line);
-    side[cut8(get_local_id(0) + i * 256)] = x;
-    write(x, lds, 5, line, p);
-  }
-
-  // 5 rounds of radix-2 DIF FFT(32).
-  for (int round = 4; round >= 0; --round) {
-    bar();
-    uint p = get_local_id(0) & 31;
-    for (int i = 0; i < 2; ++i) {
-      FFT_SETUP_CORE(5, round, 1, get_local_id(0) / 32 + i * 8);
-      double a = read(lds, 5, line, p);
-      double b = read(lds, 5, line + mr, p);
-      write( a + b, lds, 5, line, p);
-      writeC(a - b, lds, 5, line, p + e);
-    }
-  }
-
-  // LDS transpose each block of 32 into 4 lines of 8, and save to side storage.
-  bar();
-  for (int i = 0; i < 4; ++i) {
-    uint g = get_local_id(0) / 32;
-    uint ing = get_local_id(0) & 31;
-    double x = lds[i * 256 + g * 32 + (ing & 7) * 4 + ing / 8];
-    side[cut8(1024 + i * 256 + get_local_id(0))] = x;
-    lds[i * 256 + get_local_id(0)] = x;
-  }
-
-  // DIF FFT(4) inside blocks of 32.
-  {
-    bar();
-    uint p = get_local_id(0) & 7;
-    uint line = get_local_id(0) / 8 * 4;
-    double a = read(lds, 3, line, p);
-    double b = read(lds, 3, line + 2, p);
-    write(a + b, lds, 3, line,     p);
-    write(a - b, lds, 3, line + 2, p);
-    a = read(lds, 3, line + 1, p);
-    b = read(lds, 3, line + 3, p);
-    write( a + b, lds, 3, line + 1, p);
-    writeC(a - b, lds, 3, line + 3, p + 1);
-  }
-  
-  // 
-}
-*/
-
-/*
-kernel __attribute__((reqd_work_group_size(128, 1, 1)))
-void negaconv4k(global int *in, global long *out) {
-  local long lds[2 * 8 * 128];
-  local int *ids = (local int *)lds;
-  uint line = get_group_id(0);
-  uint STRIDE = 129;
-  for (int i = 0; i < 8; ++i) {
-    ids[(get_local_id(0) & 7) * STRIDE + (get_local_id(0) >> 3) + i * 16] = in[line * 1024 + i * 128 + get_local_id(0)];
-  }
-  for (int i = 0; i < 8; ++i) {
-    int x = ids[i * STRIDE + get_local_id(0)];
-    uint p = get_local_id(0) + i * 16;
-    ids[(i + 8) * STRIDE + (p & 127)] = (p < 128) ? x : -x;
-  }
-  // DIF 3 rounds. See difStep().
-  for (int round = 2; round >= 0; --round) {
-    uint mr = 1 << round;
-    for (uint i = 0; i < 8; ++i) {
-      uint j = i & (mr - 1);
-      uint r = (i & ~(mr - 1)) << 1;
-      uint e = (j << (4 - 1 - round)) * 16;
-      uint p0 = (j + r) * STRIDE + get_local_id(0);
-      uint p1 = get_local_id(0) + e;
-      
-      barrier(CLK_LOCAL_MEM_FENCE);
-      int x = ids[p0];
-      int y = ids[p0 + mr * STRIDE];
-      
-      barrier(CLK_LOCAL_MEM_FENCE);
-      ids[p0] = x + y;
-      y = x - y;
-      ids[(j + r + mr) * STRIDE + (p1 & 127)] = (p1 < 128) ? y : -y;
-    }
-  }
-
-  uint line = get_local_id(0) >> 3;
-  uint k = get_local_id(0) & 7;
-  
-  for (uint i = 0; i < 16; ++i) {
-    
-  }
-}
-*/
-
-// 8 x sq8(), 148 muls
-kernel __attribute__((reqd_work_group_size(64, 1, 1))) void negaconv64(global int *in, global long *out) {  
-  local int lds[16 * 8 * 2];
-
-  uint group = get_group_id(0);
-  for (int rep = 0; rep < 8; ++rep) {
-    int v = in[group * 64 * 8 + get_local_id(0)];
-    lds[rep * 128 + get_local_id(0)] = v;
-    uint col = get_local_id(0) & 7;
-    uint p = get_local_id(0) >> 3;
-    lds[rep * 128 + 64 + (get_local_id(0) & 7) + ((p + col) & 7) * 8] = (p + col < 8) ? v : -v;
-  }
-  for (int round = 2; round >= 0; --round) {
-    
-  }
-  
-  
-  /*
-  int v = in[get_global_id(0)];
-  uint line = (get_local_id(0) & 7);
-  uint p = get_local_id(0) >> 3;
-  lds[line * 8 + p] = x;
-  lds[64 + line * 8 + (p + line) & 7] = (p + line < 8) ? v : -v;
-  for (int round = 2; round >= 0; --round) {
-    uint g = get_local_id(0) >> 3;
-    uint k = get_local_id(0) & 7;
-    uint mr = 1 << round;
-    uint j = g & (mr - 1);
-    uint r = (g & ~(mr - 1)) << 1;
-    uint e = j << (3 - round);
-    uint p0 = (j + r) * 8 + k;
-    int u0 = lds[p0];
-    int u1 = lds[p0 + mr * 8];
-    lds[p0] = u0 + u1;
-    u1 = u0 - u1;
-    uint p1 = k + e;
-    lds[(j + r + mr) * 8 + (p1 & 7)] = (p1 < 8) ? u1 : -u1;
-  }
-  */
-  
-}
-
 
 
 // double2 _OVL sq(double2 v) { return (double2) (mul(v.x + v.y, v.x - v.y), mul(v.x, v.y) * 2); }
