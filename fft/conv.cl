@@ -394,6 +394,7 @@ void half2k(local double *lds, uint me) {
   }
 }
 
+#if 0
 KERNEL(256) void sq2k(global double *tab) {
   local double lds[2048];
   uint me = get_local_id(0);
@@ -426,6 +427,19 @@ KERNEL(256) void sq2k(global double *tab) {
     base[cut8(i * 256 + me)] = save[i] + x;
   }
 }
+#endif
+
+KERNEL(256) void mul(global double *tab) {
+  // for (int i = 0; i < 4; ++i) { prefetch(tab + cut8(get_group_id(0) * 1024 + i * 256 + get_local_id(0)), 1); }
+  
+  for (int i = 0; i < 4; ++i) {
+    uint p = get_global_id(0) + get_global_size(0) * i;
+    // get_group_id(0) * 1024 + i * 256 + get_local_id(0);
+    double x = tab[cut8(p)];
+    tab[cut8(p)] = x * x + x * p;
+  }
+}
+
 
 
 /*
