@@ -1,6 +1,7 @@
 #include <CL/cl.h>
 #include <assert.h>
 #include <stdio.h>
+#include "time.h"
 
 #define CHECK(err) { int e = err; if (e != CL_SUCCESS) { fprintf(stderr, "error %d\n", e); assert(false); }}
 
@@ -195,6 +196,11 @@ public:
     CHECK(clReleaseCommandQueue(queue));
   }
 
+  void time(const char *s) {
+    finish();
+    ::time(s);
+  }
+  
   void run(Kernel &k, size_t groupSize, size_t workSize) {
     // printf("size %lu %lu\n", groupSize, workSize);
     CHECK(clEnqueueNDRangeKernel(queue, k.k, 1, NULL, &workSize, &groupSize, 0, NULL, NULL));

@@ -1,12 +1,11 @@
 #include "clutil.h"
-#include "time.h"
 #include <string.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <memory>
 
 // #define N 4*1024
-#define SIZE (8 * 1024 * 1024)
+#define SIZE (2 * 1024 * 1024)
 #define GS 256
 
 #define K(program, name) Kernel name(program, #name);
@@ -36,7 +35,10 @@ int main(int argc, char **argv) {
   program.compileCL2(c, "dconv.cl");
   
   K(program, dif8);
+  K(program, dif8a);
+  K(program, dif8b);
   K(program, dit8);
+  K(program, round0);
   K(program, mul);
   
   time("Kernels compilation");
@@ -75,21 +77,55 @@ int main(int argc, char **argv) {
   exit(0);
   */
 
+  round0.setArgs(buf1, bufTmp);
+  queue.run(round0, GS, SIZE / 2);
+  queue.time("warm-up");
+
+  for (int i = 0; i < 500; ++i) {
+    round0.setArgs(buf1, bufTmp);
+    queue.run(round0, GS, SIZE / 2);
+    round0.setArgs(bufTmp, buf1);
+    queue.run(round0, GS, SIZE / 2);
+  }
+  queue.time("round0");
+
   dif8.setArgs(0, buf1, bufTmp);
   queue.run(dif8, GS, SIZE / 32);
   queue.finish();
   time("warm-up");
 
-  for (int i = 0; i < 100; ++i) {
-  for (int round = 3; round >= 0; round -= 2) {
-    dif8.setArgs(round, buf1, bufTmp);
+  for (int i = 0; i < 500; ++i) {
+    dif8.setArgs(1, buf1, bufTmp);
     queue.run(dif8, GS, SIZE / 32);
-    dif8.setArgs(round - 1, bufTmp, buf1);
+    dif8.setArgs(1, bufTmp, buf1);
     queue.run(dif8, GS, SIZE / 32);
   }
-  }
+  queue.time("dif8");
+
+
+  
+  dif8a.setArgs(buf1);
+  queue.run(dif8a, GS, SIZE / 32);
   queue.finish();
-  time("dif8");
+  time("warm-up");
+
+  for (int i = 0; i < 1000; ++i) {
+    // dif8.setArgs(1, buf1, bufTmp);
+    queue.run(dif8a, GS, SIZE / 32);
+  }
+  queue.time("dif8a");
+
+  dif8b.setArgs(buf1);
+  queue.run(dif8b, GS, SIZE / 32);
+  queue.finish();
+  time("warm-up");
+
+  for (int i = 0; i < 1000; ++i) {
+    // dif8.setArgs(1, buf1, bufTmp);
+    queue.run(dif8b, GS, SIZE / 32);
+  }
+  queue.time("dif8b");
+  
   exit(0);
   
   std::unique_ptr<long[]> tmpLong1(new long[SIZE]);
