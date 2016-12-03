@@ -50,21 +50,10 @@ void _O write4NC(double4 u, global double *out, uint W, uint line, uint p) {
 }
 
 #define ADDSUB4(a, b) { double4 tmp = a; a = tmp + b; b = tmp - b; }
+// #define ADDSUB4(a, b) { double4 tmp = b; b = a - b; a = a + tmp; }
 #define SHIFT(u, e) u = shift(u, e);
 
-KERNEL(GS) void round0(global double *in, global double *out) {
-  uint g = get_group_id(0);
-  uint line = g / 4 * 2;
-  uint p = line * 1024 + get_local_id(0) + (g % 4) * 256;
-  double a = in[cut8(p)];
-  double b = in[cut8(p + 1024)];
-  out[cut8(p)] = a + b;
-  out[cut8(p + 1024)] = a - b;
-}
-
-KERNEL(GS) void dif8(const uint round, global double *in, global double *out) {
-  const uint radix = 8;
-  const uint N = 10;
+void fft(bool isDIF, const uint N, const uint radix, const uint round, global double *in, global double *out) {
   uint groupsPerLine = (1 << N) / (GS * radix / 2);
 
   uint g = get_group_id(0) / groupsPerLine;
@@ -90,7 +79,11 @@ KERNEL(GS) void dif8(const uint round, global double *in, global double *out) {
   }
 
   for (int i = 0; i < 8; i += 2) { ADDSUB4(u[i], u[i + 1]); }
-  for (int i = 0; i < 8; ++i) { write4(u[i], out, (1 << N), line + mr * i, p + e * revbin[i]); }
+  for (int i = 0; i < 8; ++i) { write4(u[i], out, (1 << N), line + mr * i, p + e * revbin[i]); }  
+}
+
+KERNEL(GS) void dif_3(global double *in, global double *out) {
+  fft(true, 10, 8, 3, in, out);
 }
 
 /*
@@ -114,6 +107,17 @@ KERNEL(GS) void dit8(int round, global double *in, global double *out) {
   for (int i = 0; i < 8; ++i) { write4NC(u[i], out, N, line + mr * revbin[i], p); }
 }
 */
+
+
+KERNEL(GS) void round0(global double *in, global double *out) {
+  uint g = get_group_id(0);
+  uint line = g / 4 * 2;
+  uint p = line * 1024 + get_local_id(0) + (g % 4) * 256;
+  double a = in[cut8(p)];
+  double b = in[cut8(p + 1024)];
+  out[cut8(p)] = a + b;
+  out[cut8(p + 1024)] = a - b;
+}
 
 /*
 #define FFT_CORE(N, round, radix, iniG) \

@@ -34,7 +34,7 @@ int main(int argc, char **argv) {
   
   program.compileCL2(c, "dconv.cl");
   
-  K(program, dif8);
+  K(program, dif_3);
   //K(program, dit8);
   K(program, round0);  
   time("Kernels compilation");
@@ -62,17 +62,17 @@ int main(int argc, char **argv) {
   }
   queue.time("round0");
 
-  dif8.setArgs(3, buf1, bufTmp);
-  queue.run(dif8, GS, SIZE / 32);
+  dif_3.setArgs(buf1, bufTmp);
+  queue.run(dif_3, GS, SIZE / 32);
   queue.time("warm-up");
 
   for (int i = 0; i < 500; ++i) {
-    dif8.setArgs(3, buf1, bufTmp);
-    queue.run(dif8, GS, SIZE / 32);
-    dif8.setArgs(3, bufTmp, buf1);
-    queue.run(dif8, GS, SIZE / 32);
+    dif_3.setArgs(buf1, bufTmp);
+    queue.run(dif_3, GS, SIZE / 32);
+    dif_3.setArgs(bufTmp, buf1);
+    queue.run(dif_3, GS, SIZE / 32);
   }
-  queue.time("dif8");
+  queue.time("dif_3");
 
   
 #if 0
