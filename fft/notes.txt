@@ -1,1 +1,2 @@
 export KMDUMPISA=1
+g++ -O2 -std=c++11 -I /home/preda/AMDAPPSDK-3.0/include dconv.cpp -L/opt/amdgpu-pro/lib/x86_64-linux-gnu  -lOpenCL

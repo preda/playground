@@ -5,7 +5,7 @@
 #include <memory>
 
 // #define N 4*1024
-#define SIZE (2 * 1024 * 1024)
+#define SIZE (8 * 1024 * 1024)
 #define GS 256
 
 #define K(program, name) Kernel name(program, #name);
@@ -35,21 +35,9 @@ int main(int argc, char **argv) {
   program.compileCL2(c, "dconv.cl");
   
   K(program, dif8);
-  K(program, dif8a);
-  K(program, dif8b);
-  K(program, dit8);
-  K(program, round0);
-  K(program, mul);
-  
+  //K(program, dit8);
+  K(program, round0);  
   time("Kernels compilation");
-
-  /*
-  Buf bitsBuf(c, CL_MEM_READ_WRITE, sizeof(int) * words, 0);
-  int data = 0;
-  clEnqueueFillBuffer(queue.queue, bitsBuf.buf, &data, sizeof(data), 0, words, 0, 0, 0);
-  data = 4; // LL seed
-  queue.writeBlocking(bitsBuf, &data, sizeof(data));
-  */
 
   double *data = new double[SIZE];
   
@@ -61,21 +49,6 @@ int main(int argc, char **argv) {
   Buf buf2(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(double) * SIZE, data);
   Buf bufTmp(c, CL_MEM_READ_WRITE, sizeof(double) * SIZE, 0);
   time("alloc gpu buffers");
-
-  /*
-  mul.setArgs(buf1);
-  queue.run(mul, 256, 8 * 1024 * 1024 / 4);
-  queue.finish();
-  time("mul ini");
-
-  for (int i = 0; i < 1000; ++i) {
-    mul.setArgs(buf1);
-    queue.run(mul, 256, 8 * 1024 * 1024 / 4);
-  }
-  queue.finish();
-  time("mul");
-  exit(0);
-  */
 
   round0.setArgs(buf1, bufTmp);
   queue.run(round0, GS, SIZE / 2);
@@ -89,44 +62,20 @@ int main(int argc, char **argv) {
   }
   queue.time("round0");
 
-  dif8.setArgs(0, buf1, bufTmp);
+  dif8.setArgs(3, buf1, bufTmp);
   queue.run(dif8, GS, SIZE / 32);
-  queue.finish();
-  time("warm-up");
+  queue.time("warm-up");
 
   for (int i = 0; i < 500; ++i) {
-    dif8.setArgs(1, buf1, bufTmp);
+    dif8.setArgs(3, buf1, bufTmp);
     queue.run(dif8, GS, SIZE / 32);
-    dif8.setArgs(1, bufTmp, buf1);
+    dif8.setArgs(3, bufTmp, buf1);
     queue.run(dif8, GS, SIZE / 32);
   }
   queue.time("dif8");
 
-
   
-  dif8a.setArgs(buf1);
-  queue.run(dif8a, GS, SIZE / 32);
-  queue.finish();
-  time("warm-up");
-
-  for (int i = 0; i < 1000; ++i) {
-    // dif8.setArgs(1, buf1, bufTmp);
-    queue.run(dif8a, GS, SIZE / 32);
-  }
-  queue.time("dif8a");
-
-  dif8b.setArgs(buf1);
-  queue.run(dif8b, GS, SIZE / 32);
-  queue.finish();
-  time("warm-up");
-
-  for (int i = 0; i < 1000; ++i) {
-    // dif8.setArgs(1, buf1, bufTmp);
-    queue.run(dif8b, GS, SIZE / 32);
-  }
-  queue.time("dif8b");
-  
-  exit(0);
+#if 0
   
   std::unique_ptr<long[]> tmpLong1(new long[SIZE]);
   {
@@ -177,4 +126,6 @@ int main(int argc, char **argv) {
   }
   queue.finish();
   time("perf DIT8");
+
+#endif
 }
