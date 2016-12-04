@@ -14,3 +14,4 @@ void time(const char *s = 0) {
   }
   prev = now;
 }
+

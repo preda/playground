@@ -97,13 +97,16 @@ void fft(bool isDIF, const uint W, const uint radix, const uint round, global do
   }
 }
 
-KERNEL(GS) void dif_3(global double *in, global double *out) {
-  fft(true, 2048, 8, 3, in, out);
-}
+KERNEL(GS) void dif_0(global double *in, global double *out) { fft(true, 2048, 8, 0, in, out); }
+KERNEL(GS) void dif_3(global double *in, global double *out) { fft(true, 2048, 8, 3, in, out); }
+KERNEL(GS) void dif_6(global double *in, global double *out) { fft(true, 2048, 8, 6, in, out); }
+KERNEL(GS) void dif_9(global double *in, global double *out) { fft(true, 2048, 8, 9, in, out); }
 
-KERNEL(GS) void dit_3(global double *in, global double *out) {
-  fft(false, 2048, 8, 3, in, out);
-}
+KERNEL(GS) void dit_0(global double *in, global double *out) { fft(false, 2048, 8, 0, in, out); }
+KERNEL(GS) void dit_3(global double *in, global double *out) { fft(false, 2048, 8, 3, in, out); }
+KERNEL(GS) void dit_6(global double *in, global double *out) { fft(false, 2048, 8, 6, in, out); }
+KERNEL(GS) void dit_9(global double *in, global double *out) { fft(false, 2048, 8, 9, in, out); }
+
 
 KERNEL(GS) void round0(global double *in, global double *out) {
   uint g = get_group_id(0);

@@ -4,41 +4,52 @@
 #include <stdlib.h>
 #include <memory>
 
-// #define N 4*1024
 #define SIZE (8 * 1024 * 1024)
 #define GS 256
 
 #define K(program, name) Kernel name(program, #name);
 
-bool checkEqual(Queue *queue, Buf *buf1, Buf *buf2, int size) {
-  std::unique_ptr<int[]> tmp1(new int[size]);
-  std::unique_ptr<int[]> tmp2(new int[size]);
-  queue->readBlocking(buf1, 0, sizeof(int) * size, tmp1.get());
-  queue->readBlocking(buf2, 0, sizeof(int) * size, tmp2.get());
-  int err = 0;
-  for (int i = 0; i < size; ++i) {
-    if (tmp1[i] != tmp2[i]) {
-      printf("%d %d %d\n", i, tmp1[i], tmp2[i]);
-      if (++err >= 10) { return false; }
-    }
-  }
-  return true;
+Context c;
+Queue queue(c);
+Program program(c, "dconv.cl");
+
+K(program, dif_0);
+K(program, dif_3);
+K(program, dif_6);
+K(program, dif_9);
+
+K(program, dit_0);
+K(program, dit_3);
+K(program, dit_6);
+K(program, dit_9);
+
+K(program, round0);  
+
+void dif8(Queue &queue, Buf &buf, Buf &tmp) {
+  dif_9.setArgs(buf, tmp);
+  queue.run(dif_9, GS, SIZE / 32);
+  dif_6.setArgs(tmp, buf);
+  queue.run(dif_6, GS, SIZE / 32);
+  dif_3.setArgs(buf, tmp);
+  queue.run(dif_3, GS, SIZE / 32);
+  dif_0.setArgs(tmp, buf);
+  queue.run(dif_0, GS, SIZE / 32);
+}
+
+void dit8(Queue &queue, Buf &buf, Buf &tmp) {
+  dit_0.setArgs(buf, tmp);
+  queue.run(dit_0, GS, SIZE / 32);
+  dit_3.setArgs(tmp, buf);
+  queue.run(dit_3, GS, SIZE / 32);
+  dit_6.setArgs(buf, tmp);
+  queue.run(dit_6, GS, SIZE / 32);
+  dit_9.setArgs(tmp, buf);
+  queue.run(dit_9, GS, SIZE / 32);
 }
 
 int main(int argc, char **argv) {
-  time();
-  Context c;
-  Queue queue(c);
-  Program program;
-  time("OpenCL init");
+  time("main entry");
   
-  program.compileCL2(c, "dconv.cl");
-  
-  K(program, dif_3);
-  K(program, dit_3);
-  K(program, round0);  
-  time("Kernels compilation");
-
   double *data = new double[SIZE];
   
   srandom(0);
@@ -50,16 +61,23 @@ int main(int argc, char **argv) {
   Buf bufTmp(c, CL_MEM_READ_WRITE, sizeof(double) * SIZE, 0);
   time("alloc gpu buffers");
 
+  dif8(queue, buf1, bufTmp);
+  queue.time("dif8");
+  dit8(queue, buf1, bufTmp);
+  queue.time("dit8");
+
+  /*
   dif_3.setArgs(buf1, bufTmp);
   queue.run(dif_3, GS, SIZE / 32);
   dit_3.setArgs(bufTmp, buf1);
   queue.run(dit_3, GS, SIZE / 32);
+  */
   double *data2 = new double[SIZE];
   queue.readBlocking(&buf1, 0, sizeof(double) * SIZE, data2);
   time("read");
   int nerr = 0;
   for (int i = 0; i < SIZE; ++i) {
-    double b = data2[i] / 8;
+    double b = data2[i] / (4 * 1024);
     if (data[i] != b) {
       printf("%d %f %f\n", nerr, data[i], b);
       ++nerr;

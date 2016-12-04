@@ -35,7 +35,11 @@ class Program {
 public:
   cl_program program;
 
-  Program() {    
+  Program() : program(nullptr) { }
+
+  Program(Context &c, const char *f) {
+    compileCL2(c, f);
+    time(f);
   }
 
   ~Program() {
