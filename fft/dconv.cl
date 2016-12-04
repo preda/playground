@@ -79,7 +79,8 @@ void fft(bool isDIF, const uint W, const uint radix, const uint round, global do
     }
 
     for (int i = 0; i < 8; i += 2) { ADDSUB4(u[i], u[i + 1]); }
-    for (int i = 0; i < 8; ++i) { write4(u[i], out, W, line + mr * i, p + e * revbin[i]); }
+    write4NC(u[0], out, W, line, p);
+    for (int i = 1; i < 8; ++i) { write4(u[i], out, W, line + mr * i, p + e * revbin[i]); }
   } else {
     u[0] = read4NC(in, W, line, p);
     for (int i = 1; i < 8; ++i) { u[i] = read4(in, W, line + mr * revbin[i], p + e * i); }
@@ -97,15 +98,31 @@ void fft(bool isDIF, const uint W, const uint radix, const uint round, global do
   }
 }
 
-KERNEL(GS) void dif_0(global double *in, global double *out) { fft(true, 2048, 8, 0, in, out); }
-KERNEL(GS) void dif_3(global double *in, global double *out) { fft(true, 2048, 8, 3, in, out); }
-KERNEL(GS) void dif_6(global double *in, global double *out) { fft(true, 2048, 8, 6, in, out); }
-KERNEL(GS) void dif_9(global double *in, global double *out) { fft(true, 2048, 8, 9, in, out); }
+void difStep(const uint W, const uint radix, const uint round, global double *in, global double *out) {
+  fft(true, W, radix, round, in, out);
+}
 
-KERNEL(GS) void dit_0(global double *in, global double *out) { fft(false, 2048, 8, 0, in, out); }
-KERNEL(GS) void dit_3(global double *in, global double *out) { fft(false, 2048, 8, 3, in, out); }
-KERNEL(GS) void dit_6(global double *in, global double *out) { fft(false, 2048, 8, 6, in, out); }
-KERNEL(GS) void dit_9(global double *in, global double *out) { fft(false, 2048, 8, 9, in, out); }
+void ditStep(const uint W, const uint radix, const uint round, global double *in, global double *out) {
+  fft(false, W, radix, round, in, out);
+}
+
+KERNEL(GS) void dif(uint round, global double *in, global double *out) {
+  difStep(2048, 8, round, in, out);
+}
+
+KERNEL(GS) void dit(uint round, global double *in, global double *out) {
+  ditStep(2048, 8, round, in, out);
+}
+
+KERNEL(GS) void dif_0(global double *in, global double *out) { difStep(2048, 8, 0, in, out); }
+KERNEL(GS) void dif_3(global double *in, global double *out) { difStep(2048, 8, 3, in, out); }
+KERNEL(GS) void dif_6(global double *in, global double *out) { difStep(2048, 8, 6, in, out); }
+KERNEL(GS) void dif_9(global double *in, global double *out) { difStep(2048, 8, 9, in, out); }
+
+KERNEL(GS) void dit_0(global double *in, global double *out) { ditStep(2048, 8, 0, in, out); }
+KERNEL(GS) void dit_3(global double *in, global double *out) { ditStep(2048, 8, 3, in, out); }
+KERNEL(GS) void dit_6(global double *in, global double *out) { ditStep(2048, 8, 6, in, out); }
+KERNEL(GS) void dit_9(global double *in, global double *out) { ditStep(2048, 8, 9, in, out); }
 
 
 KERNEL(GS) void round0(global double *in, global double *out) {

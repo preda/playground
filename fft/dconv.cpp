@@ -23,29 +23,53 @@ K(program, dit_3);
 K(program, dit_6);
 K(program, dit_9);
 
-K(program, round0);  
+K(program, round0);
+K(program, dif);
+K(program, dit);
 
 void dif8(Queue &queue, Buf &buf, Buf &tmp) {
-  dif_9.setArgs(buf, tmp);
+  //dif_9.setArgs(buf, tmp);
   queue.run(dif_9, GS, SIZE / 32);
-  dif_6.setArgs(tmp, buf);
+  //dif_6.setArgs(tmp, buf);
   queue.run(dif_6, GS, SIZE / 32);
-  dif_3.setArgs(buf, tmp);
+  //dif_3.setArgs(buf, tmp);
   queue.run(dif_3, GS, SIZE / 32);
-  dif_0.setArgs(tmp, buf);
+  //dif_0.setArgs(tmp, buf);
   queue.run(dif_0, GS, SIZE / 32);
 }
 
 void dit8(Queue &queue, Buf &buf, Buf &tmp) {
-  dit_0.setArgs(buf, tmp);
+  //dit_0.setArgs(buf, tmp);
   queue.run(dit_0, GS, SIZE / 32);
-  dit_3.setArgs(tmp, buf);
+  //dit_3.setArgs(tmp, buf);
   queue.run(dit_3, GS, SIZE / 32);
-  dit_6.setArgs(buf, tmp);
+  //dit_6.setArgs(buf, tmp);
   queue.run(dit_6, GS, SIZE / 32);
-  dit_9.setArgs(tmp, buf);
+  //dit_9.setArgs(tmp, buf);
   queue.run(dit_9, GS, SIZE / 32);
 }
+
+void dif8a(Queue &queue, Buf &buf, Buf &tmp) {
+  dif.setArgs(9, buf, tmp);
+  queue.run(dif, GS, SIZE / 32);
+  dif.setArgs(6, tmp, buf);
+  queue.run(dif, GS, SIZE / 32);
+  dif.setArgs(3, buf, tmp);
+  queue.run(dif, GS, SIZE / 32);
+  dif_0.setArgs(tmp, buf);
+  queue.run(dif_0, GS, SIZE / 32);  
+}
+
+void dit8a(Queue &queue, Buf &buf, Buf &tmp) {
+  for (int round = 0; round < 12; round += 6) {
+    dit.setArgs(round, buf, tmp);
+    queue.run(dit, GS, SIZE / 32);
+    dit.setArgs(round + 3, tmp, buf);
+    queue.run(dit, GS, SIZE / 32);
+  }
+}
+
+
 
 int main(int argc, char **argv) {
   time("main entry");
@@ -61,17 +85,21 @@ int main(int argc, char **argv) {
   Buf bufTmp(c, CL_MEM_READ_WRITE, sizeof(double) * SIZE, 0);
   time("alloc gpu buffers");
 
-  dif8(queue, buf1, bufTmp);
+  dif_9.setArgs(buf1, bufTmp);
+  dif_6.setArgs(bufTmp, buf1);
+  dif_3.setArgs(buf1, bufTmp);
+  dif_0.setArgs(bufTmp, buf1);
+  
+  dit_0.setArgs(buf1, bufTmp);
+  dit_3.setArgs(bufTmp, buf1);
+  dit_6.setArgs(buf1, bufTmp);
+  dit_9.setArgs(bufTmp, buf1);
+  
+  dif8a(queue, buf1, bufTmp);
   queue.time("dif8");
-  dit8(queue, buf1, bufTmp);
+  dit8a(queue, buf1, bufTmp);
   queue.time("dit8");
 
-  /*
-  dif_3.setArgs(buf1, bufTmp);
-  queue.run(dif_3, GS, SIZE / 32);
-  dit_3.setArgs(bufTmp, buf1);
-  queue.run(dit_3, GS, SIZE / 32);
-  */
   double *data2 = new double[SIZE];
   queue.readBlocking(&buf1, 0, sizeof(double) * SIZE, data2);
   time("read");
@@ -86,8 +114,17 @@ int main(int argc, char **argv) {
       }
     }
   }
+
+  time();
+  for (int i = 0; i < 1000; ++i) { dit8a(queue, buf1, bufTmp); }
+  queue.time("dit");
+
+  for (int i = 0; i < 1000; ++i) { dif8(queue, buf1, bufTmp); }
+  queue.time("dif");
+
   exit(0);
 
+  
   
   round0.setArgs(buf1, bufTmp);
   queue.run(round0, GS, SIZE / 2);
