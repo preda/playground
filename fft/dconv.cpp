@@ -35,7 +35,7 @@ int main(int argc, char **argv) {
   program.compileCL2(c, "dconv.cl");
   
   K(program, dif_3);
-  //K(program, dit8);
+  K(program, dit_3);
   K(program, round0);  
   time("Kernels compilation");
 
@@ -50,6 +50,27 @@ int main(int argc, char **argv) {
   Buf bufTmp(c, CL_MEM_READ_WRITE, sizeof(double) * SIZE, 0);
   time("alloc gpu buffers");
 
+  dif_3.setArgs(buf1, bufTmp);
+  queue.run(dif_3, GS, SIZE / 32);
+  dit_3.setArgs(bufTmp, buf1);
+  queue.run(dit_3, GS, SIZE / 32);
+  double *data2 = new double[SIZE];
+  queue.readBlocking(&buf1, 0, sizeof(double) * SIZE, data2);
+  time("read");
+  int nerr = 0;
+  for (int i = 0; i < SIZE; ++i) {
+    double b = data2[i] / 8;
+    if (data[i] != b) {
+      printf("%d %f %f\n", nerr, data[i], b);
+      ++nerr;
+      if (nerr >= 10) {
+        break;
+      }
+    }
+  }
+  exit(0);
+
+  
   round0.setArgs(buf1, bufTmp);
   queue.run(round0, GS, SIZE / 2);
   queue.time("warm-up");
@@ -74,6 +95,20 @@ int main(int argc, char **argv) {
   }
   queue.time("dif_3");
 
+  dit_3.setArgs(buf1, bufTmp);
+  queue.run(dit_3, GS, SIZE / 32);
+  queue.time("warm-up");
+
+  for (int i = 0; i < 500; ++i) {
+    dit_3.setArgs(buf1, bufTmp);
+    queue.run(dit_3, GS, SIZE / 32);
+    dit_3.setArgs(bufTmp, buf1);
+    queue.run(dit_3, GS, SIZE / 32);
+  }
+  queue.time("dit_3");
+
+
+  
   
 #if 0
   

@@ -53,61 +53,57 @@ void _O write4NC(double4 u, global double *out, uint W, uint line, uint p) {
 // #define ADDSUB4(a, b) { double4 tmp = b; b = a - b; a = a + tmp; }
 #define SHIFT(u, e) u = shift(u, e);
 
-void fft(bool isDIF, const uint N, const uint radix, const uint round, global double *in, global double *out) {
-  uint groupsPerLine = (1 << N) / (GS * radix / 2);
-
+void fft(bool isDIF, const uint W, const uint radix, const uint round, global double *in, global double *out) {
+  uint groupsPerLine = W / GS / (radix / 2);
   uint g = get_group_id(0) / groupsPerLine;
   uint mr = 1 << round;
   uint j = g & (mr - 1);
   uint r = (g & ~(mr - 1)) * radix;
-  uint e = (j << (N - round)) / (radix / 2);
+  uint e = (j * W / (radix / 2)) >> round; // (j << (N - round)) / (radix / 2);
   uint line = j + r;
-  uint k = get_group_id(0) & (groupsPerLine - 1);
+  uint k = get_group_id(0) % groupsPerLine;
   uint p = get_local_id(0) + k * GS;
 
   double4 u[8];
   uint revbin[8] = {0, 4, 2, 6, 1, 5, 3, 7};
 
-  for (int i = 0; i < 8; ++i) { u[i] = read4(in, (1 << N), line + mr * i, p); }
-  for (int i = 0; i < 4; ++i) { ADDSUB4(u[i], u[i + 4]); }
-  for (int i = 1; i < 4; ++i) { SHIFT(u[i + 4], i); }
+  if (isDIF) {
+    for (int i = 0; i < 8; ++i) { u[i] = read4NC(in, W, line + mr * i, p); }
+    for (int i = 0; i < 4; ++i) { ADDSUB4(u[i], u[i + 4]); }
+    for (int i = 1; i < 4; ++i) { SHIFT(u[i + 4], i); }
 
-  for (int i = 0; i < 8; i += 4) {
-    ADDSUB4(u[0 + i], u[2 + i]);
-    ADDSUB4(u[1 + i], u[3 + i]);
-    SHIFT(u[3 + i], 2);
+    for (int i = 0; i < 8; i += 4) {
+      ADDSUB4(u[0 + i], u[2 + i]);
+      ADDSUB4(u[1 + i], u[3 + i]);
+      SHIFT(u[3 + i], 2);
+    }
+
+    for (int i = 0; i < 8; i += 2) { ADDSUB4(u[i], u[i + 1]); }
+    for (int i = 0; i < 8; ++i) { write4(u[i], out, W, line + mr * i, p + e * revbin[i]); }
+  } else {
+    u[0] = read4NC(in, W, line, p);
+    for (int i = 1; i < 8; ++i) { u[i] = read4(in, W, line + mr * revbin[i], p + e * i); }
+    for (int i = 0; i < 4; ++i) { ADDSUB4(u[i], u[i + 4]); }
+    for (int i = 1; i < 4; ++i) { SHIFT(u[i + 4], -i); }
+
+    for (int i = 0; i < 8; i += 4) {
+      ADDSUB4(u[0 + i], u[2 + i]);
+      ADDSUB4(u[1 + i], u[3 + i]);
+      SHIFT(u[3 + i], -2);
+    }
+
+    for (int i = 0; i < 8; i += 2) { ADDSUB4(u[i], u[i + 1]); }
+    for (int i = 0; i < 8; ++i) { write4NC(u[i], out, W, line + mr * revbin[i], p); }
   }
-
-  for (int i = 0; i < 8; i += 2) { ADDSUB4(u[i], u[i + 1]); }
-  for (int i = 0; i < 8; ++i) { write4(u[i], out, (1 << N), line + mr * i, p + e * revbin[i]); }  
 }
 
 KERNEL(GS) void dif_3(global double *in, global double *out) {
-  fft(true, 10, 8, 3, in, out);
+  fft(true, 2048, 8, 3, in, out);
 }
 
-/*
-KERNEL(GS) void dit8(int round, global double *in, global double *out) {
-  FFT_SETUP(11, 3);
-  double4 u[8];
-  uint revbin[8] = {0, 4, 2, 6, 1, 5, 3, 7};
-
-  u[0] = read4NC(in, N, line, p);
-  for (int i = 1; i < 8; ++i) { u[i] = read4(in, N, line + mr * revbin[i], p + e * i); }
-  for (int i = 0; i < 4; ++i) { ADDSUB4(u[i], u[i + 4]); }
-  for (int i = 1; i < 4; ++i) { SHIFT(u[i + 4], -i); }
-
-  for (int i = 0; i < 8; i += 4) {
-    ADDSUB4(u[0 + i], u[2 + i]);
-    ADDSUB4(u[1 + i], u[3 + i]);
-    SHIFT(u[3 + i], -2);
-  }
-
-  for (int i = 0; i < 8; i += 2) { ADDSUB4(u[i], u[i + 1]); }
-  for (int i = 0; i < 8; ++i) { write4NC(u[i], out, N, line + mr * revbin[i], p); }
+KERNEL(GS) void dit_3(global double *in, global double *out) {
+  fft(false, 2048, 8, 3, in, out);
 }
-*/
-
 
 KERNEL(GS) void round0(global double *in, global double *out) {
   uint g = get_group_id(0);
