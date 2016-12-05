@@ -83,7 +83,8 @@ void fft(bool isDIF, const uint W, const uint round, global double *in, global d
     for (int i = 1; i < 8; ++i) {
       for (int q = 0; q < 4; ++q) {
         double x = (double[4]){u[i].x, u[i].y, u[i].z, u[i].w}[q];
-        if ((k + 1) * GS + e * revbin[i] + q * (W / 4) <= W) {
+        if ((k + 1) * GS + e * revbin[i] - (4 - q) * (W / 4) <= 0) {
+        // if ((int) (k + 1) * (int) GS + (int) e * (int) revbin[i] - (4 - q) * (int) (W / 4) <= 0) {
           write(x, out, W, line + mr * i, p + e * revbin[i] + q * (W / 4));
         } else {
           writeC(x, out, W, line + mr * i, p + e * revbin[i] + q * (W / 4));
