@@ -56,6 +56,8 @@ void dif8a(Queue &queue, Buf &buf, Buf &tmp) {
   queue.run(dif, GS, SIZE / 32);
   dif.setArgs(3, buf, tmp);
   queue.run(dif, GS, SIZE / 32);
+  // dif.setArgs(0, tmp, buf);
+  // queue.run(dif, GS, SIZE / 32);  
   dif_0.setArgs(tmp, buf);
   queue.run(dif_0, GS, SIZE / 32);  
 }
@@ -116,11 +118,12 @@ int main(int argc, char **argv) {
   }
 
   time();
+
+  for (int i = 0; i < 1000; ++i) { dif8a(queue, buf1, bufTmp); }
+  queue.time("dif");
+
   for (int i = 0; i < 1000; ++i) { dit8a(queue, buf1, bufTmp); }
   queue.time("dit");
-
-  for (int i = 0; i < 1000; ++i) { dif8(queue, buf1, bufTmp); }
-  queue.time("dif");
 
   exit(0);
 
