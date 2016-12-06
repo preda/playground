@@ -16,33 +16,30 @@ Program program(c, "dconv.cl");
 K(program, dif_0);
 K(program, dif_3);
 K(program, dif_6);
-K(program, dif_9);
 
 K(program, dit_0);
 K(program, dit_3);
 K(program, dit_6);
-K(program, dit_9);
 
 K(program, round0);
 K(program, copy);
 K(program, dif);
 K(program, dit);
 
-void setArgs(Buf &buf, Buf &bufTmp) {
-  dif_9.setArgs(buf, bufTmp);
-  dif_6.setArgs(bufTmp, buf);
-  dif_3.setArgs(buf, bufTmp);
-  dif_0.setArgs(bufTmp, buf);
+void setArgs(Buf &buf1, Buf &buf2) {
+  // dif_9.setArgs(buf, bufTmp);
+  dif_6.setArgs(buf1, buf2);
+  dif_3.setArgs(buf2, buf1);
+  dif_0.setArgs(buf1, buf2);
   
-  dit_0.setArgs(buf, bufTmp);
-  dit_3.setArgs(bufTmp, buf);
-  dit_6.setArgs(buf, bufTmp);
-  dit_9.setArgs(bufTmp, buf);
-
+  dit_0.setArgs(buf2, buf1);
+  dit_3.setArgs(buf1, buf2);
+  dit_6.setArgs(buf2, buf1);
+  // dit_9.setArgs(bufTmp, buf);
 }
 
 void dif8(Queue &queue, Buf &buf, Buf &tmp) {
-  queue.run(dif_9, GS, SIZE / 32);
+  // queue.run(dif_9, GS, SIZE / 32);
   queue.run(dif_6, GS, SIZE / 32);
   queue.run(dif_3, GS, SIZE / 32);
   queue.run(dif_0, GS, SIZE / 32);
@@ -52,29 +49,27 @@ void dit8(Queue &queue, Buf &buf, Buf &tmp) {
   queue.run(dit_0, GS, SIZE / 32);
   queue.run(dit_3, GS, SIZE / 32);
   queue.run(dit_6, GS, SIZE / 32);
-  queue.run(dit_9, GS, SIZE / 32);
+  // queue.run(dit_9, GS, SIZE / 32);
 }
 
-void dif8a(Queue &queue, Buf &buf, Buf &tmp, unsigned size) {
-  dif.setArgs(9, buf, tmp);
+void dif8a(Queue &queue, Buf &buf1, Buf &buf2, unsigned size) {
+  dif.setArgs(6, buf1, buf2);
   queue.run(dif, GS, size / 32);
-  dif.setArgs(6, tmp, buf);
+  dif.setArgs(3, buf2, buf1);
   queue.run(dif, GS, size / 32);
-  dif.setArgs(3, buf, tmp);
-  queue.run(dif, GS, size / 32);
-  dif_0.setArgs(tmp, buf);
+  dif_0.setArgs(buf1, buf2);
   queue.run(dif_0, GS, size / 32);
   // dif.setArgs(0, tmp, buf);
   // queue.run(dif, GS, size / 32);  
 }
 
-void dit8a(Queue &queue, Buf &buf, Buf &tmp, unsigned size) {
-  for (int round = 0; round < 12; round += 6) {
-    dit.setArgs(round, buf, tmp);
-    queue.run(dit, GS, size / 32);
-    dit.setArgs(round + 3, tmp, buf);
-    queue.run(dit, GS, size / 32);
-  }
+void dit8a(Queue &queue, Buf &buf1, Buf &buf2, unsigned size) {
+  dit.setArgs(0, buf1, buf2);
+  queue.run(dit, GS, size / 32);
+  dit.setArgs(3, buf2, buf1);
+  queue.run(dit, GS, size / 32);
+  dit.setArgs(6, buf1, buf2);
+  queue.run(dit, GS, size / 32);
 }
 
 
@@ -92,11 +87,9 @@ int main(int argc, char **argv) {
   Buf bufTmp(c, CL_MEM_READ_WRITE, sizeof(double) * SIZE, 0);
   time("alloc gpu buffers");
 
-  setArgs(buf1, bufTmp);
-  
   dif8a(queue, buf1, bufTmp, SIZE);
   queue.time("dif8");
-  dit8a(queue, buf1, bufTmp, SIZE);
+  dit8a(queue, bufTmp, buf1, SIZE);
   queue.time("dit8");
 
   double *data2 = new double[SIZE];
@@ -104,7 +97,7 @@ int main(int argc, char **argv) {
   time("read");
   int nerr = 0;
   for (int i = 0; i < SIZE; ++i) {
-    double b = data2[i] / (4 * 1024);
+    double b = data2[i] / 512;
     if (data[i] != b) {
       printf("%d %f %f\n", nerr, data[i], b);
       ++nerr;
@@ -138,59 +131,4 @@ int main(int argc, char **argv) {
     queue.run(copy, GS, SIZE);
   }
   queue.time("copy");
-
-  
-#if 0
-  
-  std::unique_ptr<long[]> tmpLong1(new long[SIZE]);
-  {
-    std::unique_ptr<int[]> tmp1(new int[SIZE]);
-    queue.readBlocking(&buf1, 0, sizeof(int) * SIZE, tmp1.get());
-    for (int i = 0; i < SIZE; ++i) {
-      tmpLong1[i] = tmp1[i];
-    }
-  }
-  Buf bufLong1(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(long) * SIZE, tmpLong1.get());
-  Buf bufLongTmp(c, CL_MEM_READ_WRITE, sizeof(long) * SIZE, 0);
-
-  for (int round = 0; round < 4; round += 2) {
-    dit8.setArgs(round, bufLong1, bufLongTmp);
-    queue.run(dit8, GS, SIZE / 32);
-    dit8.setArgs(round + 1, bufLongTmp, bufLong1);
-    queue.run(dit8, GS, SIZE / 32);
-  }
-
-  queue.readBlocking(&bufLong1, 0, sizeof(long) * SIZE, tmpLong1.get());
-  int err = 0;
-  for (int i = 0; i < SIZE; ++i) {
-    if (data[i] != tmpLong1[i]) {
-      // printf("%d %d %ld\n", i, data[i], tmpLong1[i]);
-      if (++err >= 10) { exit(1); }
-    }
-  }  
-  time("OK FFT radix8 round-trip");
-
-  for (int i = 0; i < 100; ++i) {
-    for (int round = 3; round > 0; round -= 2) {
-      dif8.setArgs(round, buf1, bufTmp);
-      queue.run(dif8, GS, SIZE / 32);
-      dif8.setArgs(round - 1, bufTmp, buf1);
-      queue.run(dif8, GS, SIZE / 32);
-    }
-  }
-  queue.finish();
-  time("perf DIF8");
-
-  for (int i = 0; i < 100; ++i) {
-    for (int round = 0; round < 4; round += 2) {
-      dit8.setArgs(round, bufLong1, bufLongTmp);
-      queue.run(dit8, GS, SIZE / 32);
-      dit8.setArgs(round + 1, bufLongTmp, bufLong1);
-      queue.run(dit8, GS, SIZE / 32);
-    }
-  }
-  queue.finish();
-  time("perf DIT8");
-
-#endif
 }

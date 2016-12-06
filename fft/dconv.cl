@@ -1,6 +1,6 @@
 #define _O __attribute__((overloadable))
 #define GS 256
-#define KERNEL(groupSize) kernel __attribute__((reqd_work_group_size(groupSize, 1, 1)))
+#define KERNEL kernel __attribute__((reqd_work_group_size(GS, 1, 1)))
 
 double4 _O shift(double4 a, int e) {
   switch (e) {
@@ -117,26 +117,26 @@ void ditStep(const uint W, const uint round, global double *in, global double *o
   fft(false, W, round, in, out);
 }
 
-KERNEL(GS) void dif(uint round, global double *in, global double *out) {
-  difStep(2048, round, in, out);
+#define W 4096
+KERNEL void dif(uint round, global double *in, global double *out) {
+  difStep(W, round, in, out);
 }
 
-KERNEL(GS) void dit(uint round, global double *in, global double *out) {
-  ditStep(2048, round, in, out);
+KERNEL void dit(uint round, global double *in, global double *out) {
+  ditStep(W, round, in, out);
 }
 
-KERNEL(GS) void dif_0(global double *in, global double *out) { difStep(2048, 0, in, out); }
-KERNEL(GS) void dif_3(global double *in, global double *out) { difStep(2048, 3, in, out); }
-KERNEL(GS) void dif_6(global double *in, global double *out) { difStep(2048, 6, in, out); }
-KERNEL(GS) void dif_9(global double *in, global double *out) { difStep(2048, 9, in, out); }
+KERNEL void dif_0(global double *in, global double *out) { difStep(W, 0, in, out); }
+KERNEL void dif_3(global double *in, global double *out) { difStep(W, 3, in, out); }
+KERNEL void dif_6(global double *in, global double *out) { difStep(W, 6, in, out); }
 
-KERNEL(GS) void dit_0(global double *in, global double *out) { ditStep(2048, 0, in, out); }
-KERNEL(GS) void dit_3(global double *in, global double *out) { ditStep(2048, 3, in, out); }
-KERNEL(GS) void dit_6(global double *in, global double *out) { ditStep(2048, 6, in, out); }
-KERNEL(GS) void dit_9(global double *in, global double *out) { ditStep(2048, 9, in, out); }
+KERNEL void dit_0(global double *in, global double *out) { ditStep(W, 0, in, out); }
+KERNEL void dit_3(global double *in, global double *out) { ditStep(W, 3, in, out); }
+KERNEL void dit_6(global double *in, global double *out) { ditStep(W, 6, in, out); }
+#undef W
 
 
-KERNEL(GS) void round0(global double *in, global double *out) {
+KERNEL void round0(global double *in, global double *out) {
   uint g = get_group_id(0);
   uint line = g / 8 * 2;
   uint p = line * 2048 + get_local_id(0) + (g % 8) * 256;
@@ -146,7 +146,7 @@ KERNEL(GS) void round0(global double *in, global double *out) {
   out[p + 2048] = a - a * b;
 }
 
-KERNEL(GS) void copy(global double *in, global double *out) {
+KERNEL void copy(global double *in, global double *out) {
   uint g = get_group_id(0);
   out[g * 256 + get_local_id(0)] = in[g * 256 + (get_local_id(0) + 1) % 256];
   // (get_local_id(0) + 1) % 256
