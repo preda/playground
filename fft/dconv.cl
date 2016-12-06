@@ -83,8 +83,8 @@ void fft(bool isDIF, const uint W, const uint round, global double *in, global d
     for (int i = 1; i < 8; ++i) {
       for (int q = 0; q < 4; ++q) {
         double x = (double[4]){u[i].x, u[i].y, u[i].z, u[i].w}[q];
-        if ((k + 1) * GS + e * revbin[i] - (4 - q) * (W / 4) <= 0) {
         // if ((int) (k + 1) * (int) GS + (int) e * (int) revbin[i] - (4 - q) * (int) (W / 4) <= 0) {
+        if ((k + 1) * GS + e * revbin[i] - (4 - q) * (W / 4) <= 0) {
           write(x, out, W, line + mr * i, p + e * revbin[i] + q * (W / 4));
         } else {
           writeC(x, out, W, line + mr * i, p + e * revbin[i] + q * (W / 4));
@@ -138,10 +138,16 @@ KERNEL(GS) void dit_9(global double *in, global double *out) { ditStep(2048, 9, 
 
 KERNEL(GS) void round0(global double *in, global double *out) {
   uint g = get_group_id(0);
-  uint line = g / 4 * 2;
-  uint p = line * 1024 + get_local_id(0) + (g % 4) * 256;
-  double a = in[cut8(p)];
-  double b = in[cut8(p + 1024)];
-  out[cut8(p)] = a + b;
-  out[cut8(p + 1024)] = a - b;
+  uint line = g / 8 * 2;
+  uint p = line * 2048 + get_local_id(0) + (g % 8) * 256;
+  double a = in[p];
+  double b = in[p + 2048];
+  out[p] = a + a * b;
+  out[p + 2048] = a - a * b;
+}
+
+KERNEL(GS) void copy(global double *in, global double *out) {
+  uint g = get_group_id(0);
+  out[g * 256 + get_local_id(0)] = in[g * 256 + (get_local_id(0) + 1) % 256];
+  // (get_local_id(0) + 1) % 256
 }
