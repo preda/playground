@@ -231,32 +231,44 @@ void conv4kAux(local double *lds) {
 
 
 KERNEL void conv4k(global double *in, global double *out) {
-  local double lds[4096]; // 32 KB
+  local double lds[4096]; // i.e. 32 KB
   double u[16];
   
   in  += get_group_id(0) * 4096;
-  out += get_group_id(0) * (4096);
+  out += get_group_id(0) * 4096;
 
   uint me = get_local_id(0);
   uint p = me % 64;
   
-  for (int i = 0; i < 16; ++i) { 
-    lds[i * 4 + me / 64 + p * 64] = u[i] = in[cut8(me + i * 256)];
+  for (int i = 0; i < 16; ++i) {
+    lds[p * 64 + (i * 4 + me / 64 + p) % 64] = in[cut8(me + i * 256)];
+  }
+  
+  bar();
+  for (uint i = 0; i < 16; ++i) {
+    uint line = i * 4 + me / 64;
+    u[i] = lds[line * 64 + (p + line) % 64];
   }
 
   conv4kAux(lds);
 
+  bar();
+  for (int i = 0; i < 16; ++i) {    
+    double tmp = lds[i * 256 + me];
+    lds[i * 256 + me] = u[i];
+    u[i] = tmp;
+  }
+
   /*
-  bar();  
   for (int i = 0; i < 16; ++i) {
     double tmp = lds[i * 4 + me / 64 + p * 64];
-    bar();
+    // bar();
     lds[i * 4 + me / 64 + p * 64] = u[i];
     u[i] = tmp;
   }
   */
 
-  // conv4kAux(lds);
+  conv4kAux(lds);
   
   /*
   out += 4096;
