@@ -92,19 +92,24 @@ int main(int argc, char **argv) {
   Buf bufTmp(c, CL_MEM_READ_WRITE, sizeof(double) * SIZE * 2, 0);
   time("alloc gpu buffers");
 
+  conv4k.setArgs(buf1, bufTmp);
+  queue.run(conv4k, GS, SIZE / 16);
+  
+  /*
   dif8a(queue, buf1, bufTmp, SIZE);
   queue.time("dif8");
   dit8a(queue, bufTmp, buf1, SIZE);
   queue.time("dit8");
+  */
 
   double *data2 = new double[SIZE];
-  queue.readBlocking(&buf1, 0, sizeof(double) * SIZE, data2);
+  queue.readBlocking(&bufTmp, 0, sizeof(double) * SIZE, data2);
   time("read");
   int nerr = 0;
   for (int i = 0; i < SIZE; ++i) {
-    double b = data2[i] / 512;
+    double b = data2[i] / 64;
     if (data[i] != b) {
-      printf("%d %f %f\n", nerr, data[i], b);
+      printf("%d %f %f\n", i, data[i], b);
       ++nerr;
       if (nerr >= 10) {
         break;

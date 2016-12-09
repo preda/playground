@@ -45,7 +45,38 @@ void _O write4NC(double4 u, global double *out, uint W, uint line, uint p) {
   for (int i = 0; i < 4; ++i) { write((double[4]){u.x, u.y, u.z, u.w}[i], out, W, line, p + (W / 4) * i); }
 }
 
+double _O read(local double *lds, uint W, uint line, uint p) { return lds[line * W + p]; }
+void _O write(double u, local double *lds, uint W, uint line, uint p) { lds[line * W + p] = u; }
+
+double _O readC(local double *lds, uint W, uint line, uint p) {
+  double u = lds[line * W + p % W];
+  return (p & W) ? -u : u;
+}
+
+void _O writeC(double u, local double *lds, uint W, uint line, uint p) {
+  lds[line * W + p % W] = (p & W) ? -u : u;
+}
+
+double2 read2(local double *lds, uint W, uint line, uint p) {
+  return (double2){lds[line * W + p], lds[line * W + p + W / 2]};
+}
+
+double2 read2C(local double *lds, uint W, uint line, uint p) {
+  return (double2){readC(lds, W, line, p), readC(lds, W, line, p + W / 2)};
+}
+
+void write2(double2 u, local double *lds, uint W, uint line, uint p) {
+  write(u.x, lds, W, line, p);
+  write(u.y, lds, W, line, p + W / 2);
+}
+
+void write2C(double2 u, local double *lds, uint W, uint line, uint p) {
+  writeC(u.x, lds, W, line, p);
+  writeC(u.y, lds, W, line, p + W / 2);
+}
+
 #define ADDSUB(a, b)  { double  tmp = a; a = tmp + b; b = tmp - b; }
+#define ADDSUB2(a, b) { double2 tmp = a; a = tmp + b; b = tmp - b; }
 #define ADDSUB4(a, b) { double4 tmp = a; a = tmp + b; b = tmp - b; }
 // #define ADDSUB4(a, b) { double4 tmp = b; b = a - b; a = a + tmp; }
 #define SHIFT(u, e) u = shift(u, e);
@@ -124,8 +155,62 @@ KERNEL void dif_0(global double *in, global double *out) { difStep(W, 0, in, out
 
 void conv4kAux(local double *lds) {
   uint me = get_local_id(0);
-  uint p = me % 64;
+  uint p = me % 32;
 
+  for (int round = 4; round >= 0; round -= 2) {
+    bar();
+    uint mr = 1 << round;
+    for (int i = 0; i < 2; ++i) {
+      uint g = me / 32 + i * 8;
+      uint j = g & (mr - 1);
+      uint r = (g & ~(mr - 1)) * 4;
+      uint e = j * (32 >> round);
+      uint line = j + r;
+
+      double2 u0 = read2(lds, 64, line + mr * 0, p);
+      double2 u1 = read2(lds, 64, line + mr * 1, p);
+      double2 u2 = read2(lds, 64, line + mr * 2, p);
+      double2 u3 = read2(lds, 64, line + mr * 3, p);
+      ADDSUB2(u0, u2);
+      ADDSUB2(u1, u3);
+      u3 = (double2) {-u3.y, u3.x}; //shift(u3, 1);
+      ADDSUB2(u0, u1);
+      ADDSUB2(u2, u3);
+      write2C(u0, lds, 64, line, p);
+      write2C(u1, lds, 64, line + mr, p + e * 2);
+      write2C(u2, lds, 64, line + mr * 2, p + e);
+      write2C(u3, lds, 64, line + mr * 3, p + e * 3);
+    }
+  }
+
+  for (int round = 0; round < 6; round += 2) {
+    bar();
+    uint mr = 1 << round;
+    for (int i = 0; i < 2; ++i) {
+      uint g = me / 32 + i * 8;
+      uint j = g & (mr - 1);
+      uint r = (g & ~(mr - 1)) * 4;
+      uint e = j * (32 >> round);
+      uint line = j + r;
+
+      double2 u0 = read2( lds, 64, line + mr * 0, p);
+      double2 u2 = read2C(lds, 64, line + mr * 1, p + e * 2);
+      double2 u1 = read2C(lds, 64, line + mr * 2, p + e * 1);
+      double2 u3 = read2C(lds, 64, line + mr * 3, p + e * 3);
+      ADDSUB2(u0, u2);
+      ADDSUB2(u1, u3);
+      u3 = (double2) {u3.y, -u3.x}; // shift(u3, -1);
+      ADDSUB2(u0, u1);
+      ADDSUB2(u2, u3);
+      write2(u0, lds, 64, line + mr * 0, p);
+      write2(u2, lds, 64, line + mr * 1, p);
+      write2(u1, lds, 64, line + mr * 2, p);
+      write2(u3, lds, 64, line + mr * 3, p);
+    }
+  }
+}
+
+  /*
   for (int round = 5; round >= 0; --round) {
     bar();
     uint mr = 1 << round;
@@ -142,34 +227,15 @@ void conv4kAux(local double *lds) {
       // bar();
       lds[(line + mr) * 64 + (p + e) % 64] = ((p + e) & 64) ? -b : b;
     }
-  }
+    }*/
 
-  for (int round = 0; round < 6; ++round) {
-    bar();
-    uint mr = 1 << round;
-    for (int i = 0; i < 8; ++i) {
-      uint g = me / 64 + i * 4;
-      uint j = g & (mr - 1);
-      uint r = (g & ~(mr - 1)) * 2;
-      uint e = j * (64 >> round);
-      uint line = j + r;
-      double a = lds[line * 64 + p];
-      double b = lds[(line + mr) * 64 + (p + e) % 64];
-      b = ((p + e) & 64) ? -b : b;
-      ADDSUB(a, b);
-      lds[line * 64 + p] = a;
-      // bar();
-      lds[(line + mr) * 64 + p] = b;
-    }
-  }
-}
 
 KERNEL void conv4k(global double *in, global double *out) {
   local double lds[4096]; // 32 KB
   double u[16];
   
   in  += get_group_id(0) * 4096;
-  out += get_group_id(0) * (4096 * 2);
+  out += get_group_id(0) * (4096);
 
   uint me = get_local_id(0);
   uint p = me % 64;
@@ -180,6 +246,7 @@ KERNEL void conv4k(global double *in, global double *out) {
 
   conv4kAux(lds);
 
+  /*
   bar();  
   for (int i = 0; i < 16; ++i) {
     double tmp = lds[i * 4 + me / 64 + p * 64];
@@ -187,6 +254,7 @@ KERNEL void conv4k(global double *in, global double *out) {
     lds[i * 4 + me / 64 + p * 64] = u[i];
     u[i] = tmp;
   }
+  */
 
   // conv4kAux(lds);
   
