@@ -13,12 +13,6 @@ public:
   cl_context context;
   
   Context() {
-    /*
-    cl_uint numPlat;
-    CHECK(clGetPlatformIDs(0, NULL, &numPlat));
-    fprintf(stderr, "numPlat %d\n", numPlat);
-    cl_platform_id platform[numPlat];
-    */
     cl_platform_id platform;
     CHECK(clGetPlatformIDs(1, &platform, NULL));
     CHECK(clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &device, NULL));

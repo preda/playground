@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <memory>
 
-#define SIZE (8 * 1024 * 1024)
+#define SIZE (4 * 1024 * 1024)
 #define GS 256
 
 #define K(program, name) Kernel name(program, #name);
@@ -14,18 +14,22 @@ Queue queue(c);
 Program program(c, "dconv.cl");
 
 K(program, dif_0);
+/*
 K(program, dif_3);
 K(program, dif_6);
 
 K(program, dit_0);
 K(program, dit_3);
 K(program, dit_6);
+*/
 
 K(program, round0);
 K(program, copy);
 K(program, dif);
 K(program, dit);
+K(program, conv4k);
 
+/*
 void setArgs(Buf &buf1, Buf &buf2) {
   // dif_9.setArgs(buf, bufTmp);
   dif_6.setArgs(buf1, buf2);
@@ -51,6 +55,7 @@ void dit8(Queue &queue, Buf &buf, Buf &tmp) {
   queue.run(dit_6, GS, SIZE / 32);
   // queue.run(dit_9, GS, SIZE / 32);
 }
+*/
 
 void dif8a(Queue &queue, Buf &buf1, Buf &buf2, unsigned size) {
   dif.setArgs(6, buf1, buf2);
@@ -76,15 +81,15 @@ void dit8a(Queue &queue, Buf &buf1, Buf &buf2, unsigned size) {
 int main(int argc, char **argv) {
   time("main entry");
   
-  double *data = new double[SIZE];
+  double *data = new double[SIZE * 2];
   
   srandom(0);
   for (int i = 0; i < SIZE; ++i) { data[i] = (random() & 0xffffff) - (1 << 23); }
   time("random");
   
-  Buf buf1(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(double) * SIZE, data);
-  Buf buf2(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(double) * SIZE, data);
-  Buf bufTmp(c, CL_MEM_READ_WRITE, sizeof(double) * SIZE, 0);
+  Buf buf1(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(double) * SIZE * 2, data);
+  Buf buf2(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(double) * SIZE * 2, data);
+  Buf bufTmp(c, CL_MEM_READ_WRITE, sizeof(double) * SIZE * 2, 0);
   time("alloc gpu buffers");
 
   dif8a(queue, buf1, bufTmp, SIZE);
@@ -109,10 +114,17 @@ int main(int argc, char **argv) {
 
   time();
 
-  for (int i = 0; i < 1000; ++i) { dif8a(queue, buf1, bufTmp, SIZE / 2); }
+  conv4k.setArgs(buf1, bufTmp);
+  for (int i = 0; i < 1000; ++i) {
+    queue.run(conv4k, GS, SIZE / 16);
+  }
+  queue.time("conv4k");
+  exit(0);
+  
+  for (int i = 0; i < 1000; ++i) { dif8a(queue, buf1, bufTmp, SIZE); }
   queue.time("dif");
 
-  for (int i = 0; i < 1000; ++i) { dit8a(queue, buf1, bufTmp, SIZE / 2); }
+  for (int i = 0; i < 1000; ++i) { dit8a(queue, buf1, bufTmp, SIZE); }
   queue.time("dit");
 
   
@@ -131,4 +143,5 @@ int main(int argc, char **argv) {
     queue.run(copy, GS, SIZE);
   }
   queue.time("copy");
+
 }
