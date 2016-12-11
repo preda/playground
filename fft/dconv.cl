@@ -48,14 +48,14 @@ void _O write4NC(double4 u, global double *out, uint W, uint line, uint p) {
 double _O read(local double *lds, uint W, uint line, uint p) { return lds[line * W + p]; }
 void _O write(double u, local double *lds, uint W, uint line, uint p) { lds[line * W + p] = u; }
 
+double _O readR(local double *lds, uint W, uint line, uint p) { return lds[line * W + p % W]; }
 double _O readC(local double *lds, uint W, uint line, uint p) {
   double u = lds[line * W + p % W];
   return (p & W) ? -u : u;
 }
 
-void _O writeC(double u, local double *lds, uint W, uint line, uint p) {
-  lds[line * W + p % W] = (p & W) ? -u : u;
-}
+void _O writeR(double u, local double *lds, uint W, uint line, uint p) { lds[line * W + p % W] = u; }
+void _O writeC(double u, local double *lds, uint W, uint line, uint p) { lds[line * W + p % W] = (p & W) ? -u : u; }
 
 double2 read2(local double *lds, uint W, uint line, uint p) {
   return (double2){lds[line * W + p], lds[line * W + p + W / 2]};
@@ -210,29 +210,8 @@ void conv4kAux(local double *lds) {
   }
 }
 
-  /*
-  for (int round = 5; round >= 0; --round) {
-    bar();
-    uint mr = 1 << round;
-    for (int i = 0; i < 8; ++i) {
-      uint g = me / 64 + i * 4;
-      uint j = g & (mr - 1);
-      uint r = (g & ~(mr - 1)) * 2;
-      uint e = j * (64 >> round);
-      uint line = j + r;
-      double a = lds[line * 64 + p];
-      double b = lds[(line + mr) * 64 + p];
-      ADDSUB(a, b);
-      lds[line * 64 + p] = a;
-      // bar();
-      lds[(line + mr) * 64 + (p + e) % 64] = ((p + e) & 64) ? -b : b;
-    }
-    }*/
-
-
 KERNEL void conv4k(global double *in, global double *out) {
   local double lds[4096]; // i.e. 32 KB
-  double u[16];
   
   in  += get_group_id(0) * 4096;
   out += get_group_id(0) * 4096;
@@ -241,43 +220,49 @@ KERNEL void conv4k(global double *in, global double *out) {
   uint p = me % 64;
   
   for (int i = 0; i < 16; ++i) {
-    lds[p * 64 + (i * 4 + me / 64 + p) % 64] = in[cut8(me + i * 256)];
+    double x = in[cut8(me + i * 256)];
+    writeC(x, lds, 64, p, i * 4 + me / 64 + p); // lds[p * 64 + col % 64] = (col < 64) ? x : -x;;
   }
+
+  double u[16];
   
   bar();
   for (uint i = 0; i < 16; ++i) {
     uint line = i * 4 + me / 64;
-    u[i] = lds[line * 64 + (p + line) % 64];
+    double x = lds[line * 64 + (p + line) % 64];
+    u[i] = (p + line < 64) ? x : -x;
   }
 
   conv4kAux(lds);
 
   bar();
+  #pragma unroll 1
+  for (int i = 0; i < 16; ++i) {
+    uint line = me / 64 + i * 4;
+    double tmp = readC(lds, 64, line, p + line);
+    tmp -= readC(lds, 64, line, p + line - 1);
+    write(u[i], lds, 64, line, p);
+    u[i] = tmp;
+  }
+
+  /*
   for (int i = 0; i < 16; ++i) {    
     double tmp = lds[i * 256 + me];
     lds[i * 256 + me] = u[i];
     u[i] = tmp;
   }
-
-  /*
-  for (int i = 0; i < 16; ++i) {
-    double tmp = lds[i * 4 + me / 64 + p * 64];
-    // bar();
-    lds[i * 4 + me / 64 + p * 64] = u[i];
-    u[i] = tmp;
-  }
   */
 
   conv4kAux(lds);
-  
-  /*
-  out += 4096;
+
   bar();
+  #pragma unroll 1
   for (int i = 0; i < 16; ++i) {
-    lds[i * 4 + me / 64 + p * 64] = u[i];
-      // in[cut8(me + i * 256)];
+    uint line = me / 64 + i * 4;
+    u[i] += readC(lds, 64, line, p - 1);
+    u[i] += read(lds, 64, line, p);
+    write(u[i], lds, 64, line, p);
   }
-  */
 
   bar();
   for (int i = 0; i < 16; ++i) {
@@ -310,3 +295,21 @@ KERNEL void dit_3(global double *in, global double *out) { ditStep(W, 3, in, out
 KERNEL void dit_6(global double *in, global double *out) { ditStep(W, 6, in, out); }
 */
 
+  /*
+  for (int round = 5; round >= 0; --round) {
+    bar();
+    uint mr = 1 << round;
+    for (int i = 0; i < 8; ++i) {
+      uint g = me / 64 + i * 4;
+      uint j = g & (mr - 1);
+      uint r = (g & ~(mr - 1)) * 2;
+      uint e = j * (64 >> round);
+      uint line = j + r;
+      double a = lds[line * 64 + p];
+      double b = lds[(line + mr) * 64 + p];
+      ADDSUB(a, b);
+      lds[line * 64 + p] = a;
+      // bar();
+      lds[(line + mr) * 64 + (p + e) % 64] = ((p + e) & 64) ? -b : b;
+    }
+    }*/

@@ -102,6 +102,7 @@ int main(int argc, char **argv) {
   queue.time("dit8");
   */
 
+  /*
   double *data2 = new double[SIZE];
   queue.readBlocking(&bufTmp, 0, sizeof(double) * SIZE, data2);
   time("read");
@@ -116,10 +117,10 @@ int main(int argc, char **argv) {
       }
     }
   }
+  */
 
   time();
 
-  conv4k.setArgs(buf1, bufTmp);
   for (int i = 0; i < 1000; ++i) {
     queue.run(conv4k, GS, SIZE / 16);
   }

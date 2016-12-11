@@ -77,8 +77,9 @@ public:
       : clCreateProgramWithSource(c.context, 1, (const char **)&pbuf, &size, &err);    
     CHECK(err);
     const char *opts = isCL2 ?
-      "-O5 -Werror -cl-std=CL2.0 -cl-uniform-work-group-size -I. -fno-bin-llvmir -save-temps=tmp2/" :
+      "-O2 -cl-std=CL2.0 -cl-uniform-work-group-size -I. -fno-bin-llvmir -save-temps=tmp2/" :
       "-O2 -Werror -cl-fast-relaxed-math -I. -fno-bin-llvmir -fno-bin-source -fno-bin-amdil -save-temps=tmp1/";
+    //-O5 -Werror  
     /*
     const char *opts = isCL2
       ? "-O2 -cl-std=CL2.0 -cl-uniform-work-group-size -fno-bin-source -fno-bin-llvmir -fno-bin-amdil -save-temps"
