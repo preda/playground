@@ -157,9 +157,10 @@ void conv4kAux(local double *lds) {
   uint me = get_local_id(0);
   uint p = me % 32;
 
-  for (int round = 4; round >= 0; round -= 2) {
+  for (int round = 4; round >= 2; round -= 2) {
     bar();
     uint mr = 1 << round;
+    #pragma unroll 1
     for (int i = 0; i < 2; ++i) {
       uint g = me / 32 + i * 8;
       uint j = g & (mr - 1);
@@ -183,6 +184,121 @@ void conv4kAux(local double *lds) {
     }
   }
 
+  for (int i = 0; i < 2; ++i) {
+    uint line  = i * 32 + (me / 32) * 4;
+    double2 u0 = read2(lds, 64, line + 0, p);
+    double2 u1 = read2(lds, 64, line + 1, p);
+    double2 u2 = read2(lds, 64, line + 2, p);
+    double2 u3 = read2(lds, 64, line + 3, p);
+    ADDSUB2(u0, u2);
+    ADDSUB2(u1, u3);
+    u3 = (double) {-u3.y, u3.x};
+    ADDSUB2(u0, u1);
+    ADDSUB2(u2, u3);
+    write2(u0, lds, 64, line + 0, p);
+    write2(u1, lds, 64, line + 1, p);
+    write2(u2, lds, 64, line + 2, p);
+    write2(u3, lds, 64, line + 3, p);
+  }
+
+
+  /*
+  bar();
+  #pragma unroll 1
+  for (int i = 0; i < 16; ++i) {
+    double x = lds[i * 256 + me];
+    lds[i * 256 + me] = x * x;
+  }
+  */
+
+  /*
+  bar();
+  #pragma unroll 1
+  for (int i = 0; i < 16; ++i) {
+    double x = lds[i * 256 + me];
+    uint c = me % 4;
+    uint l = (me / 4) % 16;
+    bar();
+    lds[i * 256 + (me / 64) * 64 + c * 16 + l] = x;
+  }
+  */
+
+  bar();
+  #pragma unroll 1
+  for (int i = 0; i < 16; ++i) {
+    double x = lds[i * 256 + me];
+    uint c = me % 8;
+    uint l = (me / 8) % 8;
+    bar();
+    lds[i * 256 + (me / 64) * 64 + c * 8 + l] = x;
+  }
+
+  bar();
+  for (int i = 0; i < 8; ++i) {
+    uint c = me % 8;
+    uint l = (me % 32) / 8;
+    uint line = i * 64 + me / 32 * 8 + l;
+    double a = read(lds, 8, line,     c);
+    double b = read(lds, 8, line + 4, c);
+    ADDSUB(a, b);
+    write( a, lds, 8, line,     c);
+    writeC(b, lds, 8, line + 4, c + l * 2);
+  }
+
+  bar();
+  for (int i = 0; i < 2; ++i) {
+    uint c = me % 4;
+    uint l = (me % 8) / 4 * 4;
+    uint line = i * 256 + me / 8 * 8 + l;
+    double2 u0 = read2(lds, 8, line,     c);
+    double2 u1 = read2(lds, 8, line + 1, c);
+    double2 u2 = read2(lds, 8, line + 2, c);
+    double2 u3 = read2(lds, 8, line + 3, c);
+    ADDSUB2(u0, u2);
+    ADDSUB2(u1, u3);
+    u3 = (double) {-u3.y, u3.x};
+    ADDSUB2(u0, u1);
+    ADDSUB2(u2, u3);
+    write2(u0, lds, 8, line, c);
+    write2(u1, lds, 8, line + 1, c);
+    write2(u2, lds, 8, line + 2, c);
+    write2(u3, lds, 8, line + 3, c);
+  }
+
+  bar();
+  for (int i = 0; i < 2; ++i) {
+    double x[8];
+    for (int k = 0; k < 8; ++k) {
+      x[k] = read(lds, 8, i * 256 + me, k);
+    }
+    for (int k = 0; k < 8; ++k) {
+      x[k] = x[k] * x[8 - k];
+    }
+    for (int k = 0; k < 8; ++k) {
+      write(x[k], lds, 8, i * 256 + me, k);
+    }
+  }
+
+  bar();
+  for (int i = 0; i < 2; ++i) {
+    uint c = me % 4;
+    uint l = (me % 8) / 4 * 4;
+    uint line = i * 256 + me / 8 * 8 + l;
+    double2 u0 = read2(lds, 8, line,     c);
+    double2 u2 = read2(lds, 8, line + 1, c);
+    double2 u1 = read2(lds, 8, line + 2, c);
+    double2 u3 = read2(lds, 8, line + 3, c);
+    ADDSUB2(u0, u2);
+    ADDSUB2(u1, u3);
+    u3 = (double) {-u3.y, u3.x};
+    ADDSUB2(u0, u1);
+    ADDSUB2(u2, u3);
+    write2(u0, lds, 8, line, c);
+    write2(u2, lds, 8, line + 1, c);
+    write2(u1, lds, 8, line + 2, c);
+    write2(u3, lds, 8, line + 3, c);
+  }
+   
   for (int round = 0; round < 6; round += 2) {
     bar();
     uint mr = 1 << round;
@@ -210,7 +326,44 @@ void conv4kAux(local double *lds) {
   }
 }
 
-KERNEL void conv4k(global double *in, global double *out) {
+KERNEL void conv4k(global double * restrict in, global double * restrict out) {
+  local double lds[4096]; // i.e. 32 KB
+  
+  in  += get_group_id(0) * 4096;
+  out += get_group_id(0) * 4096;
+
+  uint me = get_local_id(0);
+  uint p = me % 64;
+
+  #pragma unroll 1
+  for (int i = 0; i < 16; ++i) {
+    double x = in[cut8(me + i * 256)];
+    writeC(x, lds, 64, p, i * 4 + me / 64 + p); // lds[p * 64 + col % 64] = (col < 64) ? x : -x;;
+  }
+
+  bar();
+  conv4kAux(lds);
+
+  /*
+  bar();
+  for (int i = 0; i < 16; ++i) {
+    uint line = me / 64 + i * 4;
+    double tmp = readC(lds, 64, line, p + line);
+    tmp -= readC(lds, 64, line, p + line - 1);
+    write(u[i], lds, 64, line, p);
+    u[i] = tmp;
+  }
+  */
+
+  bar();
+  // #pragma unroll 1
+  for (int i = 0; i < 16; ++i) {
+    out[cut8(me + i * 256)] = readC(lds, 64, p, i * 4 + me / 64 + p);
+    // lds[i * 4 + me / 64 + p * 64];
+  }
+}
+
+KERNEL void conv4kbig(global double *in, global double *out) {
   local double lds[4096]; // i.e. 32 KB
   
   in  += get_group_id(0) * 4096;
