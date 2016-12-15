@@ -76,10 +76,80 @@ void write2C(double2 u, local double *lds, uint W, uint line, uint p) {
 }
 
 #define ADDSUB(a, b)  { double  tmp = a; a = tmp + b; b = tmp - b; }
-#define ADDSUB2(a, b) { double2 tmp = a; a = tmp + b; b = tmp - b; }
+#define ADDSUB2(a, b) { ADDSUB(a.x, b.x); ADDSUB(a.y, b.y); }
 #define ADDSUB4(a, b) { double4 tmp = a; a = tmp + b; b = tmp - b; }
-// #define ADDSUB4(a, b) { double4 tmp = b; b = a - b; a = a + tmp; }
 #define SHIFT(u, e) u = shift(u, e);
+
+#define SWAP(a, b) { double t = a.x; a.x = b.x; b.x = t; t = a.y; a.y = b.y; b.y = t; }
+
+double2 _O mul(double2 u, double a, double b) { return (double2) { u.x * a - u.y * b, u.x * b + u.y * a}; }
+// double2 mulm1(double2 u, double a) { return (double2) { u.x * a + u.y, u.y * a - u.x}; }
+
+// cos(pi / 8), sin(pi / 8)
+#define C8 0.92387953251128676
+#define S8 0.38268343236508977
+
+
+void fft16(double2 *r) {
+  for (int i = 0; i < 8; ++i) { ADDSUB2(r[i], r[i + 8]); }
+  r[9]  = mul(r[9], C8, -S8);
+  r[10] = mul(r[10], 1, -1) * M_SQRT1_2;
+  r[11] = mul(r[11], S8, -C8);
+  r[12] = mul(r[12], 0, -1);
+  r[13] = mul(r[13], -S8, -C8);
+  r[14] = mul(r[14], -1, -1) * M_SQRT1_2;
+  r[15] = mul(r[15], -C8, -S8);
+
+  for (int i = 0; i < 4; ++i) {
+    ADDSUB2(r[i],     r[i + 4]);
+    ADDSUB2(r[i + 8], r[i + 12]);
+  }
+  
+  r[5]  = mul(r[5],   1, -1) * M_SQRT1_2;
+  r[6]  = mul(r[6],   0, -1);
+  r[7]  = mul(r[7],  -1, -1) * M_SQRT1_2;
+  r[13] = mul(r[13],  1, -1) * M_SQRT1_2;
+  r[14] = mul(r[14],  0, -1);
+  r[15] = mul(r[15], -1, -1) * M_SQRT1_2;
+
+  for (int i = 0; i < 4; ++i) {
+    ADDSUB2(r[i * 4],     r[i * 4 + 2]);
+    ADDSUB2(r[i * 4 + 1], r[i * 4 + 3]);
+    r[i * 4 + 3] = mul(r[i * 4 + 3], 0, -1);
+  }
+
+  for (int i = 0; i < 8; ++i) {
+    ADDSUB2(r[i * 2], r[i * 2 + 1]);
+  }
+  
+  // revbin(16)
+  SWAP(r[1],  r[8]);
+  SWAP(r[2],  r[4]);
+  SWAP(r[3],  r[12]);
+  SWAP(r[5],  r[10]);
+  SWAP(r[7],  r[14]);
+  SWAP(r[11], r[13]);
+}
+
+KERNEL void convfft(global double *buf) {
+  buf += get_group_id(0) * 4096;
+  
+  local double lds[4096];
+
+  uint me = get_local_id(0);
+
+  double2 r[16];
+  
+  for (int i = 0; i < 16; ++i) { r[i] = (double2){buf[i * 256 + me], 0}; }
+  fft16(r);
+
+  
+
+  
+  
+  for (int i = 0; i < 16; ++i) { buf[i * 256 + me] = r[i].x; }
+}
+
 
 void fft(bool isDIF, const uint W, const uint round, global double *in, global double *out) {
   uint groupsPerLine = W / 4 / GS;

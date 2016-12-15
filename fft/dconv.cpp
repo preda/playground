@@ -14,48 +14,13 @@ Queue queue(c);
 Program program(c, "dconv.cl");
 
 K(program, dif_0);
-/*
-K(program, dif_3);
-K(program, dif_6);
-
-K(program, dit_0);
-K(program, dit_3);
-K(program, dit_6);
-*/
 
 K(program, round0);
 K(program, copy);
 K(program, dif);
 K(program, dit);
 K(program, conv4k);
-
-/*
-void setArgs(Buf &buf1, Buf &buf2) {
-  // dif_9.setArgs(buf, bufTmp);
-  dif_6.setArgs(buf1, buf2);
-  dif_3.setArgs(buf2, buf1);
-  dif_0.setArgs(buf1, buf2);
-  
-  dit_0.setArgs(buf2, buf1);
-  dit_3.setArgs(buf1, buf2);
-  dit_6.setArgs(buf2, buf1);
-  // dit_9.setArgs(bufTmp, buf);
-}
-
-void dif8(Queue &queue, Buf &buf, Buf &tmp) {
-  // queue.run(dif_9, GS, SIZE / 32);
-  queue.run(dif_6, GS, SIZE / 32);
-  queue.run(dif_3, GS, SIZE / 32);
-  queue.run(dif_0, GS, SIZE / 32);
-}
-
-void dit8(Queue &queue, Buf &buf, Buf &tmp) {
-  queue.run(dit_0, GS, SIZE / 32);
-  queue.run(dit_3, GS, SIZE / 32);
-  queue.run(dit_6, GS, SIZE / 32);
-  // queue.run(dit_9, GS, SIZE / 32);
-}
-*/
+K(program, convfft);
 
 void dif8a(Queue &queue, Buf &buf1, Buf &buf2, unsigned size) {
   dif.setArgs(6, buf1, buf2);
@@ -91,9 +56,6 @@ int main(int argc, char **argv) {
   Buf buf2(c, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(double) * SIZE * 2, data);
   Buf bufTmp(c, CL_MEM_READ_WRITE, sizeof(double) * SIZE * 2, 0);
   time("alloc gpu buffers");
-
-  conv4k.setArgs(buf1, bufTmp);
-  queue.run(conv4k, GS, SIZE / 16);
   
   /*
   dif8a(queue, buf1, bufTmp, SIZE);
@@ -119,13 +81,27 @@ int main(int argc, char **argv) {
   }
   */
 
+  conv4k.setArgs(buf1, bufTmp);
+  queue.run(conv4k, GS, SIZE / 16);
   time();
 
   for (int i = 0; i < 1000; ++i) {
     queue.run(conv4k, GS, SIZE / 16);
   }
   queue.time("conv4k");
+
+  convfft.setArgs(buf1);
+  queue.run(convfft, GS, SIZE / 16);
+  time();
+  
+  for (int i = 0; i < 1000; ++i) {
+    queue.run(convfft, GS, SIZE / 16);
+  }
+  queue.time("convfft");
+  
   exit(0);
+
+  
   
   for (int i = 0; i < 1000; ++i) { dif8a(queue, buf1, bufTmp, SIZE); }
   queue.time("dif");
