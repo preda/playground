@@ -75,8 +75,10 @@ void write2C(double2 u, local double *lds, uint W, uint line, uint p) {
   writeC(u.y, lds, W, line, p + W / 2);
 }
 
-#define ADDSUB(a, b)  { double  tmp = a; a = tmp + b; b = tmp - b; }
+#define ADDSUB(a, b) { double  tmp = a; a = tmp + b; b = tmp - b; }
 #define ADDSUB2(a, b) { ADDSUB(a.x, b.x); ADDSUB(a.y, b.y); }
+// { b = a - b; a += a - b; }
+
 #define ADDSUB4(a, b) { double4 tmp = a; a = tmp + b; b = tmp - b; }
 #define SHIFT(u, e) u = shift(u, e);
 
@@ -89,8 +91,11 @@ double2 _O mul(double2 u, double a, double b) { return (double2) { u.x * a - u.y
 #define C8 0.92387953251128676
 #define S8 0.38268343236508977
 
+const double twiddle[2 * 16 * 256] = {
+#include "twiddle.inc"
+};
 
-void fft16(double2 *r) {
+void dif16(double2 *r) {
   for (int i = 0; i < 8; ++i) { ADDSUB2(r[i], r[i + 8]); }
   r[9]  = mul(r[9], C8, -S8);
   r[10] = mul(r[10], 1, -1) * M_SQRT1_2;
@@ -121,6 +126,10 @@ void fft16(double2 *r) {
   for (int i = 0; i < 8; ++i) {
     ADDSUB2(r[i * 2], r[i * 2 + 1]);
   }
+}
+
+void fft16(double2 *r) {
+  dif16(r);
   
   // revbin(16)
   SWAP(r[1],  r[8]);
@@ -131,25 +140,85 @@ void fft16(double2 *r) {
   SWAP(r[11], r[13]);
 }
 
+void transpose(double2 *r, local double *lds) {
+  uint me = get_local_id(0);
+  for (uint i = 0; i < 16; ++i) { lds[me * 16 + i] = r[i].x; }
+  bar();
+  for (uint i = 0; i < 16; ++i) { r[i].x = lds[i * 256 + me]; }
+  bar();
+  for (uint i = 0; i < 16; ++i) { lds[me * 16 + i] = r[i].y; }
+  bar();
+  for (uint i = 0; i < 16; ++i) { r[i].y = lds[i * 256 + me]; }
+}
+
 KERNEL void convfft(global double *buf) {
+  local double lds[4096];
+  
   buf += get_group_id(0) * 4096;
   
-  local double lds[4096];
-
   uint me = get_local_id(0);
 
   double2 r[16];
   
   for (int i = 0; i < 16; ++i) { r[i] = (double2){buf[i * 256 + me], 0}; }
+  
+  fft16(r);
+  
+  transpose(r, lds);
+    
+  for (int i = 1; i < 16; ++i) {
+    r[i] = mul(r[i], twiddle[((i - 1) * 16 + (me % 16)) * 2], twiddle[((i - 1) * 16 + (me % 16)) * 2 + 1]);
+  }
+  
   fft16(r);
 
-  
+  bar();
+  transpose(r, lds);
 
-  
+  for (int i = 1; i < 16; ++i) {
+    r[i] = mul(r[i], twiddle[(i * 256 + me) * 2], twiddle[(i * 256 + me) * 2 + 1]);
+  }
+
+  fft16(r);
+
+  // bar(); transpose(r, lds);
   
   for (int i = 0; i < 16; ++i) { buf[i * 256 + me] = r[i].x; }
 }
 
+  /*
+  for (int i = 1; i < 16; ++i) {
+    r[i] = mul(r[i], twiddle[((i - 1) * 256 + me) * 2], twiddle[((i - 1) * 256 + me) * 2 + 1]);
+  }
+  */
+
+  /*
+  for (int i = 0; i < 16; ++i) { lds[i * 256 + me] = r[i].x; }
+  bar();
+  for (int i = 0; i < 16; ++i) { r[i].x = lds[me * 16 + i]; }
+  bar();
+  for (int i = 0; i < 16; ++i) { lds[i * 256 + me] = r[i].y; }
+  bar();
+  for (int i = 0; i < 16; ++i) { r[i].y = lds[me * 16 + i]; }
+  */
+
+  /*
+  for (uint i = 0; i < 16; ++i) { lds[me * 16 + i] = r[i].x; }
+  bar();
+  for (uint i = 0; i < 16; ++i) { r[i].x = lds[i * 256 + me]; }
+  bar();
+  for (uint i = 0; i < 16; ++i) { lds[me * 16 + i] = r[i].y; }
+  bar();
+  for (uint i = 0; i < 16; ++i) { r[i].y = lds[i * 256 + me]; }
+  */
+
+
+  /*
+  for (int i = 1; i < 16; ++i) {
+    double2 t = ((constant double2 *) twiddle)[(i - 1) * 256 + me];
+    r[i] = mul(r[i], t.x, t.y);
+  }
+  */
 
 void fft(bool isDIF, const uint W, const uint round, global double *in, global double *out) {
   uint groupsPerLine = W / 4 / GS;
