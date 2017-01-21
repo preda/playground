@@ -21,6 +21,7 @@ K(program, dif);
 K(program, dit);
 K(program, conv4k);
 K(program, convfft);
+K(program, dif4k);
 
 void dif8a(Queue &queue, Buf &buf1, Buf &buf2, unsigned size) {
   dif.setArgs(6, buf1, buf2);
@@ -83,16 +84,26 @@ int main(int argc, char **argv) {
 
   conv4k.setArgs(buf1, bufTmp);
   queue.run(conv4k, GS, SIZE / 16);
-  time();
+  queue.time("");
 
   for (int i = 0; i < 1000; ++i) {
     queue.run(conv4k, GS, SIZE / 16);
   }
   queue.time("conv4k");
 
+
+  dif4k.setArgs(buf1);
+  queue.run(dif4k, GS, SIZE / 16);
+  queue.time("");
+  
+  for (int i = 0; i < 1000; ++i) {
+    queue.run(dif4k, GS, SIZE / 16);
+  }
+  queue.time("dif4k");
+  
   convfft.setArgs(buf1);
   queue.run(convfft, GS, SIZE / 16);
-  time();
+  queue.time("");
   
   for (int i = 0; i < 1000; ++i) {
     queue.run(convfft, GS, SIZE / 16);

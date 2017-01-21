@@ -78,6 +78,8 @@ void write2C(double2 u, local double *lds, uint W, uint line, uint p) {
 #define ADDSUB(a, b) { double  tmp = a; a = tmp + b; b = tmp - b; }
 #define ADDSUB2(a, b) { ADDSUB(a.x, b.x); ADDSUB(a.y, b.y); }
 // { b = a - b; a += a - b; }
+// 
+
 
 #define ADDSUB4(a, b) { double4 tmp = a; a = tmp + b; b = tmp - b; }
 #define SHIFT(u, e) u = shift(u, e);
@@ -126,6 +128,51 @@ void dif16(double2 *r) {
   for (int i = 0; i < 8; ++i) {
     ADDSUB2(r[i * 2], r[i * 2 + 1]);
   }
+}
+
+void shuffleA(double2 *r, local double *lds) {
+  uint me = get_local_id(0);
+  for (int i = 0; i < 16; ++i) { lds[(me / 16) * 256 + me % 16 + i * 16] = r[i].x; }
+  bar();
+  for (int i = 0; i < 16; ++i) { r[i].x = lds[i * 256 + me]; }
+  bar();
+  for (int i = 0; i < 16; ++i) { lds[(me / 16) * 256 + me % 16 + i * 16] = r[i].y; }
+  bar();
+  for (int i = 0; i < 16; ++i) { r[i].y = lds[i * 256 + me]; }
+}
+
+void shuffleB(double2 *r, local double *lds) {
+  uint me = get_local_id(0);
+  for (int i = 0; i < 16; ++i) { lds[i + me % 16 * 256 + me / 16 * 16] = r[i].x; }
+  bar();
+  for (int i = 0; i < 16; ++i) { r[i].x = lds[i * 256 + me]; }
+  bar();
+  for (int i = 0; i < 16; ++i) { lds[i + me % 16 * 256 + me / 16 * 16] = r[i].y; }
+  bar();
+  for (int i = 0; i < 16; ++i) { r[i].y = lds[i * 256 + me]; }
+}
+
+KERNEL void dif4k(global double *buf) {
+  local double lds[4096];
+  double2 r[16];
+  buf += get_group_id(0) * 4096;
+  uint me = get_local_id(0);
+
+  for (int i = 0; i < 16; ++i) { r[i] = (double2) {buf[i * 256 + me], 0}; }
+  dif16(r);
+  for (int i = 1; i < 16; ++i) {
+    r[i] = mul(r[i], twiddle[(i - 1) * 16 + me % 16], twiddle[(i - 1) * 16 + me % 16 + 240]);
+  }
+  shuffleA(r, lds);
+  dif16(r);
+  for (int i = 1; i < 16; ++i) {
+    r[i] = mul(r[i], twiddle[(i * 256 + me) * 2], twiddle[(i * 256 + me) * 2 + 1]);
+  }
+
+  bar();
+  shuffleB(r, lds);
+  dif16(r);
+  for (int i = 0; i < 16; ++i) { buf[i * 256 + me] = r[i].x; }
 }
 
 void fft16(double2 *r) {
@@ -299,7 +346,6 @@ void conv4kAux(local double *lds) {
   for (int round = 4; round >= 2; round -= 2) {
     bar();
     uint mr = 1 << round;
-    #pragma unroll 1
     for (int i = 0; i < 2; ++i) {
       uint g = me / 32 + i * 8;
       uint j = g & (mr - 1);
@@ -316,13 +362,14 @@ void conv4kAux(local double *lds) {
       u3 = (double2) {-u3.y, u3.x}; //shift(u3, 1);
       ADDSUB2(u0, u1);
       ADDSUB2(u2, u3);
-      write2C(u0, lds, 64, line, p);
-      write2C(u1, lds, 64, line + mr, p + e * 2);
+      write2( u0, lds, 64, line,          p);
+      write2C(u1, lds, 64, line + mr,     p + e * 2);
       write2C(u2, lds, 64, line + mr * 2, p + e);
       write2C(u3, lds, 64, line + mr * 3, p + e * 3);
     }
   }
 
+  bar();
   for (int i = 0; i < 2; ++i) {
     uint line  = i * 32 + (me / 32) * 4;
     double2 u0 = read2(lds, 64, line + 0, p);
@@ -363,7 +410,7 @@ void conv4kAux(local double *lds) {
   */
 
   bar();
-  #pragma unroll 1
+  // #pragma unroll 1
   for (int i = 0; i < 16; ++i) {
     double x = lds[i * 256 + me];
     uint c = me % 8;
@@ -474,13 +521,18 @@ KERNEL void conv4k(global double * restrict in, global double * restrict out) {
   uint me = get_local_id(0);
   uint p = me % 64;
 
-  #pragma unroll 1
+  // #pragma unroll 1
   for (int i = 0; i < 16; ++i) {
-    double x = in[cut8(me + i * 256)];
-    writeC(x, lds, 64, p, i * 4 + me / 64 + p); // lds[p * 64 + col % 64] = (col < 64) ? x : -x;;
+    // double x = in[me + i * 256];
+    double x = in[me];
+    in += 256;
+    writeC(x, lds, 64, p, i * 4 + me / 64 + p);
+    // lds[p * 64 + col % 64] = (col < 64) ? x : -x;;
   }
 
-  bar();
+  // bar(); mem_fence(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
+  
+  // bar();
   conv4kAux(lds);
 
   /*
@@ -497,7 +549,7 @@ KERNEL void conv4k(global double * restrict in, global double * restrict out) {
   bar();
   // #pragma unroll 1
   for (int i = 0; i < 16; ++i) {
-    out[cut8(me + i * 256)] = readC(lds, 64, p, i * 4 + me / 64 + p);
+    out[me + i * 256] = readC(lds, 64, p, i * 4 + me / 64 + p);
     // lds[i * 4 + me / 64 + p * 64];
   }
 }

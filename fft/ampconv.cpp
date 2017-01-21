@@ -1,5 +1,6 @@
 #include <hcc/hc.hpp>
 #include <stdio.h>
+#include <iostream>
 
 typedef unsigned uint;
 
@@ -40,10 +41,14 @@ hc::completion_future fftStep(const hc::array<double> &in, hc::array<double> &ou
   constexpr uint threadsPerLine = W >> (radixExp - 1);
   constexpr uint threads = threadsPerLine * (H >> radixExp);
   constexpr uint mr = 1 << (round * radixExp);
+
+  std::cerr << "foo" << '\n';
   
-  return hc::parallel_for_each(hc::extent<1>(threads), [&in, &out](hc::index<1> idx)[[hc]] {
+  auto future = hc::parallel_for_each(hc::extent<1>(threads), [&in, &out](hc::index<1> idx)[[hc]] {
       constexpr uint revbin[8] = {0, 4, 2, 6, 1, 5, 3, 7};
       uint id = idx[0];
+      // out[id] = 2 * in[id] * in[id];
+
       uint g = id / threadsPerLine;
       uint p = id % threadsPerLine;
       uint j = g % mr;
@@ -52,17 +57,17 @@ hc::completion_future fftStep(const hc::array<double> &in, hc::array<double> &ou
       uint line = j + r;
 
       double u[32];
-      #pragma unroll 1
       for (int i = 0; i < 4; ++i) {
         read<W, 4>(u + 4 * i,       in, line + i * mr, p);
         read<W, 4>(u + 4 * (i + 4), in, line + (i + 4) * mr, p);
         // addSub(u[i], u[i + 4]);
       }
 
-      #pragma unroll 1
       for (int i = 0; i < 8; ++i) { writeC<W, 4>(u + 4 * i, out, line + i * mr, p + e * revbin[i]); }
+      
     });
-  // return future;
+  std::cerr << "bar" << '\n';
+  return future;
 }
 
 
@@ -71,7 +76,11 @@ int main() {
   hc::array<double> a(8 * 1024 * 1024, vect.begin());
   hc::array<double> b(8 * 1024 * 1024);
 
-  auto r = fftStep<true, 128, 128, 0>(a, b);
+  auto r = fftStep<true, 1024, 256, 0>(a, b);
+  hc::accelerator acc;
+  auto view = acc.get_default_view();
+  view.flush();
+  // r.flush();
   r.wait();
   printf("%.3f ms\n", (r.get_end_tick() - r.get_begin_tick()) / 1000000.0);
 
